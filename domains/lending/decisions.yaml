@@ -1,0 +1,521 @@
+# ============================================================
+# Decision OS — Lending Domain Pack
+# decisions.yaml — source of truth for all lending decisions
+# ============================================================
+# Each decision defines:
+#   - its data requirements (own vs shared)
+#   - dependencies on other decisions
+#   - the agent persona assigned to it
+#   - the decision mode (shadow / recommend / human_approval / auto_execute)
+#   - the boundary (what is allowed, blocked, escalated)
+# ============================================================
+
+domain: lending
+version: "1.0.0"
+description: >
+  Full mortgage lending cycle — 12 decisions from lead intake
+  through closing readiness. Independent decisions run first;
+  dependent decisions receive enriched context from their
+  upstream decisions.
+
+# ─────────────────────────────────────────────
+# SHARED DATA — available to all decisions
+# ─────────────────────────────────────────────
+shared_data:
+  - customer_profile
+  - application_record
+  - kyc_status
+  - credit_bureau_pull
+  - fraud_watchlist
+  - regulatory_constraints
+  - product_catalog
+
+# ─────────────────────────────────────────────
+# DECISIONS
+# ─────────────────────────────────────────────
+decisions:
+
+  # ── INDEPENDENT DECISIONS ──────────────────
+
+  - id: lead_scoring
+    name: Lead scoring
+    type: independent
+    description: >
+      Evaluates inbound leads to determine intent quality,
+      channel fit, and likelihood to convert. Runs before
+      any application is opened.
+    own_data:
+      - lead_source
+      - utm_params
+      - session_behavior
+      - prior_inquiries
+    shared_data:
+      - customer_profile
+    persona: lead_qualification_agent
+    mode: auto_execute
+    risk_level: low
+    owner_team: growth_ops
+    boundary:
+      automate_if:
+        - intent_score >= 0.7
+        - channel in [digital, api_partner]
+      recommend_if:
+        - intent_score >= 0.5
+        - intent_score < 0.7
+      block_if:
+        - source in fraud_watchlist
+      escalate_if:
+        - ambiguous_identity == true
+    sla_seconds: 5
+    trace_required: true
+
+  - id: income_verification
+    name: Income verification
+    type: independent
+    description: >
+      Validates stated income against payroll data, tax records,
+      and bank statements. Critical upstream input for DTI
+      and product eligibility decisions.
+    own_data:
+      - stated_income
+      - employment_type
+      - payroll_records
+      - tax_returns
+      - bank_statements
+    shared_data:
+      - application_record
+      - kyc_status
+    persona: income_verification_agent
+    mode: human_approval
+    risk_level: medium
+    owner_team: underwriting
+    boundary:
+      automate_if:
+        - income_confidence_score >= 0.9
+        - employment_type == salaried
+        - payroll_verified == true
+      recommend_if:
+        - income_confidence_score >= 0.75
+        - employment_type in [self_employed, contractor]
+      block_if:
+        - income_discrepancy_pct > 0.25
+      escalate_if:
+        - multiple_income_sources == true
+        - foreign_income == true
+    sla_seconds: 120
+    trace_required: true
+
+  - id: credit_assessment
+    name: Credit assessment
+    type: independent
+    description: >
+      Pulls and interprets credit bureau data to determine
+      credit band, risk score, and derogatory flags.
+      Feeds LTV assessment and rate pricing downstream.
+    own_data:
+      - credit_bureau_report
+      - payment_history
+      - open_tradelines
+      - derogatory_marks
+      - credit_utilization
+    shared_data:
+      - credit_bureau_pull
+      - application_record
+    persona: credit_risk_agent
+    mode: auto_execute
+    risk_level: medium
+    owner_team: credit_risk
+    boundary:
+      automate_if:
+        - credit_score >= 680
+        - no_derogatory_last_24_months == true
+      recommend_if:
+        - credit_score >= 600
+        - credit_score < 680
+      block_if:
+        - active_bankruptcy == true
+        - foreclosure_last_36_months == true
+      escalate_if:
+        - thin_file == true
+        - credit_score is null
+    sla_seconds: 10
+    trace_required: true
+
+  - id: fraud_screening
+    name: Fraud screening
+    type: independent
+    description: >
+      Screens application for identity fraud, synthetic identity,
+      document forgery, and known fraud patterns.
+      Hard block capability — can stop the entire pipeline.
+    own_data:
+      - identity_documents
+      - device_fingerprint
+      - ip_geolocation
+      - velocity_signals
+    shared_data:
+      - fraud_watchlist
+      - kyc_status
+      - customer_profile
+    persona: fraud_detection_agent
+    mode: auto_execute
+    risk_level: high
+    owner_team: fraud_ops
+    boundary:
+      automate_if:
+        - fraud_score < 0.2
+        - identity_match_confidence >= 0.95
+      recommend_if:
+        - fraud_score >= 0.2
+        - fraud_score < 0.5
+      block_if:
+        - fraud_score >= 0.5
+        - watchlist_match == true
+        - synthetic_identity_flag == true
+      escalate_if:
+        - document_authenticity_score < 0.8
+    sla_seconds: 8
+    trace_required: true
+
+  - id: compliance_check
+    name: Compliance check
+    type: independent
+    description: >
+      Validates application against regulatory requirements —
+      HMDA, ECOA, fair lending, state-specific rules.
+      Runs independently but gates closing readiness downstream.
+    own_data:
+      - application_demographics
+      - loan_purpose
+      - property_location
+      - hmda_fields
+    shared_data:
+      - regulatory_constraints
+      - application_record
+    persona: compliance_agent
+    mode: human_approval
+    risk_level: high
+    owner_team: compliance
+    boundary:
+      automate_if:
+        - all_hmda_fields_complete == true
+        - no_fair_lending_flags == true
+        - state_rules_passed == true
+      recommend_if:
+        - minor_data_gap == true
+      block_if:
+        - fair_lending_violation == true
+        - missing_required_disclosures == true
+      escalate_if:
+        - regulatory_ambiguity == true
+        - mixed_jurisdiction == true
+    sla_seconds: 60
+    trace_required: true
+
+  # ── DEPENDENT DECISIONS ────────────────────
+
+  - id: dti_calculation
+    name: DTI calculation
+    type: dependent
+    depends_on:
+      - decision: income_verification
+        required_output: verified_income
+        inherit_context: true
+    description: >
+      Calculates debt-to-income ratio using verified income
+      (not stated). Inherits income context from upstream.
+      Incorrect income verification directly corrupts this output.
+    own_data:
+      - existing_debt_obligations
+      - proposed_payment
+    shared_data:
+      - application_record
+    persona: underwriting_agent
+    mode: auto_execute
+    risk_level: low
+    owner_team: underwriting
+    boundary:
+      automate_if:
+        - dti <= 0.36
+      recommend_if:
+        - dti > 0.36
+        - dti <= 0.43
+      block_if:
+        - dti > 0.50
+      escalate_if:
+        - income_verification.confidence < 0.85
+    sla_seconds: 5
+    trace_required: true
+    contamination_guard:
+      reject_if_upstream_confidence_below: 0.75
+
+  - id: ltv_assessment
+    name: LTV assessment
+    type: dependent
+    depends_on:
+      - decision: credit_assessment
+        required_output: credit_band
+        inherit_context: true
+    description: >
+      Calculates loan-to-value ratio against property appraisal.
+      Credit band from upstream influences maximum allowable LTV.
+    own_data:
+      - property_appraisal
+      - purchase_price
+      - down_payment
+    shared_data:
+      - application_record
+    persona: underwriting_agent
+    mode: auto_execute
+    risk_level: low
+    owner_team: underwriting
+    boundary:
+      automate_if:
+        - ltv <= 0.80
+      recommend_if:
+        - ltv > 0.80
+        - ltv <= 0.95
+      block_if:
+        - ltv > 0.97
+      escalate_if:
+        - appraisal_disputed == true
+    sla_seconds: 5
+    trace_required: true
+
+  - id: product_eligibility
+    name: Product eligibility
+    type: dependent
+    depends_on:
+      - decision: dti_calculation
+        required_output: dti_ratio
+        inherit_context: true
+      - decision: ltv_assessment
+        required_output: ltv_ratio
+        inherit_context: true
+    description: >
+      Determines which loan products the applicant qualifies for
+      based on DTI, LTV, credit band, and income type.
+      First decision to combine multiple upstream contexts.
+    own_data: []
+    shared_data:
+      - product_catalog
+      - regulatory_constraints
+    persona: product_eligibility_agent
+    mode: recommend
+    risk_level: medium
+    owner_team: product_ops
+    boundary:
+      automate_if:
+        - eligible_products.count >= 1
+        - no_guideline_exceptions_required == true
+      recommend_if:
+        - eligible_with_exceptions == true
+      block_if:
+        - no_eligible_products == true
+      escalate_if:
+        - guideline_exception_required == true
+    sla_seconds: 10
+    trace_required: true
+
+  - id: rate_pricing
+    name: Rate pricing
+    type: dependent
+    depends_on:
+      - decision: credit_assessment
+        required_output: credit_score
+        inherit_context: true
+      - decision: dti_calculation
+        required_output: dti_ratio
+        inherit_context: true
+      - decision: ltv_assessment
+        required_output: ltv_ratio
+        inherit_context: true
+    description: >
+      Determines interest rate and pricing adjustments (LLPAs)
+      based on credit score, DTI, LTV, and loan type.
+      Directly impacts applicant offer and margin.
+    own_data:
+      - rate_sheet
+      - lock_period
+      - loan_type
+    shared_data:
+      - product_catalog
+    persona: pricing_agent
+    mode: auto_execute
+    risk_level: medium
+    owner_team: secondary_markets
+    boundary:
+      automate_if:
+        - rate_within_normal_band == true
+        - no_manual_adjustments_required == true
+      recommend_if:
+        - pricing_exception_possible == true
+      block_if:
+        - rate_exceeds_usury_limit == true
+      escalate_if:
+        - concurrent_rate_lock_conflict == true
+    sla_seconds: 8
+    trace_required: true
+
+  - id: underwriting_decision
+    name: Underwriting decision
+    type: dependent
+    depends_on:
+      - decision: income_verification
+        required_output: verified_income
+        inherit_context: true
+      - decision: credit_assessment
+        required_output: credit_band
+        inherit_context: true
+      - decision: fraud_screening
+        required_output: fraud_cleared
+        inherit_context: true
+      - decision: dti_calculation
+        required_output: dti_ratio
+        inherit_context: true
+      - decision: ltv_assessment
+        required_output: ltv_ratio
+        inherit_context: true
+      - decision: product_eligibility
+        required_output: eligible_products
+        inherit_context: true
+    description: >
+      Master underwriting decision — synthesises all upstream
+      context to produce approve, conditional approve, or decline.
+      Highest-stakes decision in the pipeline. Human approval
+      required for anything above low risk.
+    own_data:
+      - underwriter_notes
+      - exception_log
+    shared_data:
+      - application_record
+      - regulatory_constraints
+    persona: senior_underwriting_agent
+    mode: human_approval
+    risk_level: high
+    owner_team: underwriting
+    boundary:
+      automate_if:
+        - all_upstream_auto_cleared == true
+        - risk_score <= 0.25
+        - no_exceptions_required == true
+      recommend_if:
+        - risk_score > 0.25
+        - risk_score <= 0.60
+      block_if:
+        - any_upstream_hard_block == true
+        - fraud_screening.decision == block
+      escalate_if:
+        - risk_score > 0.60
+        - senior_underwriter_review_required == true
+    sla_seconds: 300
+    trace_required: true
+    contamination_guard:
+      fail_if_any_upstream_blocked: true
+
+  - id: approval_routing
+    name: Approval routing
+    type: dependent
+    depends_on:
+      - decision: underwriting_decision
+        required_output: underwriting_outcome
+        inherit_context: true
+    description: >
+      Routes the underwriting outcome to the correct downstream
+      workflow — approval letter, counter-offer, or decline notice.
+      Determines communication channel and timeline.
+    own_data:
+      - routing_rules
+      - communication_templates
+    shared_data:
+      - customer_profile
+      - application_record
+    persona: workflow_routing_agent
+    mode: auto_execute
+    risk_level: low
+    owner_team: loan_ops
+    boundary:
+      automate_if:
+        - underwriting_decision.outcome in [approve, decline]
+      recommend_if:
+        - underwriting_decision.outcome == conditional_approve
+      block_if: []
+      escalate_if:
+        - applicant_dispute_flag == true
+    sla_seconds: 15
+    trace_required: true
+
+  - id: closing_readiness
+    name: Closing readiness
+    type: dependent
+    depends_on:
+      - decision: underwriting_decision
+        required_output: underwriting_outcome
+        inherit_context: true
+      - decision: compliance_check
+        required_output: compliance_cleared
+        inherit_context: true
+    description: >
+      Validates all conditions are satisfied before scheduling
+      closing — title search, insurance binder, final conditions,
+      and closing disclosure timing compliance.
+    own_data:
+      - title_search_result
+      - insurance_binder
+      - final_conditions_checklist
+      - closing_disclosure_sent_at
+    shared_data:
+      - application_record
+      - regulatory_constraints
+    persona: closing_agent
+    mode: human_approval
+    risk_level: high
+    owner_team: closing_ops
+    boundary:
+      automate_if:
+        - all_conditions_cleared == true
+        - cd_timing_compliant == true
+        - title_clear == true
+      recommend_if:
+        - minor_conditions_outstanding == true
+      block_if:
+        - title_defect == true
+        - compliance_check.decision == block
+        - cd_timing_violation == true
+      escalate_if:
+        - lien_dispute == true
+        - insurance_gap == true
+    sla_seconds: 180
+    trace_required: true
+
+# ─────────────────────────────────────────────
+# DECISION EXECUTION ORDER
+# ─────────────────────────────────────────────
+execution_order:
+  parallel_independent:
+    - lead_scoring
+    - income_verification
+    - credit_assessment
+    - fraud_screening
+    - compliance_check
+  sequential_dependent:
+    - [dti_calculation]           # needs: income_verification
+    - [ltv_assessment]            # needs: credit_assessment
+    - [product_eligibility]       # needs: dti + ltv
+    - [rate_pricing]              # needs: credit + dti + ltv
+    - [underwriting_decision]     # needs: all above
+    - [approval_routing]          # needs: underwriting
+    - [closing_readiness]         # needs: underwriting + compliance
+
+# ─────────────────────────────────────────────
+# HARD RULES — apply across all decisions
+# ─────────────────────────────────────────────
+hard_rules:
+  - no_decision_without_owner
+  - no_action_without_policy
+  - no_context_without_lineage
+  - no_agent_without_permissions
+  - no_execution_without_trace
+  - fraud_block_stops_pipeline
+  - compliance_block_stops_closing
+  - upstream_block_propagates_to_dependents
