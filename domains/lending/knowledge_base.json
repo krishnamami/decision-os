@@ -1,0 +1,437 @@
+{
+  "domain": "lending",
+  "version": "1.0.0",
+  "description": "Controlled vocabulary, business definitions, and ontology for the 12 mortgage-lending decisions defined in decisions.yaml.",
+
+  "vocabulary": {
+    "credit_score": {
+      "canonical": "credit_score",
+      "synonyms": ["fico", "fico_score", "credit_rating", "bureau_score", "credit_grade_score"],
+      "definition": "Numeric credit-risk score returned by a credit bureau. FICO range 300-850; lower is higher risk.",
+      "data_type": "integer",
+      "range": [300, 850],
+      "owner_team": "credit_risk"
+    },
+    "credit_band": {
+      "canonical": "credit_band",
+      "synonyms": ["credit_tier", "credit_grade", "score_band"],
+      "definition": "Discrete bucketing of credit_score (e.g. super_prime, prime, near_prime, subprime) used for downstream pricing and eligibility.",
+      "data_type": "string",
+      "allowed_values": ["super_prime", "prime", "near_prime", "subprime", "deep_subprime", "thin_file"],
+      "owner_team": "credit_risk"
+    },
+    "dti": {
+      "canonical": "dti_ratio",
+      "synonyms": ["dti", "debt_to_income", "debt_to_income_ratio", "dti_pct"],
+      "definition": "Total monthly debt obligations divided by verified gross monthly income. Lower is better; QM ceiling generally 0.43.",
+      "data_type": "float",
+      "range": [0.0, 2.0],
+      "owner_team": "underwriting"
+    },
+    "ltv": {
+      "canonical": "ltv_ratio",
+      "synonyms": ["ltv", "loan_to_value", "loan_to_value_ratio", "loan_to_value_pct"],
+      "definition": "Loan amount divided by appraised property value. PMI typically required above 0.80; agency guidelines cap most products at 0.97.",
+      "data_type": "float",
+      "range": [0.0, 1.5],
+      "owner_team": "underwriting"
+    },
+    "stated_income": {
+      "canonical": "stated_income",
+      "synonyms": ["declared_income", "self_reported_income", "applicant_stated_income"],
+      "definition": "Income declared by the applicant before independent verification. Must never feed dti_calculation directly.",
+      "data_type": "float",
+      "owner_team": "underwriting"
+    },
+    "verified_income": {
+      "canonical": "verified_income",
+      "synonyms": ["confirmed_income", "validated_income", "underwritten_income"],
+      "definition": "Income confirmed against payroll, tax returns, or bank statements. Required input to dti_calculation.",
+      "data_type": "float",
+      "owner_team": "underwriting"
+    },
+    "employment_type": {
+      "canonical": "employment_type",
+      "synonyms": ["employment_status", "income_source_type"],
+      "definition": "Classification of how the applicant earns income.",
+      "data_type": "string",
+      "allowed_values": ["salaried", "self_employed", "contractor", "retired", "unemployed", "other"],
+      "owner_team": "underwriting"
+    },
+    "income_confidence_score": {
+      "canonical": "income_confidence_score",
+      "synonyms": ["income_verification_confidence", "income_score"],
+      "definition": "Confidence (0-1) that verified_income reflects sustainable, repeatable earnings.",
+      "data_type": "float",
+      "range": [0.0, 1.0],
+      "owner_team": "underwriting"
+    },
+    "intent_score": {
+      "canonical": "intent_score",
+      "synonyms": ["lead_score", "conversion_likelihood", "lead_intent_score"],
+      "definition": "Probability (0-1) that an inbound lead converts into a funded application.",
+      "data_type": "float",
+      "range": [0.0, 1.0],
+      "owner_team": "growth_ops"
+    },
+    "fraud_score": {
+      "canonical": "fraud_score",
+      "synonyms": ["fraud_risk", "fraud_probability", "fraud_signal_score"],
+      "definition": "Probability (0-1) that an application contains fraudulent identity, document, or behavioral signals.",
+      "data_type": "float",
+      "range": [0.0, 1.0],
+      "owner_team": "fraud_ops"
+    },
+    "identity_match_confidence": {
+      "canonical": "identity_match_confidence",
+      "synonyms": ["kyc_match_confidence", "identity_score"],
+      "definition": "Confidence (0-1) that submitted identity documents match the applicant of record.",
+      "data_type": "float",
+      "range": [0.0, 1.0],
+      "owner_team": "fraud_ops"
+    },
+    "document_authenticity_score": {
+      "canonical": "document_authenticity_score",
+      "synonyms": ["doc_auth_score", "document_genuineness_score"],
+      "definition": "Confidence (0-1) that an uploaded document has not been forged or altered.",
+      "data_type": "float",
+      "range": [0.0, 1.0],
+      "owner_team": "fraud_ops"
+    },
+    "watchlist_match": {
+      "canonical": "watchlist_match",
+      "synonyms": ["sanctions_hit", "ofac_match", "negative_list_match"],
+      "definition": "True if the applicant matches an entry on a sanctions, AML, or fraud watchlist.",
+      "data_type": "boolean",
+      "owner_team": "fraud_ops"
+    },
+    "synthetic_identity_flag": {
+      "canonical": "synthetic_identity_flag",
+      "synonyms": ["synthetic_id_flag", "fabricated_identity_flag"],
+      "definition": "True if the identity bundle (SSN, name, DOB, address) shows signatures of a synthetic identity.",
+      "data_type": "boolean",
+      "owner_team": "fraud_ops"
+    },
+    "kyc_status": {
+      "canonical": "kyc_status",
+      "synonyms": ["know_your_customer_status", "identity_verification_status"],
+      "definition": "Outcome of the KYC pipeline.",
+      "data_type": "string",
+      "allowed_values": ["verified", "pending", "rejected", "manual_review"],
+      "owner_team": "fraud_ops"
+    },
+    "appraised_value": {
+      "canonical": "appraised_value",
+      "synonyms": ["appraisal", "property_appraisal", "appraisal_value", "property_value"],
+      "definition": "Independent appraiser estimate of the property's market value.",
+      "data_type": "float",
+      "owner_team": "underwriting"
+    },
+    "purchase_price": {
+      "canonical": "purchase_price",
+      "synonyms": ["sale_price", "contract_price"],
+      "definition": "Agreed-upon contract price between buyer and seller.",
+      "data_type": "float",
+      "owner_team": "underwriting"
+    },
+    "loan_purpose": {
+      "canonical": "loan_purpose",
+      "synonyms": ["purpose_of_loan", "transaction_type"],
+      "definition": "Why the loan is being originated.",
+      "data_type": "string",
+      "allowed_values": ["purchase", "rate_term_refinance", "cash_out_refinance", "construction"],
+      "owner_team": "underwriting"
+    },
+    "loan_type": {
+      "canonical": "loan_type",
+      "synonyms": ["product_type", "loan_program"],
+      "definition": "Loan program category.",
+      "data_type": "string",
+      "allowed_values": ["conforming", "jumbo", "fha", "va", "usda", "non_qm"],
+      "owner_team": "product_ops"
+    },
+    "rate_pricing": {
+      "canonical": "interest_rate",
+      "synonyms": ["note_rate", "rate", "interest_rate", "priced_rate"],
+      "definition": "Annual interest rate offered to the applicant after pricing adjustments.",
+      "data_type": "float",
+      "owner_team": "secondary_markets"
+    },
+    "llpa": {
+      "canonical": "llpa",
+      "synonyms": ["loan_level_price_adjustment", "price_adjustment", "rate_adjustment"],
+      "definition": "Loan-Level Price Adjustment — basis-point add-on to the rate based on risk attributes (credit, LTV, occupancy).",
+      "data_type": "float",
+      "owner_team": "secondary_markets"
+    },
+    "risk_score": {
+      "canonical": "risk_score",
+      "synonyms": ["composite_risk_score", "underwriting_risk_score"],
+      "definition": "Composite risk (0-1) computed by the senior underwriting agent across all upstream signals.",
+      "data_type": "float",
+      "range": [0.0, 1.0],
+      "owner_team": "underwriting"
+    },
+    "fair_lending_violation": {
+      "canonical": "fair_lending_violation",
+      "synonyms": ["ecoa_violation", "fair_lending_flag"],
+      "definition": "True if the application or proposed terms appear to violate fair-lending statutes (ECOA, FHA).",
+      "data_type": "boolean",
+      "owner_team": "compliance"
+    },
+    "hmda_fields": {
+      "canonical": "hmda_fields",
+      "synonyms": ["hmda_data", "hmda_record"],
+      "definition": "Required Home Mortgage Disclosure Act reporting fields for the loan.",
+      "data_type": "object",
+      "owner_team": "compliance"
+    },
+    "cd_timing_compliant": {
+      "canonical": "cd_timing_compliant",
+      "synonyms": ["closing_disclosure_timing_ok", "trid_timing_ok"],
+      "definition": "True if the Closing Disclosure was delivered at least 3 business days before consummation (TRID rule).",
+      "data_type": "boolean",
+      "owner_team": "compliance"
+    },
+    "title_clear": {
+      "canonical": "title_clear",
+      "synonyms": ["clean_title", "title_ok"],
+      "definition": "True if the title search returned no liens, defects, or encumbrances blocking conveyance.",
+      "data_type": "boolean",
+      "owner_team": "closing_ops"
+    },
+    "channel": {
+      "canonical": "channel",
+      "synonyms": ["origination_channel", "lead_channel"],
+      "definition": "Origin channel for the application.",
+      "data_type": "string",
+      "allowed_values": ["digital", "api_partner", "branch", "broker", "call_center"],
+      "owner_team": "growth_ops"
+    },
+    "fraud_watchlist": {
+      "canonical": "fraud_watchlist",
+      "synonyms": ["fraud_blacklist", "denylist", "negative_list"],
+      "definition": "Reference dataset of known-bad identities, devices, and IPs.",
+      "data_type": "set",
+      "owner_team": "fraud_ops"
+    },
+    "regulatory_constraints": {
+      "canonical": "regulatory_constraints",
+      "synonyms": ["compliance_rules", "regulatory_rules"],
+      "definition": "State and federal rules that gate the application — usury caps, disclosure timing, fair-lending checks.",
+      "data_type": "object",
+      "owner_team": "compliance"
+    },
+    "product_catalog": {
+      "canonical": "product_catalog",
+      "synonyms": ["loan_products", "available_products"],
+      "definition": "Registry of currently-offered loan products with their guidelines.",
+      "data_type": "object",
+      "owner_team": "product_ops"
+    }
+  },
+
+  "decisions": {
+    "lead_scoring": {
+      "purpose": "Evaluate inbound leads for intent quality and conversion likelihood before opening an application.",
+      "inputs": ["lead_source", "utm_params", "session_behavior", "prior_inquiries", "customer_profile"],
+      "outputs": ["intent_score", "channel_fit", "lead_priority"],
+      "persona": "lead_qualification_agent",
+      "risk_level": "low",
+      "mode": "auto_execute"
+    },
+    "income_verification": {
+      "purpose": "Validate stated income against payroll, tax, and bank statements; produce verified_income with a confidence.",
+      "inputs": ["stated_income", "employment_type", "payroll_records", "tax_returns", "bank_statements", "kyc_status"],
+      "outputs": ["verified_income", "income_confidence_score", "payroll_verified"],
+      "persona": "income_verification_agent",
+      "risk_level": "medium",
+      "mode": "human_approval"
+    },
+    "credit_assessment": {
+      "purpose": "Pull and interpret bureau data to determine credit_band and derogatory profile.",
+      "inputs": ["credit_bureau_report", "payment_history", "open_tradelines", "derogatory_marks", "credit_utilization"],
+      "outputs": ["credit_score", "credit_band", "thin_file"],
+      "persona": "credit_risk_agent",
+      "risk_level": "medium",
+      "mode": "auto_execute"
+    },
+    "fraud_screening": {
+      "purpose": "Detect identity fraud, synthetic identity, document forgery, and watchlist hits.",
+      "inputs": ["identity_documents", "device_fingerprint", "ip_geolocation", "velocity_signals", "fraud_watchlist", "kyc_status"],
+      "outputs": ["fraud_score", "fraud_cleared", "watchlist_match", "synthetic_identity_flag"],
+      "persona": "fraud_detection_agent",
+      "risk_level": "high",
+      "mode": "auto_execute"
+    },
+    "compliance_check": {
+      "purpose": "Validate the application against HMDA, ECOA, fair-lending, and state-specific rules.",
+      "inputs": ["application_demographics", "loan_purpose", "property_location", "hmda_fields", "regulatory_constraints"],
+      "outputs": ["compliance_cleared", "fair_lending_violation", "missing_required_disclosures"],
+      "persona": "compliance_agent",
+      "risk_level": "high",
+      "mode": "human_approval"
+    },
+    "dti_calculation": {
+      "purpose": "Compute debt-to-income ratio using verified_income (never stated_income) and existing obligations.",
+      "inputs": ["verified_income", "existing_debt_obligations", "proposed_payment"],
+      "outputs": ["dti_ratio"],
+      "persona": "underwriting_agent",
+      "risk_level": "low",
+      "mode": "auto_execute",
+      "depends_on": ["income_verification"]
+    },
+    "ltv_assessment": {
+      "purpose": "Compute loan-to-value ratio against the appraised property value, gated by credit_band.",
+      "inputs": ["credit_band", "property_appraisal", "purchase_price", "down_payment"],
+      "outputs": ["ltv_ratio", "max_allowable_ltv"],
+      "persona": "underwriting_agent",
+      "risk_level": "low",
+      "mode": "auto_execute",
+      "depends_on": ["credit_assessment"]
+    },
+    "product_eligibility": {
+      "purpose": "Determine which loan products the applicant qualifies for given DTI, LTV, credit_band, and income type.",
+      "inputs": ["dti_ratio", "ltv_ratio", "credit_band", "employment_type", "product_catalog", "regulatory_constraints"],
+      "outputs": ["eligible_products", "guideline_exceptions_required"],
+      "persona": "product_eligibility_agent",
+      "risk_level": "medium",
+      "mode": "recommend",
+      "depends_on": ["dti_calculation", "ltv_assessment"]
+    },
+    "rate_pricing": {
+      "purpose": "Determine interest rate and LLPAs based on credit_score, DTI, LTV, and loan_type.",
+      "inputs": ["credit_score", "dti_ratio", "ltv_ratio", "loan_type", "rate_sheet", "lock_period", "product_catalog"],
+      "outputs": ["interest_rate", "llpa", "rate_within_normal_band"],
+      "persona": "pricing_agent",
+      "risk_level": "medium",
+      "mode": "auto_execute",
+      "depends_on": ["credit_assessment", "dti_calculation", "ltv_assessment"]
+    },
+    "underwriting_decision": {
+      "purpose": "Synthesise all upstream signals into approve, conditional_approve, or decline.",
+      "inputs": ["verified_income", "credit_band", "fraud_cleared", "dti_ratio", "ltv_ratio", "eligible_products", "underwriter_notes", "regulatory_constraints"],
+      "outputs": ["underwriting_outcome", "risk_score", "exceptions_required"],
+      "persona": "senior_underwriting_agent",
+      "risk_level": "high",
+      "mode": "human_approval",
+      "depends_on": ["income_verification", "credit_assessment", "fraud_screening", "dti_calculation", "ltv_assessment", "product_eligibility"]
+    },
+    "approval_routing": {
+      "purpose": "Route the underwriting outcome to the right downstream workflow (approval letter, counter-offer, decline notice).",
+      "inputs": ["underwriting_outcome", "routing_rules", "communication_templates", "customer_profile"],
+      "outputs": ["routing_target", "communication_channel", "timeline"],
+      "persona": "workflow_routing_agent",
+      "risk_level": "low",
+      "mode": "auto_execute",
+      "depends_on": ["underwriting_decision"]
+    },
+    "closing_readiness": {
+      "purpose": "Confirm all conditions, title, insurance, and CD-timing are satisfied before scheduling closing.",
+      "inputs": ["underwriting_outcome", "compliance_cleared", "title_search_result", "insurance_binder", "final_conditions_checklist", "closing_disclosure_sent_at"],
+      "outputs": ["clear_to_close", "outstanding_conditions", "cd_timing_compliant"],
+      "persona": "closing_agent",
+      "risk_level": "high",
+      "mode": "human_approval",
+      "depends_on": ["underwriting_decision", "compliance_check"]
+    }
+  },
+
+  "ontology": {
+    "Customer": {
+      "primary_key": "customer_id",
+      "attributes": ["full_name", "email", "phone", "kyc_status"],
+      "relationships": {
+        "has_many": ["Application", "Lead", "CreditReport"]
+      }
+    },
+    "Application": {
+      "primary_key": "application_id",
+      "attributes": ["customer_id", "loan_purpose", "requested_amount", "property_state", "status"],
+      "relationships": {
+        "belongs_to": ["Customer"],
+        "has_many": ["Document", "IncomeRecord", "Property", "DecisionRecord"]
+      }
+    },
+    "Lead": {
+      "primary_key": "lead_id",
+      "attributes": ["customer_id", "source", "channel", "intent_score", "utm_params"]
+    },
+    "Property": {
+      "primary_key": "property_id",
+      "attributes": ["application_id", "address", "appraised_value", "purchase_price"],
+      "relationships": {
+        "belongs_to": ["Application"]
+      }
+    },
+    "CreditReport": {
+      "primary_key": "credit_report_id",
+      "attributes": ["customer_id", "bureau", "credit_score", "pulled_at", "derogatory_marks", "open_tradelines", "credit_utilization"],
+      "relationships": {
+        "belongs_to": ["Customer"]
+      }
+    },
+    "IncomeRecord": {
+      "primary_key": "income_record_id",
+      "attributes": ["application_id", "stated_income", "verified_income", "employment_type", "income_confidence_score"],
+      "relationships": {
+        "belongs_to": ["Application"]
+      }
+    },
+    "Document": {
+      "primary_key": "document_id",
+      "attributes": ["application_id", "doc_type", "storage_url", "authenticity_score"],
+      "relationships": {
+        "belongs_to": ["Application"]
+      }
+    },
+    "DecisionRecord": {
+      "primary_key": "decision_record_id",
+      "attributes": ["decision_id", "application_id", "outcome", "mode", "confidence", "payload"],
+      "relationships": {
+        "belongs_to": ["Application"]
+      }
+    }
+  },
+
+  "dependency_graph": {
+    "lead_scoring": [],
+    "income_verification": [],
+    "credit_assessment": [],
+    "fraud_screening": [],
+    "compliance_check": [],
+    "dti_calculation": ["income_verification"],
+    "ltv_assessment": ["credit_assessment"],
+    "product_eligibility": ["dti_calculation", "ltv_assessment"],
+    "rate_pricing": ["credit_assessment", "dti_calculation", "ltv_assessment"],
+    "underwriting_decision": [
+      "income_verification",
+      "credit_assessment",
+      "fraud_screening",
+      "dti_calculation",
+      "ltv_assessment",
+      "product_eligibility"
+    ],
+    "approval_routing": ["underwriting_decision"],
+    "closing_readiness": ["underwriting_decision", "compliance_check"]
+  },
+
+  "execution_order": {
+    "parallel_independent": [
+      "lead_scoring",
+      "income_verification",
+      "credit_assessment",
+      "fraud_screening",
+      "compliance_check"
+    ],
+    "sequential_dependent": [
+      ["dti_calculation"],
+      ["ltv_assessment"],
+      ["product_eligibility"],
+      ["rate_pricing"],
+      ["underwriting_decision"],
+      ["approval_routing"],
+      ["closing_readiness"]
+    ]
+  }
+}

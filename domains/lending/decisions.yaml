@@ -39,6 +39,8 @@ decisions:
 
   - id: lead_scoring
     name: Lead scoring
+    atomic_tool: lead_scoring_tool
+    context_window_days: 30
     type: independent
     description: >
       Evaluates inbound leads to determine intent quality,
@@ -71,6 +73,8 @@ decisions:
 
   - id: income_verification
     name: Income verification
+    atomic_tool: income_verification_tool
+    context_window_days: 90
     type: independent
     description: >
       Validates stated income against payroll data, tax records,
@@ -107,6 +111,8 @@ decisions:
 
   - id: credit_assessment
     name: Credit assessment
+    atomic_tool: credit_assessment_tool
+    context_window_days: 90
     type: independent
     description: >
       Pulls and interprets credit bureau data to determine
@@ -143,6 +149,8 @@ decisions:
 
   - id: fraud_screening
     name: Fraud screening
+    atomic_tool: fraud_screening_tool
+    context_window_days: 30
     type: independent
     description: >
       Screens application for identity fraud, synthetic identity,
@@ -179,6 +187,8 @@ decisions:
 
   - id: compliance_check
     name: Compliance check
+    atomic_tool: compliance_check_tool
+    context_window_days: 180
     type: independent
     description: >
       Validates application against regulatory requirements —
@@ -216,6 +226,8 @@ decisions:
 
   - id: dti_calculation
     name: DTI calculation
+    atomic_tool: dti_calculation_tool
+    context_window_days: 90
     type: dependent
     depends_on:
       - decision: income_verification
@@ -251,6 +263,8 @@ decisions:
 
   - id: ltv_assessment
     name: LTV assessment
+    atomic_tool: ltv_assessment_tool
+    context_window_days: 30
     type: dependent
     depends_on:
       - decision: credit_assessment
@@ -284,6 +298,8 @@ decisions:
 
   - id: product_eligibility
     name: Product eligibility
+    atomic_tool: product_eligibility_tool
+    context_window_days: 90
     type: dependent
     depends_on:
       - decision: dti_calculation
@@ -319,6 +335,8 @@ decisions:
 
   - id: rate_pricing
     name: Rate pricing
+    atomic_tool: rate_pricing_tool
+    context_window_days: 7
     type: dependent
     depends_on:
       - decision: credit_assessment
@@ -359,6 +377,8 @@ decisions:
 
   - id: underwriting_decision
     name: Underwriting decision
+    atomic_tool: underwriting_decision_tool
+    context_window_days: 365
     type: dependent
     depends_on:
       - decision: income_verification
@@ -415,6 +435,8 @@ decisions:
 
   - id: approval_routing
     name: Approval routing
+    atomic_tool: approval_routing_tool
+    context_window_days: 30
     type: dependent
     depends_on:
       - decision: underwriting_decision
@@ -447,6 +469,8 @@ decisions:
 
   - id: closing_readiness
     name: Closing readiness
+    atomic_tool: closing_readiness_tool
+    context_window_days: 180
     type: dependent
     depends_on:
       - decision: underwriting_decision
@@ -519,3 +543,21 @@ hard_rules:
   - fraud_block_stops_pipeline
   - compliance_block_stops_closing
   - upstream_block_propagates_to_dependents
+
+# ─────────────────────────────────────────────
+# REFLECTION — agent learning from human overrides
+# ─────────────────────────────────────────────
+# When a human overrides an AI decision, capture the reason and
+# replay it to the same agent the next time it sees a similar event.
+# This is how the system improves without retraining: the override
+# log becomes a per-agent memory the boundary engine consults.
+reflection:
+  trigger: human_override
+  extract:
+    - override_reason
+    - override_reason_code
+    - reviewer_role
+    - original_ai_decision
+  store_as: agent_learning
+  feed_back_to: same_agent_next_similar_event
+  retention_days: 365
