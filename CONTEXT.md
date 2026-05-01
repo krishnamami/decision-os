@@ -45,3 +45,26 @@ can't configure without engineers.
 ## How to continue in a new chat
 Share https://github.com/krishnamami/decision-os and say:
 "Continue building Decision OS — read CONTEXT.md and the repo first"
+
+Update CONTEXT.md to add:
+
+## Session 1 — April 30 2026
+### Key architectural decisions made:
+- Atomic tool pattern: context_build + policy_check + decision bundled into one tool call per agent
+- Reflection layer: every human override extracted as agent learning, fed back to same agent
+- Trace schema: WorkJournalEntry not log dump — hypothesis, signals, contradictions, conclusion
+- Critic agent: independent review of medium-risk decisions, SelfReviewError blocks self-review
+- context_window_days: added per decision to limit history loaded per agent
+
+### Article alignment (4 principles for production-grade agents):
+- Principle 1: atomic tool pattern — deterministic work in code, LLM reasons within boundaries
+- Principle 2: context_window_days — focus agent attention, load only relevant history
+- Principle 3: reflection.py — agents learn from human overrides
+- Principle 4: WorkJournalEntry trace — visible reasoning, separate critic
+
+### Build status:
+- Done: decisions.yaml, normalizer, trace schema, critic agent
+- Next: core/context_store/ then policy_engine then decision_agents
+
+### Resume command:
+claude --resume cde7c041-c35b-4c0b-94d9-51d50a7edddd
