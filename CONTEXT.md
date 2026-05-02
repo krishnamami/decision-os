@@ -1,125 +1,234 @@
 # Decision OS — Project Context
 
+> For the full product spec — vision, architecture, diagrams, build sequence,
+> and coding standards — read [docs/PRD.md](docs/PRD.md) first.
+> This file tracks session history and live build status only.
+
+---
+
 ## What this is
-A governed, explainable, human-in-the-loop decision platform.
-Inspired by Palantir but modular, no-code configurable, mid-market pricing.
 
-**For the full product spec — vision, goals, non-goals, target users,
-architecture principles, open questions — see [docs/PRD.md](docs/PRD.md).
-Read it before making architecture decisions.**
+Decision OS is a platform for structured, governed, AI-augmented decisioning.
+Any business brings their domain, maps their decisions (independent and dependent),
+connects their data sources, and the platform builds context, evaluates policy,
+runs AI agents, enforces governance, and produces a complete explainable trace
+for every decision made.
 
-## Background
-Builder has 2 years experience implementing Palantir for a lending company
-across 12 decision personas covering the full mortgage cycle.
-Some stages still manual. Pain points: cost, rigidity, no explainability,
-can't configure without engineers.
+Every decision has an owner, a boundary, a mode, and a trace.
+No decision is a black box. No action happens without a policy. No context is untracked.
 
-## Product vision
-- Customer brings their domain (lending, insurance, HR)
-- They map N decisions — independent and dependent
-- For each decision: data layer, knowledge base, semantics, ontology,
-  context, boundaries, agents, trace, simulation, no-code UI
-- Every decision is traceable, governed, human-in-the-loop capable
-- Target: mid-market enterprises who can't afford Palantir
+---
 
 ## Current domain: Lending (mortgage)
-12 decisions — see domains/lending/decisions.yaml
+
+12 decisions covering the full mortgage cycle.
+Source of truth: `domains/lending/decisions.yaml`
+Vocabulary + ontology: `domains/lending/knowledge_base.json`
+
+---
 
 ## Tech stack
-- Backend: Python 3.11 + FastAPI
-- Models: Pydantic v2
-- DB: Supabase / Postgres
-- Cache: Redis
-- Frontend: Next.js + Tailwind
-- Deployment: Docker Compose
 
-## Build status
-- [x] domains/lending/decisions.yaml — 12 decisions fully specced (atomic_tool, context_window_days, reflection)
-- [x] core/normalizer/models.py — Pydantic event models + normalize_event()
-- [x] domains/lending/knowledge_base.json — vocabulary + ontology
-- [x] knowledge_base.json ontology section updated with full link map
-- [x] core/semantic_layer/resolver.py — synonym resolver
-- [x] core/policy_engine/evaluator.py — boundary evaluator + hard-rule enforcement
-- [x] core/trace/trace_schema.py — DecisionTrace with WorkJournalEntry
-- [x] core/trace/critic_agent.py — independent critic, blocks self-review
-- [x] core/ontology/object_types.py — 8 object types with semantic links
-- [x] README.md, requirements.txt, docker-compose.yml, .env.example
-- [ ] core/context_store/ — next to build tomorrow
-- [ ] core/decision_agents/
-- [ ] api/
-- [ ] ui/
+```
+Backend:   Python 3.11 + FastAPI
+Models:    Pydantic v2
+Database:  Postgres (Supabase managed)
+Cache:     Redis
+Blob:      S3-compatible
+Frontend:  Next.js + Tailwind
+AI:        Anthropic Claude via API
+Deploy:    Docker Compose → Railway / Render
+```
 
-## Ontology decisions
-- Applicant is WHO — persists across time and applications
-- Application is WHAT THEY ARE ASKING FOR NOW — new lifecycle each time
-- CreditProfile, IncomeProfile, FraudProfile belong to Applicant, not Application
-- DTI, LTV, product eligibility, underwriting belong to Application (and to its Loan)
-- ComplianceRecord and Property belong to Application (regulatory and asset snapshots are application-specific)
-- Re-application: Applicant object reused, new Application created, decisions start fresh, profiles carried forward (within retention)
+---
 
-## How to continue in a new chat
-Share https://github.com/krishnamami/decision-os and say:
-"Continue building Decision OS — read CONTEXT.md and the repo first"
+## ACTUAL BUILD STATUS — verified against repo
 
-Update CONTEXT.md to add:
+Files confirmed in repo as of May 2026:
 
-## Session 1 — April 30 2026
-### Key architectural decisions made:
-- Atomic tool pattern: context_build + policy_check + decision bundled into one tool call per agent
-- Reflection layer: every human override extracted as agent learning, fed back to same agent
-- Trace schema: WorkJournalEntry not log dump — hypothesis, signals, contradictions, conclusion
-- Critic agent: independent review of medium-risk decisions, SelfReviewError blocks self-review
-- context_window_days: added per decision to limit history loaded per agent
+```
+✅  domains/lending/decisions.yaml       12 decisions, boundaries, modes, hard rules,
+                                         atomic_tool, context_window_days, reflection block
+✅  domains/lending/knowledge_base.json  vocabulary, synonyms, ontology, dependency graph
+✅  core/semantic_layer/__init__.py
+✅  core/semantic_layer/resolver.py      synonym resolver, term classifier, threshold lookup
+✅  core/policy_engine/evaluator.py      boundary evaluator + all 8 hard rules enforced
+✅  core/trace/__init__.py
+✅  core/trace/trace_schema.py           WorkJournalEntry + DecisionTrace Pydantic models
+✅  core/trace/critic_agent.py           independent critic, SelfReviewError enforcement
+✅  docs/PRD.md                          full product spec v0.5
+✅  docker-compose.yml
+✅  requirements.txt
+✅  README.md
+```
 
-### Article alignment (4 principles for production-grade agents):
-- Principle 1: atomic tool pattern — deterministic work in code, LLM reasons within boundaries
-- Principle 2: context_window_days — focus agent attention, load only relevant history
-- Principle 3: reflection.py — agents learn from human overrides
-- Principle 4: WorkJournalEntry trace — visible reasoning, separate critic
+Files Claude Code generated in sessions but NOT yet pushed to repo:
 
-### Build status:
-- Done: decisions.yaml, normalizer, trace schema, critic agent
-- Next: core/context_store/ then policy_engine then decision_agents
+```
+⚠️  core/normalizer/models.py            generated in session 1, not in repo
+⚠️  core/ontology/object_types.py        generated in session 1, not in repo
+⚠️  .env.example                         generated in session 1, not in repo
+```
 
-### Resume command:
-claude --resume cde7c041-c35b-4c0b-94d9-51d50a7edddd
+Files not yet built:
 
-## Session 2 — May 1 2026
+```
+⬜  core/normalizer/models.py            BUILD FIRST — everything depends on this
+⬜  core/ontology/object_types.py        BUILD SECOND
+⬜  core/context_store/                  BUILD THIRD
+    base.py, redis_cache.py, postgres_store.py
+    lending.py, schema.sql, context_builder.py
+⬜  core/policy_engine/loader.py
+⬜  core/semantic_layer/flow.py
+⬜  core/decision_agents/
+    base.py, atomic_tool.py, mode_router.py
+⬜  core/execution/dag_executor.py
+⬜  core/connectors/base.py
+⬜  core/trace/trace_writer.py
+⬜  core/trace/reflection.py
+⬜  core/trace/outcome_tracker.py
+⬜  core/simulation/replayer.py
+⬜  domains/lending/personas/
+⬜  domains/lending/seed_events/
+⬜  api/
+⬜  ui/
+⬜  tests/
+⬜  CONTEXT.md                           this file — push it
+⬜  .env.example
+```
 
-### Documentation landed
-- docs/PRD.md (v0.1 draft, 18 sections + Appendix A) — full product spec
-- §11 Visual flow with 5 Mermaid diagrams: end-to-end pipeline, atomic
-  tool internals, outcome routing state machine, object lifecycle,
-  connector data flow
-- CONTEXT.md links PRD from top header
-- Memory pointer saved so PRD loads in every future session
+---
 
-### Architectural confirmations
-- Connector framework is the keystone for Foundry-without-Foundry —
-  Postgres + S3 + Redis (no HDFS at mid-market scale)
-- Coverage audit: spec ~95% in YAML, runtime ~25% built
-- "Request more evidence" outcome missing — needed if humans should
-  bounce work back to upstream personas (PRD §17 open question)
-- 5 of 8 hard_rules still unenforced in code
+## Key architectural decisions (locked)
 
-### No new code today
-- Foundation files unchanged from Session 1 build status above
-- Pivoted from build to grounding (PRD + visuals)
+```
+Atomic tool pattern
+  context_build + policy_check + decision bundled into one tool call per agent.
+  LLM reasons within boundaries. Code enforces hard rules. Cannot be called separately.
 
-### Resume options — pick one tomorrow
-1. **Finish context_store** (original next-up) — redis_cache.py,
-   postgres_store.py, schema.sql
-2. **Start connectors** — core/connectors/base.py + 1 reference adapter;
-   forces context_store interface to be defined by real demand
-3. **Resolve PRD open questions first** — target customer, pricing,
-   competitive wedge, before more architecture
+Reflection loop
+  Every human override → AgentLearning record → fed back to same agent next similar event.
+  System improves without model retraining.
 
-### Open questions (highest impact, see PRD §17)
-- Target customer profile + volume tier
-- Pricing model
-- Multi-tenancy timeline (v1 or v2?)
-- AI model strategy (BYO LLM? self-host for regulated buyers?)
-- "Request more evidence" outcome design
+WorkJournalEntry trace
+  Not a log. A structured work journal:
+  hypothesis_tested | signals_evaluated | contradictions_found |
+  conclusion | confidence_basis | human_readable_summary
+  Independent critic reviews medium+ risk before execution.
+  SelfReviewError blocks agent from critiquing its own output.
 
-### Resume command
-claude --resume <new-session-id>
+context_window_days
+  Each decision loads only history within its defined window.
+  Prevents context contamination from irrelevant history.
+  Defined per decision in decisions.yaml.
+
+Contamination guard
+  Dependent decisions refuse to run if upstream confidence is below threshold
+  or any upstream decision is blocked.
+  upstream_block_propagates_to_dependents is a hard rule.
+
+WHO vs WHAT-NOW (ontology)
+  Applicant = WHO — persists across time and applications.
+  Application = WHAT THEY ARE ASKING FOR NOW — lifecycle-bound, new each request.
+  CreditProfile, IncomeProfile, FraudProfile → belong to Applicant.
+  DTI, LTV, product eligibility, underwriting → belong to Application.
+  Re-application: same Applicant, new Application, fresh decisions,
+  Applicant profiles carried forward within retention window.
+```
+
+---
+
+## Session history
+
+### Session 1 — April 30 2026
+
+**What was designed and built:**
+- Full architecture defined across all 15 layers
+- decisions.yaml — all 12 lending decisions, boundaries, hard rules, execution order
+- Atomic tool pattern adopted (context + policy + decision in one call)
+- WorkJournalEntry trace schema designed
+- Independent critic agent designed with SelfReviewError
+- context_window_days added per decision
+- Reflection block added to decisions.yaml
+- Claude Code generated: normalizer models, ontology classes, semantic resolver,
+  policy evaluator, trace schema, critic agent
+
+**What did NOT get pushed to GitHub:**
+- core/normalizer/models.py — generated but not committed
+- core/ontology/object_types.py — generated but not committed
+- .env.example — generated but not committed
+
+**Resume command (session expired — start fresh):**
+```
+/c/Users/bkgou/AppData/Roaming/npm/claude
+```
+
+---
+
+### Session 2 — May 1 2026
+
+**What was designed:**
+- PRD v0.1 → v0.5 written and refined
+- All 5 Mermaid diagrams embedded in PRD
+- Domain pack concept formalised (lending as Domain Pack 1)
+- Marketing domain explored — Decision Inventory document created
+- Data Engineering Specification document created
+- Ontology deepened — WHO vs WHAT-NOW distinction formalised
+- Entity relationship map completed (Applicant → Application semantic links)
+- Business entity storage model documented (Redis TTLs per entity)
+- CONTEXT.md corrected — removed inaccurate build status
+
+**No new code committed this session.**
+
+**What needs to happen next session:**
+1. Push this CONTEXT.md to repo
+2. Push PRD.md v0.5 to repo (replace docs/PRD.md)
+3. Open Claude Code and use session start prompt from PRD section 20
+4. Build core/normalizer/models.py first
+
+---
+
+## How to resume next session
+
+Open Claude Code:
+```bash
+/c/Users/bkgou/AppData/Roaming/npm/claude
+```
+
+Paste this at the `>` prompt:
+```
+Read these files in this order before doing anything:
+1. docs/PRD.md
+2. domains/lending/decisions.yaml
+3. domains/lending/knowledge_base.json
+
+Then verify what actually exists:
+  find . -name "*.py" -o -name "*.yaml" -o -name "*.json" | grep -v .git | grep -v __pycache__ | sort
+
+Do not ask what the project is. Do not ask what was built.
+Read the files and know.
+
+Build in this exact order:
+  STEP 1: core/normalizer/models.py
+  STEP 2: core/ontology/object_types.py
+  STEP 3: core/context_store/ (base.py, redis_cache.py, postgres_store.py, lending.py, schema.sql, context_builder.py)
+```
+
+---
+
+## Open questions (unresolved)
+
+```
+1. First design partner — org type, domain, workflow, volume?
+2. Pricing model — per-decision / per-application / platform fee?
+3. Single-tenant v1 or multi-tenant v1?
+4. Which connectors live at launch vs mock?
+5. AI model strategy — hosted API / bring-your-own / self-hosted?
+6. Override authority — single approver or dual-control for high-risk decisions?
+7. Connector marketplace — build all integrations or open SDK?
+8. "Request more evidence" outcome — needed for human bounce-back to upstream personas?
+```
+
+---
+
+*Decision OS · CONTEXT.md · Updated May 2026*
