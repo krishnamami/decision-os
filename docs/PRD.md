@@ -711,8 +711,16 @@ decision-os/
                                             decision-scoped read perms in projection.
 
   NEXT
-  4  core/connectors/base.py      Base connector + mock CSV + one live adapter.
-                                  Emits RawEvent objects only — no entity hydration.
+  4  core/connectors/             Base + push/pull split + mock adapters.
+                                    base.py        — BaseConnector,
+                                                     PushConnector (source initiates),
+                                                     PullConnector (we initiate).
+                                    mock_csv.py    — push reference (file drops).
+                                    mock_http.py   — pull reference (recorded fixtures).
+                                  All adapters emit canonical BaseEvent via
+                                  normalize_event() — the interlingua. No entity
+                                  hydration here. Adds correlation_id + request_id
+                                  to BaseEvent so pull request↔response can be linked.
   5  core/decision_agents/        Base class + atomic_tool + 12 persona implementations.
                                   atomic_tool is the bundled call: context_build +
                                   policy_check + trace_write + mode_route. LLM cannot
@@ -770,10 +778,15 @@ STEPS 1, 2, 3 are complete (session 3 — May 2026):
   ✅ core/context_store/schema.sql
 
 Build next, in this order:
-  STEP 4: core/connectors/base.py
-          Base connector + mock CSV adapter + one live adapter.
-          Emits RawEvent objects only — entity hydration happens later
-          via the normalizer + ontology already in place.
+  STEP 4: core/connectors/
+          base.py with BaseConnector + PushConnector (source initiates,
+          e.g. webhooks, file drops) + PullConnector (we initiate,
+          e.g. bureau pulls, Plaid). mock_csv.py as push reference,
+          mock_http.py as pull reference with recorded fixtures.
+          Add correlation_id + request_id to BaseEvent so pull
+          request↔response pairs can be linked. All adapters emit via
+          normalize_event() — entity hydration happens later via the
+          normalizer + ontology already in place.
 
   STEP 5: core/decision_agents/{base,atomic_tool,mode_router}.py
           Agent base class + bundled atomic_tool call + mode router.

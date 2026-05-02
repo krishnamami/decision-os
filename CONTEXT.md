@@ -162,6 +162,39 @@ Shared-vs-scoped writes in the context store
        declared upstream outputs (no peeking at sibling decisions).
   Use DecisionScopedStore.set() only for decision outputs, not entities.
   See core/context_store/lending.py:snapshot() for the read paths.
+
+Connector layering — push vs pull (STEP 4 design)
+  One canonical event vocabulary lives in core/normalizer/models.py — the
+  interlingua every source converges on. core/connectors/ holds N adapters,
+  one per source, each doing source-specific parsing. Adapters split into
+  two base classes:
+
+    PushConnector   — source initiates, we react.
+                      Examples: borrower portal webhooks, e-sign callbacks,
+                                payroll provider events, file drops.
+                      Method: listen() — long-running consumer.
+
+    PullConnector   — we initiate, source responds.
+                      Examples: bureau pulls (Experian/TransUnion/Equifax),
+                                Plaid/Argyle income, AVM lookups, title search,
+                                The Work Number.
+                      Methods: fetch(query) → BaseEvent, poll(schedule).
+
+  Both feed normalize_event(raw_dict) → typed BaseEvent → context store.
+  The normalizer is source-agnostic; only the adapter knows the source's
+  shape and request semantics.
+
+  Pull patterns need request↔response correlation. STEP 4 adds:
+    BaseEvent.correlation_id : Optional[UUID]   # links request → response
+    BaseEvent.request_id     : Optional[UUID]   # the outbound call id
+
+  Simulation strategy:
+    Push sources → JSON/CSV fixtures in domains/lending/seed_events/ replayed
+                   through the adapter's emit() path.
+    Pull sources → recorded response fixtures + a mock HTTP server (respx /
+                   vcrpy / a stub) so "Experian returned this XML for X" is
+                   deterministic across runs. Each PullConnector ships a
+                   MockClient variant for tests.
 ```
 
 ---
