@@ -9,6 +9,7 @@ from .trace_schema import (
     WorkJournalEntry,
 )
 from .critic_agent import CriticAgent, SelfReviewError
+from .trace_writer import InMemoryTraceWriter, TraceWriter
 
 __all__ = [
     "Contradiction",
@@ -17,8 +18,10 @@ __all__ = [
     "CriticVerdict",
     "DecisionTrace",
     "HumanReview",
+    "InMemoryTraceWriter",
     "SelfReviewError",
     "Signal",
     "SignalDirection",
+    "TraceWriter",
     "WorkJournalEntry",
 ]

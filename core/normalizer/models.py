@@ -175,6 +175,13 @@ class BaseEvent(BaseModel):
     customer_id: Optional[str] = None
     raw_payload: dict[str, Any] = Field(default_factory=dict)
 
+    # Pull-pattern request↔response correlation. Push connectors leave
+    # both null; pull connectors stamp request_id on the outbound call
+    # and propagate it onto the inbound response so the trace layer can
+    # pair them.
+    correlation_id: Optional[UUID] = None
+    request_id: Optional[UUID] = None
+
 
 class LeadReceivedEvent(BaseEvent):
     event_type: EventType = EventType.LEAD_RECEIVED
