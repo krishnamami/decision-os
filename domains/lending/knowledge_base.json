@@ -338,58 +338,404 @@
   },
 
   "ontology": {
-    "Customer": {
-      "primary_key": "customer_id",
-      "attributes": ["full_name", "email", "phone", "kyc_status"],
-      "relationships": {
-        "has_many": ["Application", "Lead", "CreditReport"]
+    "description": "Business object model. The 8 object_types are persistent system-of-record entities. The system_object_types are runtime artifacts produced by the decision pipeline (Decision, DecisionTrace, AgentLearning).",
+    "object_types": {
+      "Applicant": {
+        "semantic_definition": "A natural person who has interacted with the lender — the WHO. Persists across applications and across time. One Applicant may submit many Applications, may co-apply with another Applicant, and accumulates multiple credit / income / fraud profiles over their lifetime. Re-applications reuse the Applicant; they do not create a new one.",
+        "primary_key": "applicant_id",
+        "properties": {
+          "applicant_id": "string",
+          "full_name": "string",
+          "email": "string",
+          "phone": "string",
+          "date_of_birth": "date",
+          "ssn_hash": "string",
+          "kyc_status": "enum<verified|pending|rejected|manual_review>",
+          "first_seen_at": "datetime",
+          "last_seen_at": "datetime"
+        },
+        "links": [
+          {
+            "name": "submits",
+            "target_object": "Application",
+            "cardinality": "one_to_many",
+            "direction": "outbound",
+            "semantic_meaning": "An applicant submits many applications over their lifetime. Each application is a fresh request, never a mutation of a prior one."
+          },
+          {
+            "name": "has_credit_profile",
+            "target_object": "CreditProfile",
+            "cardinality": "one_to_many",
+            "direction": "outbound",
+            "semantic_meaning": "One CreditProfile per bureau pull. Old profiles are retained; never overwritten."
+          },
+          {
+            "name": "has_income_profile",
+            "target_object": "IncomeProfile",
+            "cardinality": "one_to_many",
+            "direction": "outbound",
+            "semantic_meaning": "One IncomeProfile per verification event."
+          },
+          {
+            "name": "has_fraud_profile",
+            "target_object": "FraudProfile",
+            "cardinality": "one_to_many",
+            "direction": "outbound",
+            "semantic_meaning": "One FraudProfile per screening run. Identity does not reset across applications."
+          },
+          {
+            "name": "co_applies_with",
+            "target_object": "Applicant",
+            "cardinality": "many_to_many",
+            "direction": "self_referential",
+            "semantic_meaning": "Joint applicants on a single Application. Symmetric — if A co-applies with B, B co-applies with A."
+          }
+        ],
+        "decisions_that_read_it": [
+          "lead_scoring",
+          "income_verification",
+          "credit_assessment",
+          "fraud_screening",
+          "compliance_check",
+          "underwriting_decision",
+          "approval_routing"
+        ]
+      },
+
+      "Application": {
+        "semantic_definition": "A specific loan request made by an Applicant against a specific Property at a specific moment — the WHAT THEY ARE ASKING FOR NOW. Has its own lifecycle (intake → underwriting → approved | declined → closed). A re-application creates a NEW Application; the prior one is closed, not edited.",
+        "primary_key": "application_id",
+        "properties": {
+          "application_id": "string",
+          "applicant_id": "string",
+          "status": "enum<intake|underwriting|approved|conditional|declined|withdrawn|closed>",
+          "loan_purpose": "enum<purchase|rate_term_refinance|cash_out_refinance|construction>",
+          "requested_amount": "float",
+          "channel": "enum<digital|api_partner|branch|broker|call_center>",
+          "property_state": "string",
+          "submitted_at": "datetime",
+          "decision_due_by": "datetime"
+        },
+        "links": [
+          {
+            "name": "submitted_by",
+            "target_object": "Applicant",
+            "cardinality": "many_to_one",
+            "direction": "inbound",
+            "semantic_meaning": "The primary applicant of record. Co-applicants are reached via Applicant.co_applies_with."
+          },
+          {
+            "name": "secured_by",
+            "target_object": "Property",
+            "cardinality": "one_to_one",
+            "direction": "outbound",
+            "semantic_meaning": "The subject property collateralizing this loan."
+          },
+          {
+            "name": "requests",
+            "target_object": "Loan",
+            "cardinality": "one_to_one",
+            "direction": "outbound",
+            "semantic_meaning": "The loan terms being requested or offered for this application."
+          },
+          {
+            "name": "evaluated_by",
+            "target_object": "Decision",
+            "cardinality": "one_to_many",
+            "direction": "outbound",
+            "semantic_meaning": "The 12 lending decisions evaluated for this application; see decisions.yaml for the dependency graph."
+          },
+          {
+            "name": "governed_by",
+            "target_object": "ComplianceRecord",
+            "cardinality": "one_to_one",
+            "direction": "outbound",
+            "semantic_meaning": "Compliance posture for this application — HMDA, fair-lending, TRID timing. Owned by the Application; never shared."
+          }
+        ],
+        "decisions_that_read_it": [
+          "lead_scoring",
+          "income_verification",
+          "credit_assessment",
+          "fraud_screening",
+          "compliance_check",
+          "dti_calculation",
+          "ltv_assessment",
+          "product_eligibility",
+          "rate_pricing",
+          "underwriting_decision",
+          "approval_routing",
+          "closing_readiness"
+        ]
+      },
+
+      "Property": {
+        "semantic_definition": "The real-property asset securing the loan. Belongs to a single Application — different applications have different Property objects, even at the same address.",
+        "primary_key": "property_id",
+        "properties": {
+          "property_id": "string",
+          "application_id": "string",
+          "address": "string",
+          "property_type": "enum<single_family|condo|townhouse|multi_unit|manufactured>",
+          "occupancy": "enum<primary|secondary|investment>",
+          "appraised_value": "float",
+          "purchase_price": "float",
+          "down_payment": "float",
+          "title_status": "enum<clear|defect|pending>",
+          "lien_status": "string"
+        },
+        "links": [
+          {
+            "name": "secures",
+            "target_object": "Application",
+            "cardinality": "one_to_one",
+            "direction": "inbound",
+            "semantic_meaning": "Inverse of Application.secured_by."
+          }
+        ],
+        "decisions_that_read_it": ["ltv_assessment", "underwriting_decision", "closing_readiness"]
+      },
+
+      "Loan": {
+        "semantic_definition": "The loan product and terms being requested or offered. Tightly coupled to one Application — re-pricing or product changes within the same application mutate this Loan, but a new Application creates a new Loan.",
+        "primary_key": "loan_id",
+        "properties": {
+          "loan_id": "string",
+          "application_id": "string",
+          "loan_type": "enum<conforming|jumbo|fha|va|usda|non_qm>",
+          "principal_amount": "float",
+          "term_months": "integer",
+          "lock_period": "integer",
+          "interest_rate": "float",
+          "llpa": "float",
+          "ltv_ratio": "float",
+          "dti_ratio": "float",
+          "eligible_products": "list<string>"
+        },
+        "links": [
+          {
+            "name": "requested_in",
+            "target_object": "Application",
+            "cardinality": "one_to_one",
+            "direction": "inbound",
+            "semantic_meaning": "Inverse of Application.requests."
+          }
+        ],
+        "decisions_that_read_it": [
+          "product_eligibility",
+          "rate_pricing",
+          "dti_calculation",
+          "ltv_assessment",
+          "underwriting_decision",
+          "approval_routing",
+          "closing_readiness"
+        ]
+      },
+
+      "CreditProfile": {
+        "semantic_definition": "Snapshot of an Applicant's credit at a point in time, from a specific bureau. Immutable — a re-pull creates a new CreditProfile rather than overwriting. Belongs to the Applicant, not to any one Application, so re-applications can reuse a recent pull within retention.",
+        "primary_key": "credit_profile_id",
+        "properties": {
+          "credit_profile_id": "string",
+          "applicant_id": "string",
+          "bureau": "enum<experian|equifax|transunion|tri_merge>",
+          "pulled_at": "datetime",
+          "credit_score": "integer",
+          "credit_band": "enum<super_prime|prime|near_prime|subprime|deep_subprime|thin_file>",
+          "derogatory_marks": "integer",
+          "open_tradelines": "integer",
+          "credit_utilization": "float",
+          "payment_history": "object",
+          "thin_file": "boolean",
+          "active_bankruptcy": "boolean",
+          "foreclosure_last_36_months": "boolean",
+          "no_derogatory_last_24_months": "boolean"
+        },
+        "links": [
+          {
+            "name": "belongs_to",
+            "target_object": "Applicant",
+            "cardinality": "many_to_one",
+            "direction": "inbound",
+            "semantic_meaning": "The applicant this snapshot belongs to."
+          }
+        ],
+        "decisions_that_read_it": [
+          "credit_assessment",
+          "ltv_assessment",
+          "product_eligibility",
+          "rate_pricing",
+          "underwriting_decision"
+        ]
+      },
+
+      "IncomeProfile": {
+        "semantic_definition": "Verified income snapshot for an Applicant, optionally scoped to a specific Application. Belongs to the Applicant so re-applications can carry forward a recent verification within retention; the application_id is recorded for trace, not ownership.",
+        "primary_key": "income_profile_id",
+        "properties": {
+          "income_profile_id": "string",
+          "applicant_id": "string",
+          "application_id": "string",
+          "stated_income": "float",
+          "verified_income": "float",
+          "employment_type": "enum<salaried|self_employed|contractor|retired|unemployed|other>",
+          "payroll_verified": "boolean",
+          "income_confidence_score": "float",
+          "income_discrepancy_pct": "float",
+          "multiple_income_sources": "boolean",
+          "foreign_income": "boolean",
+          "verified_at": "datetime"
+        },
+        "links": [
+          {
+            "name": "belongs_to",
+            "target_object": "Applicant",
+            "cardinality": "many_to_one",
+            "direction": "inbound",
+            "semantic_meaning": "The applicant whose income this snapshot represents."
+          },
+          {
+            "name": "scoped_to",
+            "target_object": "Application",
+            "cardinality": "many_to_one",
+            "direction": "outbound",
+            "semantic_meaning": "Income verification is usually triggered by an Application, but the result attaches to the Applicant."
+          }
+        ],
+        "decisions_that_read_it": [
+          "income_verification",
+          "dti_calculation",
+          "product_eligibility",
+          "underwriting_decision"
+        ]
+      },
+
+      "FraudProfile": {
+        "semantic_definition": "Identity / fraud signals collected for an Applicant. Belongs to the Applicant because identity does not reset across applications — a fraud signal seen on application N+1 must be informed by what was seen on application N.",
+        "primary_key": "fraud_profile_id",
+        "properties": {
+          "fraud_profile_id": "string",
+          "applicant_id": "string",
+          "generated_at": "datetime",
+          "fraud_score": "float",
+          "identity_match_confidence": "float",
+          "document_authenticity_score": "float",
+          "watchlist_match": "boolean",
+          "synthetic_identity_flag": "boolean",
+          "device_fingerprint": "string",
+          "ip_geolocation": "string",
+          "velocity_signals": "list<string>"
+        },
+        "links": [
+          {
+            "name": "belongs_to",
+            "target_object": "Applicant",
+            "cardinality": "many_to_one",
+            "direction": "inbound",
+            "semantic_meaning": "The applicant this fraud snapshot belongs to."
+          }
+        ],
+        "decisions_that_read_it": ["fraud_screening", "compliance_check", "underwriting_decision"]
+      },
+
+      "ComplianceRecord": {
+        "semantic_definition": "Compliance posture for a single Application — HMDA, ECOA / fair-lending, state-specific rules, TRID timing. Owned by the Application; never shared across applications, because the regulatory snapshot is application-specific.",
+        "primary_key": "compliance_record_id",
+        "properties": {
+          "compliance_record_id": "string",
+          "application_id": "string",
+          "hmda_fields": "object",
+          "all_hmda_fields_complete": "boolean",
+          "fair_lending_violation": "boolean",
+          "missing_required_disclosures": "boolean",
+          "state_rules_passed": "boolean",
+          "cd_timing_compliant": "boolean",
+          "closing_disclosure_sent_at": "datetime",
+          "regulatory_ambiguity": "boolean",
+          "mixed_jurisdiction": "boolean",
+          "recorded_at": "datetime"
+        },
+        "links": [
+          {
+            "name": "governs",
+            "target_object": "Application",
+            "cardinality": "one_to_one",
+            "direction": "inbound",
+            "semantic_meaning": "Inverse of Application.governed_by."
+          }
+        ],
+        "decisions_that_read_it": ["compliance_check", "underwriting_decision", "closing_readiness"]
       }
     },
-    "Application": {
-      "primary_key": "application_id",
-      "attributes": ["customer_id", "loan_purpose", "requested_amount", "property_state", "status"],
-      "relationships": {
-        "belongs_to": ["Customer"],
-        "has_many": ["Document", "IncomeRecord", "Property", "DecisionRecord"]
-      }
-    },
-    "Lead": {
-      "primary_key": "lead_id",
-      "attributes": ["customer_id", "source", "channel", "intent_score", "utm_params"]
-    },
-    "Property": {
-      "primary_key": "property_id",
-      "attributes": ["application_id", "address", "appraised_value", "purchase_price"],
-      "relationships": {
-        "belongs_to": ["Application"]
-      }
-    },
-    "CreditReport": {
-      "primary_key": "credit_report_id",
-      "attributes": ["customer_id", "bureau", "credit_score", "pulled_at", "derogatory_marks", "open_tradelines", "credit_utilization"],
-      "relationships": {
-        "belongs_to": ["Customer"]
-      }
-    },
-    "IncomeRecord": {
-      "primary_key": "income_record_id",
-      "attributes": ["application_id", "stated_income", "verified_income", "employment_type", "income_confidence_score"],
-      "relationships": {
-        "belongs_to": ["Application"]
-      }
-    },
-    "Document": {
-      "primary_key": "document_id",
-      "attributes": ["application_id", "doc_type", "storage_url", "authenticity_score"],
-      "relationships": {
-        "belongs_to": ["Application"]
-      }
-    },
-    "DecisionRecord": {
-      "primary_key": "decision_record_id",
-      "attributes": ["decision_id", "application_id", "outcome", "mode", "confidence", "payload"],
-      "relationships": {
-        "belongs_to": ["Application"]
+
+    "system_object_types": {
+      "Decision": {
+        "semantic_definition": "A business decision artifact emitted by an agent against an Application. Each of the 12 decisions in decisions.yaml produces one Decision per Application per evaluation pass.",
+        "primary_key": "decision_record_id",
+        "properties": {
+          "decision_record_id": "string",
+          "decision_id": "string",
+          "application_id": "string",
+          "outcome": "enum<allow|block|recommend|escalate>",
+          "mode": "enum<shadow|recommend|human_approval|auto_execute>",
+          "confidence": "float",
+          "matched_clause": "string",
+          "emitted_at": "datetime"
+        },
+        "links": [
+          {
+            "name": "depends_on",
+            "target_object": "Decision",
+            "cardinality": "many_to_many",
+            "direction": "self_referential",
+            "semantic_meaning": "Dependency edges from decisions.yaml depends_on. Forms a DAG. A dependent decision cannot run until its upstream Decisions are emitted."
+          },
+          {
+            "name": "produces",
+            "target_object": "DecisionTrace",
+            "cardinality": "one_to_one",
+            "direction": "outbound",
+            "semantic_meaning": "Every Decision produces exactly one DecisionTrace — hard rule no_execution_without_trace."
+          }
+        ]
+      },
+      "DecisionTrace": {
+        "semantic_definition": "Full audit record of a Decision execution: inputs snapshot, structured WorkJournalEntry reasoning, policy outcome, critic review, and (if applicable) human review. See core/trace/trace_schema.py.",
+        "primary_key": "trace_id",
+        "properties": {
+          "trace_id": "uuid",
+          "decision_record_id": "string",
+          "agent_id": "string",
+          "reasoning": "WorkJournalEntry",
+          "inputs_snapshot_id": "uuid",
+          "started_at": "datetime",
+          "ended_at": "datetime"
+        },
+        "links": [
+          {
+            "name": "triggers",
+            "target_object": "AgentLearning",
+            "cardinality": "one_to_one_optional",
+            "direction": "outbound",
+            "semantic_meaning": "On human_override only. The override reason becomes an AgentLearning record fed back to the same agent on next similar event. See reflection block in decisions.yaml."
+          }
+        ]
+      },
+      "AgentLearning": {
+        "semantic_definition": "A human override captured as a learning signal for the originating agent. Retained for reflection.retention_days; consulted by the boundary engine on subsequent similar events.",
+        "primary_key": "agent_learning_id",
+        "properties": {
+          "agent_learning_id": "string",
+          "agent_id": "string",
+          "decision_id": "string",
+          "trace_id": "uuid",
+          "override_reason": "string",
+          "override_reason_code": "string",
+          "reviewer_role": "string",
+          "original_ai_decision": "enum<allow|block|recommend|escalate>",
+          "captured_at": "datetime",
+          "expires_at": "datetime"
+        }
       }
     }
   },
