@@ -625,24 +625,39 @@ decision-os/
 │   │   └── trace_writer.py        ⬜ TODO
 │   │   └── reflection.py          ⬜ TODO — override → AgentLearning → replay
 │   │   └── outcome_tracker.py     ⬜ TODO
-│   ├── normalizer/                ⬜ TODO — BUILD FIRST
-│   │   └── models.py              ⬜ TODO — all lending Pydantic event models
-│   ├── ontology/                  ⬜ TODO — BUILD SECOND
-│   │   └── object_types.py        ⬜ TODO — 8 object types + semantic links
-│   ├── context_store/             ⬜ TODO — BUILD THIRD
-│   │   ├── base.py                ⬜ TODO
-│   │   ├── redis_cache.py         ⬜ TODO
-│   │   ├── postgres_store.py      ⬜ TODO
-│   │   ├── lending.py             ⬜ TODO
-│   │   ├── schema.sql             ⬜ TODO
-│   │   └── context_builder.py     ⬜ TODO
-│   ├── decision_agents/           ⬜ TODO
+│   ├── normalizer/                ✅ STEP 1 DONE (session 3)
+│   │   ├── __init__.py            ✅ EXISTS
+│   │   └── models.py              ✅ EXISTS — 13 typed events, 8 entities,
+│   │                                          normalize_event() + EVENT_REGISTRY
+│   ├── ontology/                  ✅ STEP 2 DONE (session 3)
+│   │   ├── __init__.py            ✅ EXISTS
+│   │   └── object_types.py        ✅ EXISTS — 8 lending object types, semantic
+│   │                                          links, decisions_that_read_it,
+│   │                                          to_context_bundle() projection
+│   ├── context_store/             ✅ STEP 3 DONE (session 3)
+│   │   ├── __init__.py            ✅ EXISTS
+│   │   ├── base.py                ✅ EXISTS — ContextStore abstract +
+│   │   │                                       ContextRecord + Lineage + Snapshot
+│   │   ├── lending.py             ✅ EXISTS — LendingContextStore +
+│   │   │                                       DecisionScopedStore. Risk-driven TTLs.
+│   │   ├── redis_cache.py         ✅ EXISTS — RedisHotCache + InMemoryHotCache
+│   │   ├── postgres_store.py      ✅ EXISTS — PostgresDurableStore +
+│   │   │                                       InMemoryDurableStore. Append-only,
+│   │   │                                       supersession chain, tombstones,
+│   │   │                                       point-in-time reads.
+│   │   ├── schema.sql             ✅ EXISTS — context_records + context_snapshots,
+│   │   │                                       partial unique on active row,
+│   │   │                                       version uniqueness, supersession FK
+│   │   └── context_builder.py     ✅ EXISTS — ContextBuilder + ContextBundle.
+│   │                                          Decision-scoped projection through
+│   │                                          ontology.to_context_bundle.
+│   ├── decision_agents/           ⬜ TODO — STEP 5
 │   │   ├── base.py                ⬜ TODO
 │   │   ├── atomic_tool.py         ⬜ TODO
 │   │   └── mode_router.py         ⬜ TODO
 │   ├── simulation/                ⬜ TODO
-│   ├── execution/                 ⬜ TODO
-│   └── connectors/                ⬜ TODO
+│   ├── execution/                 ⬜ TODO — STEP 6 (dag_executor.py)
+│   └── connectors/                ⬜ TODO — STEP 4 (base.py + adapters)
 │
 ├── domains/lending/
 │   ├── decisions.yaml             ✅ EXISTS — source of truth, all 12 decisions
@@ -654,12 +669,12 @@ decision-os/
 ├── docs/
 │   └── PRD.md                     ✅ EXISTS — this file
 │
-├── docker-compose.yml             ✅ EXISTS
-├── requirements.txt               ✅ EXISTS
+├── CONTEXT.md                     ✅ EXISTS — session history
+├── docker-compose.yml             ✅ EXISTS (empty — needs Redis + Postgres services)
+├── requirements.txt               ✅ EXISTS (empty — needs pydantic, redis, asyncpg, pyyaml)
 ├── README.md                      ✅ EXISTS
 │
 │   NOT IN REPO YET:
-├── CONTEXT.md                     ⬜ CREATE — session history
 ├── api/                           ⬜ TODO
 ├── ui/                            ⬜ TODO
 ├── infra/                         ⬜ TODO
@@ -687,14 +702,31 @@ decision-os/
 ## 19. BUILD SEQUENCE — NEXT STEPS IN ORDER
 
 ```
-  1  core/context_store/          Redis + Postgres. TTL per decision. Lineage on all records.
-  2  core/connectors/base.py      Base connector + mock CSV + one live adapter.
-  3  core/decision_agents/        Base class + atomic_tool + 12 persona implementations.
-  4  core/execution/dag_executor  Walks execution_order. Event bus. Wakes dependents.
-  5  api/                         POST /events | GET /decisions/:id | GET /trace/:id
+  ✅ DONE (session 3)
+     core/normalizer/models.py     STEP 1 — typed events + entities + normalize_event
+     core/ontology/object_types.py STEP 2 — 8 object types + semantic links + projection
+     core/context_store/           STEP 3 — Redis + Postgres + ContextBuilder.
+                                            TTL per risk_level, lineage on all records,
+                                            append-only with supersession + tombstones,
+                                            decision-scoped read perms in projection.
+
+  NEXT
+  4  core/connectors/base.py      Base connector + mock CSV + one live adapter.
+                                  Emits RawEvent objects only — no entity hydration.
+  5  core/decision_agents/        Base class + atomic_tool + 12 persona implementations.
+                                  atomic_tool is the bundled call: context_build +
+                                  policy_check + trace_write + mode_route. LLM cannot
+                                  call steps separately.
+  6  core/execution/dag_executor  Walks execution_order. Event bus. Wakes dependents.
+  7  api/                         POST /events | GET /decisions/:id | GET /trace/:id
                                   POST /override | POST /connectors/webhook/:source
-  6  core/trace/reflection.py     Override → AgentLearning → replay into next decision.
-  7  ui/                          Event stream | context view | trace viewer | human queue
+  8  core/trace/reflection.py     Override → AgentLearning → replay into next decision.
+  9  ui/                          Event stream | context view | trace viewer | human queue
+
+  PARALLEL (unblocks the Postgres/Redis path end-to-end)
+     requirements.txt             pydantic>=2, redis>=5, asyncpg, pyyaml, fastapi, structlog
+     docker-compose.yml           local Redis + Postgres services
+     core/context_store/schema.sql is already in place — apply it via init_schema().
 ```
 
 ---
@@ -731,24 +763,33 @@ Do not assume anything else exists.
 Do not ask what the project is.
 Read the files and know.
 
-Build in this exact order:
-  STEP 1: core/normalizer/models.py
-          Pydantic v2 event models for all lending event types defined in decisions.yaml.
-          Enums, base NormalizedEvent class, one typed class per event type,
-          EVENT_REGISTRY dict, normalize_event() function.
-          Everything downstream depends on this.
+STEPS 1, 2, 3 are complete (session 3 — May 2026):
+  ✅ core/normalizer/models.py
+  ✅ core/ontology/object_types.py
+  ✅ core/context_store/{base,lending,redis_cache,postgres_store,context_builder}.py
+  ✅ core/context_store/schema.sql
 
-  STEP 2: core/ontology/object_types.py
-          8 object types: Applicant, Application, Property, Loan,
-          CreditProfile, IncomeProfile, FraudProfile, ComplianceRecord.
-          Base ObjectType class. Semantic links with cardinality.
-          decisions_that_read_it list per object. to_context_bundle() method.
+Build next, in this order:
+  STEP 4: core/connectors/base.py
+          Base connector + mock CSV adapter + one live adapter.
+          Emits RawEvent objects only — entity hydration happens later
+          via the normalizer + ontology already in place.
 
-  STEP 3: core/context_store/
-          base.py, redis_cache.py, postgres_store.py, lending.py,
-          schema.sql, context_builder.py.
-          Redis TTL from context_window_days in decisions.yaml.
-          Lineage on every ContextRecord. Non-negotiable.
+  STEP 5: core/decision_agents/{base,atomic_tool,mode_router}.py
+          Agent base class + bundled atomic_tool call + mode router.
+          atomic_tool = context_build + policy_check + trace_write +
+          mode_route, exposed as a single tool the LLM cannot decompose.
+
+  STEP 6: core/execution/dag_executor.py
+          Walks execution_order from decisions.yaml. Event bus.
+          Wakes dependents on record_updated. Honors
+          fraud_block_stops_pipeline + upstream_block_propagates.
+
+PARALLEL (so the Postgres/Redis path runs end-to-end):
+  - Populate requirements.txt: pydantic>=2, redis>=5, asyncpg, pyyaml,
+    fastapi, structlog.
+  - Populate docker-compose.yml with local Redis + Postgres services.
+  - Apply core/context_store/schema.sql via PostgresDurableStore.init_schema().
 ```
 
 ---

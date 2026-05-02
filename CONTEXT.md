@@ -56,44 +56,58 @@ Files confirmed in repo as of May 2026:
 ✅  core/trace/__init__.py
 ✅  core/trace/trace_schema.py           WorkJournalEntry + DecisionTrace Pydantic models
 ✅  core/trace/critic_agent.py           independent critic, SelfReviewError enforcement
+✅  core/normalizer/__init__.py
+✅  core/normalizer/models.py            13 typed event models, 8 entity models,
+                                         normalize_event() + EVENT_REGISTRY
+✅  core/ontology/__init__.py
+✅  core/ontology/object_types.py        8 lending object types (Applicant, Application,
+                                         Property, Loan, CreditProfile, IncomeProfile,
+                                         FraudProfile, ComplianceRecord) with semantic
+                                         links, cardinality, decisions_that_read_it,
+                                         to_context_bundle() projection
+✅  core/context_store/__init__.py
+✅  core/context_store/base.py           ContextStore abstract + ContextRecord + Lineage
+                                         + Snapshot. no_context_without_lineage enforced.
+✅  core/context_store/lending.py        LendingContextStore + DecisionScopedStore.
+                                         Risk-driven TTL policy (low=1h, med=24h, high=7d).
+✅  core/context_store/redis_cache.py    RedisHotCache + InMemoryHotCache. Decision-scoped
+                                         keys so leaky reads can't cross decisions.
+✅  core/context_store/postgres_store.py PostgresDurableStore + InMemoryDurableStore.
+                                         Append-only with version bump, supersession
+                                         chain, tombstone semantics, point-in-time reads.
+✅  core/context_store/schema.sql        context_records + context_snapshots tables.
+                                         Partial unique index for the active row,
+                                         version uniqueness per scope, self-FK on
+                                         supersession chain.
+✅  core/context_store/context_builder.py ContextBuilder + ContextBundle. Resolves
+                                         readable object types per decision, snapshots
+                                         the store, projects through ontology to enforce
+                                         no_agent_without_permissions at the data layer.
 ✅  docs/PRD.md                          full product spec v0.5
 ✅  docker-compose.yml
 ✅  requirements.txt
 ✅  README.md
 ```
 
-Files Claude Code generated in sessions but NOT yet pushed to repo:
+Files not yet built (next up):
 
 ```
-⚠️  core/normalizer/models.py            generated in session 1, not in repo
-⚠️  core/ontology/object_types.py        generated in session 1, not in repo
-⚠️  .env.example                         generated in session 1, not in repo
-```
-
-Files not yet built:
-
-```
-⬜  core/normalizer/models.py            BUILD FIRST — everything depends on this
-⬜  core/ontology/object_types.py        BUILD SECOND
-⬜  core/context_store/                  BUILD THIRD
-    base.py, redis_cache.py, postgres_store.py
-    lending.py, schema.sql, context_builder.py
-⬜  core/policy_engine/loader.py
-⬜  core/semantic_layer/flow.py
+⬜  core/connectors/base.py              Base connector + mock CSV adapter + one live adapter.
 ⬜  core/decision_agents/
-    base.py, atomic_tool.py, mode_router.py
-⬜  core/execution/dag_executor.py
-⬜  core/connectors/base.py
+    base.py, atomic_tool.py, mode_router.py     Agent base + bundled tool + mode routing.
+⬜  core/execution/dag_executor.py       Walks execution_order. Event bus. Wakes dependents.
+⬜  core/policy_engine/loader.py         Loads + validates decisions.yaml at startup.
+⬜  core/semantic_layer/flow.py          Event → entity → metric → signal mapper.
 ⬜  core/trace/trace_writer.py
-⬜  core/trace/reflection.py
+⬜  core/trace/reflection.py             Override → AgentLearning → replay into next decision.
 ⬜  core/trace/outcome_tracker.py
 ⬜  core/simulation/replayer.py
 ⬜  domains/lending/personas/
 ⬜  domains/lending/seed_events/
-⬜  api/
-⬜  ui/
+⬜  api/                                  POST /events | GET /decisions/:id | GET /trace/:id
+                                          POST /override | POST /connectors/webhook/:source
+⬜  ui/                                   Event stream | context view | trace viewer | queue
 ⬜  tests/
-⬜  CONTEXT.md                           this file — push it
 ⬜  .env.example
 ```
 
@@ -134,6 +148,20 @@ WHO vs WHAT-NOW (ontology)
   DTI, LTV, product eligibility, underwriting → belong to Application.
   Re-application: same Applicant, new Application, fresh decisions,
   Applicant profiles carried forward within retention window.
+
+Shared-vs-scoped writes in the context store
+  Two write conventions live side-by-side in LendingContextStore:
+    1. Entity records (Applicant, Application, Property, Loan, CreditProfile,
+       IncomeProfile, FraudProfile, ComplianceRecord) → write to the SHARED
+       scope, i.e. lineage.decision_id = None. Snapshot reads them via the
+       shared scope so every decision sees the same world.
+    2. Decision outputs → write under entity_type = "decision",
+       entity_id = f"{application_id}:{decision_id}", and
+       lineage.decision_id = decision_id. Snapshot reads these via
+       upstream_decision_ids so a dependent decision pulls only its
+       declared upstream outputs (no peeking at sibling decisions).
+  Use DecisionScopedStore.set() only for decision outputs, not entities.
+  See core/context_store/lending.py:snapshot() for the read paths.
 ```
 
 ---
@@ -180,11 +208,68 @@ WHO vs WHAT-NOW (ontology)
 
 **No new code committed this session.**
 
-**What needs to happen next session:**
-1. Push this CONTEXT.md to repo
-2. Push PRD.md v0.5 to repo (replace docs/PRD.md)
-3. Open Claude Code and use session start prompt from PRD section 20
-4. Build core/normalizer/models.py first
+---
+
+### Session 3 — May 1 2026
+
+**What was built (STEP 3 of the build sequence — context store):**
+- `core/context_store/redis_cache.py`
+  - `RedisHotCache` (production, via `redis.asyncio`) and `InMemoryHotCache`
+    (asyncio-locked dict, same TTL semantics for tests)
+  - Records serialize via `ContextRecord.model_dump_json()` so datetimes
+    and UUIDs round-trip; both backends round-trip through JSON so model
+    drift surfaces in unit tests, not in prod
+  - Keys namespaced `context:{entity_type}:{entity_id}:{decision_id}`
+    with `_shared` for shared writes — leaky key in one decision can
+    never return another decision's bytes
+- `core/context_store/postgres_store.py`
+  - `PostgresDurableStore` (asyncpg) and `InMemoryDurableStore`
+  - Append-only: `insert_record` finds the active row in a transaction,
+    sets `superseded_at` + `superseded_by`, inserts the new row at
+    `version + 1`
+  - `tombstone()` writes a tombstone row that is itself superseded at
+    insert, so a single `superseded_at IS NULL` predicate covers active
+    reads — no special-casing in get_latest / get_at_time
+  - `get_at_time(at)` for point-in-time replay (filters created_at and
+    superseded_at against the requested timestamp)
+  - JSONB codec installed at connection init so dicts/lists pass through
+    asyncpg without manual `json.dumps`
+- `core/context_store/schema.sql`
+  - `context_records` — partial unique index on the active row,
+    version uniqueness per scope, history index DESC, point-in-time
+    index, self-FK on the supersession chain
+  - `context_snapshots` — UUID array of constituent record_ids so a
+    snapshot pins the exact rows the agent saw (replay-safe)
+- `core/context_store/context_builder.py`
+  - `ContextBuilder.build(application_id, decision_id, resolver)` —
+    looks up decision spec, resolves readable object types via
+    `decisions_that_read_it`, expands entity keys via caller-supplied
+    resolver callback, snapshots the store, projects each entity through
+    `ObjectType.to_context_bundle` to drop unauthorized fields
+  - Returns typed `ContextBundle` with `upstream_outputs` keyed by
+    upstream decision_id, `context_window_days` from the spec, and
+    `snapshot_id` for trace replay
+- `core/context_store/__init__.py` — re-exports all new public symbols
+
+**Smoke-tested end-to-end with the in-memory backends:**
+versioning, supersession chain, hot-cache hit, history ordering,
+snapshot, tombstone + cache invalidation, ContextBuilder permission
+filtering (verified: `fraud_screening` cannot see `CreditProfile`),
+upstream decision output round-trip through the bundle.
+
+**Hard rules backed in this session:**
+- `no_context_without_lineage` — schema enforces `lineage JSONB NOT NULL`,
+  base.py validates `written_by` and confidence at write time
+- `no_agent_without_permissions` — ContextBuilder drops object types not
+  in `decisions_that_read_it` and `to_context_bundle()` raises
+  `PermissionError` for unauthorized projections
+
+**Still pending (next session):**
+1. Populate `requirements.txt` with `pydantic>=2`, `redis>=5`, `asyncpg`,
+   `pyyaml`, `fastapi`, `structlog` so a fresh dev can install
+2. Populate `docker-compose.yml` for local Redis + Postgres
+3. Build STEP 4: `core/connectors/base.py` + mock CSV adapter
+4. Build STEP 5: `core/decision_agents/` (base + atomic_tool + mode_router)
 
 ---
 
@@ -199,19 +284,34 @@ Paste this at the `>` prompt:
 ```
 Read these files in this order before doing anything:
 1. docs/PRD.md
-2. domains/lending/decisions.yaml
-3. domains/lending/knowledge_base.json
+2. CONTEXT.md
+3. domains/lending/decisions.yaml
+4. domains/lending/knowledge_base.json
 
 Then verify what actually exists:
-  find . -name "*.py" -o -name "*.yaml" -o -name "*.json" | grep -v .git | grep -v __pycache__ | sort
+  find . -name "*.py" -o -name "*.yaml" -o -name "*.json" -o -name "*.sql" \
+    | grep -v .git | grep -v __pycache__ | sort
 
 Do not ask what the project is. Do not ask what was built.
 Read the files and know.
 
-Build in this exact order:
-  STEP 1: core/normalizer/models.py
-  STEP 2: core/ontology/object_types.py
-  STEP 3: core/context_store/ (base.py, redis_cache.py, postgres_store.py, lending.py, schema.sql, context_builder.py)
+STEPS 1, 2, 3 are complete (normalizer, ontology, context_store).
+Build next, in this order:
+  STEP 4: core/connectors/base.py
+          Base connector + mock CSV adapter + one live adapter.
+          Emits RawEvent objects only — no entity hydration here.
+  STEP 5: core/decision_agents/
+          base.py, atomic_tool.py, mode_router.py.
+          The atomic_tool is the single bundled call — context_build +
+          policy_check + trace_write + mode_route. LLM cannot call
+          steps separately.
+  STEP 6: core/execution/dag_executor.py
+          Walks execution_order from decisions.yaml. Event bus.
+          Wakes dependents on record_updated.
+
+Also populate requirements.txt and docker-compose.yml so the
+Postgres/Redis backends can run end-to-end (currently only the
+in-memory backends are exercised).
 ```
 
 ---
