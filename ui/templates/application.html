@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}{{ application_id }} · Decision OS{% endblock %}
+{% block content %}
+
+<div class="mb-6">
+  <a href="/" class="text-sm text-indigo-600 hover:text-indigo-800">← Applications</a>
+</div>
+
+<div class="flex items-baseline justify-between mb-2">
+  <h1 class="text-2xl font-semibold tracking-tight mono">{{ application_id }}</h1>
+  <div class="text-sm text-slate-500">
+    {% if queued_count %}
+      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs
+                   bg-amber-100 text-amber-800 font-medium">
+        {{ queued_count }} queued for review
+      </span>
+    {% endif %}
+  </div>
+</div>
+
+<div class="bg-white border border-slate-200 rounded-lg p-4 mb-6">
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+    <div>
+      <div class="text-xs text-slate-400 mb-0.5">Loan purpose</div>
+      <div class="mono">{{ application.loan_purpose | default('—') }}</div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400 mb-0.5">Amount</div>
+      <div class="mono">{{ application.requested_amount | currency }}</div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400 mb-0.5">State</div>
+      <div class="mono">{{ application.property_state | default('—') }}</div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400 mb-0.5">Submitted</div>
+      <div class="mono">{{ application.submitted_at | dt }}</div>
+    </div>
+  </div>
+</div>
+
+<h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">
+  Pipeline · execution waves
+</h2>
+
+<div class="space-y-4">
+  {% for wave in waves %}
+    <div class="bg-white border border-slate-200 rounded-lg p-4">
+      <div class="text-xs text-slate-400 mb-3 mono">
+        {{ wave_labels[loop.index0] }}
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        {% for card in wave %}
+          <a href="/ui/applications/{{ application_id }}/decisions/{{ card.decision_id }}"
+             class="block border rounded-lg p-3 hover:shadow-sm transition
+                    {{ card.outcome_style.bg }} {{ card.outcome_style.border }}">
+            <div class="flex items-center justify-between mb-1.5">
+              <div class="font-medium text-slate-900">{{ card.name }}</div>
+              <span class="w-2 h-2 rounded-full {{ card.outcome_style.dot }}"></span>
+            </div>
+            <div class="text-xs text-slate-500 mono mb-2">
+              {{ card.decision_id }}
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <span class="px-1.5 py-0.5 rounded font-medium
+                           {{ card.outcome_style.bg }} {{ card.outcome_style.text }}">
+                {{ card.outcome }}
+              </span>
+              <span class="text-slate-500">
+                {{ card.mode_label }} · {{ card.risk_level }}
+              </span>
+              {% if card.queued %}
+                <span class="ml-auto px-1.5 py-0.5 rounded text-xs font-medium
+                             bg-amber-200 text-amber-900">
+                  queued
+                </span>
+              {% endif %}
+            </div>
+            {% if card.confidence is not none %}
+              <div class="mt-2 text-xs text-slate-500">
+                confidence: <span class="mono">{{ card.confidence | confidence }}</span>
+                {% if card.matched_clause %}
+                  · clause: <span class="mono">{{ card.matched_clause }}</span>
+                {% endif %}
+              </div>
+            {% endif %}
+            <div class="mt-2 text-[11px] text-slate-400 mono truncate">
+              {{ card.persona }}
+            </div>
+          </a>
+        {% endfor %}
+      </div>
+    </div>
+  {% endfor %}
+</div>
+
+<div class="mt-8 text-xs text-slate-500 leading-relaxed">
+  <strong class="text-slate-700">How the DAG runs:</strong>
+  Wave 1 runs all 5 independent decisions in parallel. Each later wave
+  runs only after its dependencies completed. Hard rules
+  (<span class="mono">fraud_block_stops_pipeline</span>,
+  <span class="mono">contamination_guard</span>,
+  <span class="mono">compliance_block_stops_closing</span>,
+  <span class="mono">upstream_block_propagates_to_dependents</span>) are
+  enforced in code at the policy engine and executor layer — every
+  outcome you see was reconciled against them.
+</div>
+
+{% endblock %}

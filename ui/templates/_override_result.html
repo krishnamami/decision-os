@@ -1,0 +1,70 @@
+{# Returned by POST /ui/.../override on success. HTMX replaces the
+   #override-card with this — shows the captured review + the new
+   AgentLearning so the user can see the reflection loop close. #}
+
+<section class="bg-white border border-emerald-200 rounded-lg p-5">
+  <h2 class="text-sm font-medium text-emerald-700 uppercase tracking-wider mb-3">
+    Override recorded · review attached + lesson captured
+  </h2>
+
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mb-4">
+    <div>
+      <div class="text-xs text-slate-400">Reviewer</div>
+      <div class="mono">{{ trace.human_review.reviewer_id }}</div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400">Role</div>
+      <div class="mono">{{ trace.human_review.reviewer_role }}</div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400">Original AI</div>
+      <div class="mono">{{ trace.human_review.original_ai_decision.value }}</div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400">Final outcome</div>
+      <div class="mono font-medium">
+        {{ trace.human_review.final_outcome.value }}
+      </div>
+    </div>
+  </div>
+
+  <div class="pt-4 border-t border-emerald-100">
+    <div class="text-xs text-slate-400 mb-1">Override reason</div>
+    <div class="text-sm">{{ trace.human_review.override_reason }}</div>
+    {% if trace.human_review.override_reason_code %}
+      <div class="mt-1 text-xs">
+        code: <span class="mono">{{ trace.human_review.override_reason_code }}</span>
+      </div>
+    {% endif %}
+  </div>
+</section>
+
+<section class="bg-indigo-50 border border-indigo-200 rounded-lg p-5 mt-4">
+  <h2 class="text-sm font-medium text-indigo-700 uppercase tracking-wider mb-3">
+    AgentLearning captured · 365-day retention
+  </h2>
+  <div class="text-sm text-slate-700 mb-3">
+    {{ learning.lesson }}
+  </div>
+  <div class="flex flex-wrap gap-1.5 text-[11px] mono">
+    {% for tag in learning.similarity_tags %}
+      <span class="bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded">
+        {{ tag }}
+      </span>
+    {% endfor %}
+  </div>
+  <div class="mt-3 text-xs text-slate-500 leading-relaxed">
+    On the next <span class="mono">{{ learning.decision_id }}</span> event for
+    <span class="mono">{{ learning.agent_id }}</span> with overlapping tags,
+    <span class="mono">ReflectionService.recall()</span> will return this
+    lesson ranked by overlap. The AtomicTool can pass these recalled lessons
+    into the next bundle so the agent reasons with them.
+  </div>
+</section>
+
+<div class="mt-4">
+  <a href="/ui/applications/{{ application_id }}/decisions/{{ decision_id }}"
+     class="text-sm text-indigo-600 hover:text-indigo-800">
+    Reload decision view
+  </a>
+</div>

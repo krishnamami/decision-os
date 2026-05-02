@@ -1,0 +1,159 @@
+{# Override workbench. Three states:
+   1. trace.human_review already attached → show the locked-in review
+      (and don't show the form).
+   2. trace.outcome was a queueable outcome (recommend / escalate /
+      block) OR mode was human-driven → show the form.
+   3. trace was auto_execute + ALLOW → show a "no review needed" card.
+#}
+
+{% if trace.human_review %}
+  <section class="bg-white border border-indigo-200 rounded-lg p-5">
+    <h2 class="text-sm font-medium text-indigo-700 uppercase tracking-wider mb-3">
+      Human review · attached
+    </h2>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+      <div>
+        <div class="text-xs text-slate-400">Reviewer</div>
+        <div class="mono">{{ trace.human_review.reviewer_id }}</div>
+      </div>
+      <div>
+        <div class="text-xs text-slate-400">Role</div>
+        <div class="mono">{{ trace.human_review.reviewer_role }}</div>
+      </div>
+      <div>
+        <div class="text-xs text-slate-400">Original</div>
+        <div class="mono">{{ trace.human_review.original_ai_decision.value }}</div>
+      </div>
+      <div>
+        <div class="text-xs text-slate-400">Final</div>
+        <div class="mono font-medium">
+          {{ trace.human_review.final_outcome.value }}
+        </div>
+      </div>
+    </div>
+    {% if trace.human_review.overridden %}
+      <div class="mt-4 pt-4 border-t border-indigo-100">
+        <div class="text-xs text-slate-400 mb-1">Override reason</div>
+        <div class="text-sm">{{ trace.human_review.override_reason }}</div>
+        {% if trace.human_review.override_reason_code %}
+          <div class="mt-1 text-xs">
+            code: <span class="mono">{{ trace.human_review.override_reason_code }}</span>
+          </div>
+        {% endif %}
+      </div>
+    {% endif %}
+    <div class="mt-3 text-xs text-slate-500">
+      Reviewed {{ trace.human_review.reviewed_at | dt }}
+    </div>
+  </section>
+
+{% elif queued_item or trace.outcome.value in ('recommend', 'escalate', 'block') %}
+  <section class="bg-white border border-amber-200 rounded-lg p-5">
+    <h2 class="text-sm font-medium text-amber-700 uppercase tracking-wider mb-3">
+      Override workbench
+    </h2>
+    <p class="text-xs text-slate-500 mb-4">
+      The AI proposed
+      <span class="mono font-medium">{{ trace.outcome.value }}</span>.
+      Approve by submitting the same outcome (rejected — that's not an
+      override) or pick a different outcome to record an override and
+      capture an AgentLearning that will replay to the same agent on
+      the next similar event.
+    </p>
+
+    {% if error %}
+      <div class="mb-3 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+        {{ error }}
+      </div>
+    {% endif %}
+
+    <form
+      hx-post="/ui/applications/{{ application_id }}/decisions/{{ decision_id }}/override"
+      hx-target="#override-card"
+      hx-swap="innerHTML"
+      class="space-y-4"
+    >
+      <input type="hidden" name="trace_id" value="{{ trace.trace_id }}">
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <label class="block">
+          <span class="text-xs text-slate-500">Reviewer ID</span>
+          <input type="text" name="reviewer_id" required
+                 placeholder="u_smith"
+                 class="mt-1 block w-full text-sm rounded border-slate-300 px-2 py-1.5 mono
+                        focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400">
+        </label>
+        <label class="block">
+          <span class="text-xs text-slate-500">Reviewer role</span>
+          <select name="reviewer_role" required
+                  class="mt-1 block w-full text-sm rounded border-slate-300 px-2 py-1.5
+                         focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400">
+            <option value="senior_underwriter">senior_underwriter</option>
+            <option value="underwriter">underwriter</option>
+            <option value="compliance_officer">compliance_officer</option>
+            <option value="closing_agent">closing_agent</option>
+            <option value="manager">manager</option>
+          </select>
+        </label>
+      </div>
+
+      <div>
+        <span class="text-xs text-slate-500">New outcome</span>
+        <div class="mt-1 flex flex-wrap gap-2">
+          {% for outcome in decision_outcomes %}
+            {% set palette = outcome_palette[outcome] %}
+            <label class="cursor-pointer">
+              <input type="radio" name="new_outcome" value="{{ outcome }}"
+                     class="peer sr-only" required>
+              <span class="px-3 py-1.5 rounded text-sm font-medium border-2 border-transparent
+                           peer-checked:border-indigo-500
+                           {{ palette.bg }} {{ palette.text }}">
+                {{ outcome }}
+              </span>
+            </label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <label class="block">
+        <span class="text-xs text-slate-500">Override reason</span>
+        <textarea name="override_reason" rows="2" required
+                  placeholder="Borrower has undisclosed second mortgage on rental property"
+                  class="mt-1 block w-full text-sm rounded border-slate-300 px-2 py-1.5
+                         focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400"
+                  ></textarea>
+      </label>
+
+      <label class="block">
+        <span class="text-xs text-slate-500">Override reason code (optional)</span>
+        <input type="text" name="override_reason_code"
+               placeholder="UNDISCLOSED_DEBT"
+               class="mt-1 block w-full text-sm rounded border-slate-300 px-2 py-1.5 mono uppercase
+                      focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400">
+      </label>
+
+      <div class="flex items-center gap-3">
+        <button type="submit"
+                class="px-4 py-2 bg-indigo-600 text-white text-sm rounded
+                       hover:bg-indigo-700 focus:outline-none focus:ring-2
+                       focus:ring-indigo-500 focus:ring-offset-2">
+          Record override
+        </button>
+        <span class="text-xs text-slate-500">
+          Submits to <span class="mono">POST /override</span>;
+          captures an AgentLearning with similarity tags.
+        </span>
+      </div>
+    </form>
+  </section>
+
+{% else %}
+  <section class="bg-emerald-50 border border-emerald-200 rounded-lg p-4 text-sm">
+    <span class="font-medium text-emerald-800">Auto-executed.</span>
+    <span class="text-emerald-700 ml-1">
+      No human review required for this decision — AI outcome was
+      <span class="mono">{{ trace.outcome.value }}</span> in mode
+      <span class="mono">{{ trace.mode.value }}</span>.
+    </span>
+  </section>
+{% endif %}

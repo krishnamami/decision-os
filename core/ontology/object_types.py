@@ -164,6 +164,18 @@ class Applicant(ObjectType):
         "kyc_status": "enum<verified|pending|rejected|manual_review>",
         "first_seen_at": "datetime",
         "last_seen_at": "datetime",
+        # Lead-stage fields. lead_scoring runs before an Application
+        # exists; the data lives on the Applicant until the
+        # ApplicationSubmittedEvent fires.
+        "lead_source": "string",
+        "channel": "enum<digital|api_partner|branch|broker|call_center>",
+        "utm_params": "object",
+        "session_behavior": "object",
+        "prior_inquiries": "integer",
+        "ambiguous_identity": "boolean",
+        "identity_match_confidence": "float",
+        "applicant_dispute_flag": "boolean",
+        "preferred_channel": "string",
     })
     links: list[Link] = Field(default_factory=lambda: [
         Link(

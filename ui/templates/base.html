@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en" class="bg-slate-50 text-slate-900">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Decision OS{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    pre { white-space: pre-wrap; word-break: break-word; }
+  </style>
+</head>
+<body class="min-h-screen">
+  <header class="bg-white border-b border-slate-200">
+    <div class="max-w-7xl mx-auto px-6 py-4 flex items-center gap-6">
+      <a href="/" class="font-semibold text-lg tracking-tight">
+        Decision OS <span class="text-slate-400 text-xs ml-1">{{ version | default('0.0.0') }}</span>
+      </a>
+      <nav class="flex items-center gap-4 text-sm text-slate-700">
+        <a href="/" class="hover:text-slate-900">Applications</a>
+        <a href="/ui/queue" class="hover:text-slate-900">Human queue</a>
+        <a href="/health" class="hover:text-slate-900">Health</a>
+        <a href="/docs" class="hover:text-slate-900">API docs</a>
+      </nav>
+      <div class="ml-auto text-xs text-slate-400">
+        Domain: <span class="mono">{{ domain | default('lending') }}</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-6 py-8">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="max-w-7xl mx-auto px-6 py-6 text-xs text-slate-400">
+    <div class="border-t border-slate-200 pt-4">
+      Decision OS · all hard rules backed in code · append-only trace · in-memory backend
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,31 @@
+[
+  {
+    "entity_type": "Loan",
+    "entity_id": "loan_comp",
+    "value": {
+      "loan_id": "loan_comp",
+      "application_id": "app_comp",
+      "loan_type": "conforming",
+      "principal_amount": 500000,
+      "term_months": 360,
+      "interest_rate": 0.06
+    }
+  },
+  {
+    "entity_type": "ComplianceRecord",
+    "entity_id": "comp_comp",
+    "value": {
+      "compliance_record_id": "comp_comp",
+      "application_id": "app_comp",
+      "all_hmda_fields_complete": false,
+      "fair_lending_violation": true,
+      "missing_required_disclosures": true,
+      "state_rules_passed": false,
+      "cd_timing_compliant": false,
+      "regulatory_ambiguity": false,
+      "mixed_jurisdiction": false,
+      "final_conditions_checklist": {"all_cleared": false, "minor_outstanding": true},
+      "insurance_binder": true
+    }
+  }
+]

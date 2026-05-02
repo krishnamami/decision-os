@@ -1,0 +1,30 @@
+[
+  {
+    "key": "credit",
+    "payload": {
+      "event_type": "credit_pulled",
+      "customer_id": "cust_contam",
+      "application_id": "app_contam",
+      "bureau": "experian",
+      "credit_score": 715,
+      "open_tradelines": 5,
+      "derogatory_marks": 0,
+      "credit_utilization": 0.22,
+      "thin_file": false,
+      "active_bankruptcy": false
+    }
+  },
+  {
+    "key": "fraud",
+    "payload": {
+      "event_type": "fraud_signal",
+      "customer_id": "cust_contam",
+      "application_id": "app_contam",
+      "signal_type": "baseline",
+      "fraud_score": 0.08,
+      "velocity_signal": "normal",
+      "watchlist_match": false,
+      "synthetic_identity_flag": false
+    }
+  }
+]

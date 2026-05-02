@@ -605,36 +605,37 @@ DecisionTrace {
 
 ## 17. FILE STRUCTURE — ACTUAL STATE IN REPO
 
-These are the ONLY files that exist in the repo right now.
-Do not assume anything else exists. Verify with find before building.
+These are the files that exist in the repo right now.
+Verify with `find . -name "*.py" -o -name "*.yaml" -o -name "*.json" -o -name "*.sql"` before building.
 
 ```
 decision-os/
 ├── core/
 │   ├── semantic_layer/
 │   │   ├── __init__.py            ✅ EXISTS
-│   │   └── resolver.py            ✅ EXISTS — synonym resolver
+│   │   ├── resolver.py            ✅ EXISTS — synonym resolver
 │   │   └── flow.py                ⬜ TODO — event → entity → signal mapper
 │   ├── policy_engine/
-│   │   └── evaluator.py           ✅ EXISTS — boundary evaluator + hard rules
-│   │   └── loader.py              ⬜ TODO — loads + validates decisions.yaml
-│   ├── trace/
 │   │   ├── __init__.py            ✅ EXISTS
-│   │   ├── trace_schema.py        ✅ EXISTS — WorkJournalEntry + DecisionTrace
-│   │   └── critic_agent.py        ✅ EXISTS — independent critic, SelfReviewError
-│   │   └── trace_writer.py        ⬜ TODO
-│   │   └── reflection.py          ⬜ TODO — override → AgentLearning → replay
-│   │   └── outcome_tracker.py     ⬜ TODO
-│   ├── normalizer/                ✅ STEP 1 DONE (session 3)
+│   │   ├── evaluator.py           ✅ EXISTS — boundary evaluator + 8 hard rules
+│   │   └── loader.py              ✅ EXISTS — DecisionsSpec load+validate path
+│   │                                          (no_decision_without_owner, mode/risk
+│   │                                          enums, depends_on integrity,
+│   │                                          execution_order references)
+│   ├── normalizer/                ✅ STEP 1 DONE
 │   │   ├── __init__.py            ✅ EXISTS
-│   │   └── models.py              ✅ EXISTS — 13 typed events, 8 entities,
-│   │                                          normalize_event() + EVENT_REGISTRY
-│   ├── ontology/                  ✅ STEP 2 DONE (session 3)
+│   │   └── models.py              ✅ EXISTS — 13 typed events + 8 entities,
+│   │                                          normalize_event() + EVENT_REGISTRY,
+│   │                                          correlation_id / request_id on BaseEvent
+│   ├── ontology/                  ✅ STEP 2 DONE
 │   │   ├── __init__.py            ✅ EXISTS
-│   │   └── object_types.py        ✅ EXISTS — 8 lending object types, semantic
-│   │                                          links, decisions_that_read_it,
-│   │                                          to_context_bundle() projection
-│   ├── context_store/             ✅ STEP 3 DONE (session 3)
+│   │   └── object_types.py        ✅ EXISTS — 8 lending object types + semantic
+│   │                                          links + decisions_that_read_it +
+│   │                                          to_context_bundle() projection.
+│   │                                          Applicant carries lead-stage fields
+│   │                                          (channel, utm_params, session_behavior,
+│   │                                          prior_inquiries) for lead_scoring.
+│   ├── context_store/             ✅ STEP 3 DONE
 │   │   ├── __init__.py            ✅ EXISTS
 │   │   ├── base.py                ✅ EXISTS — ContextStore abstract +
 │   │   │                                       ContextRecord + Lineage + Snapshot
@@ -651,34 +652,120 @@ decision-os/
 │   │   └── context_builder.py     ✅ EXISTS — ContextBuilder + ContextBundle.
 │   │                                          Decision-scoped projection through
 │   │                                          ontology.to_context_bundle.
-│   ├── decision_agents/           ⬜ TODO — STEP 5
-│   │   ├── base.py                ⬜ TODO
-│   │   ├── atomic_tool.py         ⬜ TODO
-│   │   └── mode_router.py         ⬜ TODO
-│   ├── simulation/                ⬜ TODO
-│   ├── execution/                 ⬜ TODO — STEP 6 (dag_executor.py)
-│   └── connectors/                ⬜ TODO — STEP 4 (base.py + adapters)
+│   ├── connectors/                ✅ STEP 4 DONE
+│   │   ├── __init__.py            ✅ EXISTS
+│   │   ├── base.py                ✅ EXISTS — BaseConnector +
+│   │   │                                       PushConnector (source initiates) +
+│   │   │                                       PullConnector (we initiate) +
+│   │   │                                       EventSink protocol + ConnectorHealth
+│   │   ├── mock_csv.py            ✅ EXISTS — push reference (CSV / file drop)
+│   │   └── mock_http.py           ✅ EXISTS — pull reference (RecordedResponse)
+│   ├── decision_agents/           ✅ STEP 5 DONE
+│   │   ├── __init__.py            ✅ EXISTS
+│   │   ├── base.py                ✅ EXISTS — DecisionAgent ABC + AgentReasoning
+│   │   ├── atomic_tool.py         ✅ EXISTS — bundled context_build + policy_check +
+│   │   │                                       agent.reason + final policy_check +
+│   │   │                                       critic + trace_write + mode_route
+│   │   └── mode_router.py         ✅ EXISTS — RouteAction, HumanQueue,
+│   │                                          DecisionScopedStore writeback
+│   ├── execution/                 ✅ STEP 6 DONE
+│   │   ├── __init__.py            ✅ EXISTS
+│   │   └── dag_executor.py        ✅ EXISTS — wave executor + InMemoryEventBus +
+│   │                                          fraud_block_stops_pipeline +
+│   │                                          missing-upstream skip
+│   ├── trace/
+│   │   ├── __init__.py            ✅ EXISTS
+│   │   ├── trace_schema.py        ✅ EXISTS — WorkJournalEntry + DecisionTrace
+│   │   ├── critic_agent.py        ✅ EXISTS — independent critic, SelfReviewError
+│   │   ├── trace_writer.py        ✅ EXISTS — TraceWriter Protocol +
+│   │   │                                       InMemoryTraceWriter, append-only,
+│   │   │                                       attach_human_review() side-channel
+│   │   ├── reflection.py          ✅ EXISTS — STEP 8: AgentLearning +
+│   │   │                                       LearningStore + ReflectionService.
+│   │   │                                       capture(trace, review) → recall by
+│   │   │                                       similarity tags. 365-day retention.
+│   │   └── outcome_tracker.py     ⬜ TODO
+│   └── simulation/                ⬜ TODO
 │
-├── domains/lending/
-│   ├── decisions.yaml             ✅ EXISTS — source of truth, all 12 decisions
-│   ├── knowledge_base.json        ✅ EXISTS — vocabulary, ontology, dep graph
-│   ├── personas/                  ⬜ TODO
-│   ├── policies/                  ⬜ TODO
-│   └── seed_events/               ⬜ TODO
+├── api/                           ✅ STEP 7 DONE
+│   ├── __init__.py                ✅ EXISTS
+│   ├── deps.py                    ✅ EXISTS — Platform container +
+│   │                                          build_default_platform()
+│   ├── ingest.py                  ✅ EXISTS — EventLog + EntityHydrator
+│   ├── routes.py                  ✅ EXISTS — POST /events, /override,
+│   │                                          /connectors/webhook/{source};
+│   │                                          GET /decisions/{app}/{decision},
+│   │                                          /trace/{trace_id};
+│   │                                          POST /applications/{id}/run (E2E helper)
+│   └── main.py                    ✅ EXISTS — create_app() factory
+│
+├── domains/
+│   ├── __init__.py                ✅ EXISTS
+│   └── lending/
+│       ├── __init__.py            ✅ EXISTS
+│       ├── decisions.yaml         ✅ EXISTS — source of truth, all 12 decisions
+│       ├── knowledge_base.json    ✅ EXISTS — vocabulary, ontology, dep graph
+│       ├── personas/              ✅ STEP 9 DONE
+│       │   ├── __init__.py        ✅ EXISTS — LENDING_PERSONA_CLASSES +
+│       │   │                                  build_lending_personas()
+│       │   ├── base.py            ✅ EXISTS — LendingPersona + OfflineReasoning +
+│       │   │                                  Anthropic mixin (cache_control on
+│       │   │                                  the system block)
+│       │   ├── lead_scoring.py    ✅ EXISTS — LeadQualificationAgent
+│       │   ├── income_verification.py     ✅ IncomeVerificationAgent
+│       │   ├── credit_assessment.py       ✅ CreditRiskAgent
+│       │   ├── fraud_screening.py         ✅ FraudDetectionAgent
+│       │   ├── compliance_check.py        ✅ ComplianceAgent
+│       │   ├── dti_calculation.py         ✅ DTICalculationAgent
+│       │   ├── ltv_assessment.py          ✅ LTVAssessmentAgent
+│       │   ├── product_eligibility.py     ✅ ProductEligibilityAgent
+│       │   ├── rate_pricing.py            ✅ PricingAgent
+│       │   ├── underwriting_decision.py   ✅ SeniorUnderwritingAgent
+│       │   ├── approval_routing.py        ✅ WorkflowRoutingAgent
+│       │   └── closing_readiness.py       ✅ ClosingAgent
+│       └── seed_events/           ✅ STEP 10 DONE
+│           ├── __init__.py        ✅ EXISTS — SCENARIOS manifest +
+│           │                                  csv_connector / http_connector loaders
+│           ├── runner.py          ✅ EXISTS — run_scenario() E2E replay
+│           ├── happy_path/        ✅ events.csv + bureau_responses.json + entities.json
+│           ├── fraud_block/       ✅ watchlist hit halts pipeline
+│           ├── contamination/     ✅ confidence < 0.75 fires contamination_guard
+│           └── compliance_block/  ✅ fair_lending_violation halts closing_readiness
 │
 ├── docs/
 │   └── PRD.md                     ✅ EXISTS — this file
 │
+├── ui/                            ✅ STEP 11 DONE — local UI mounted in api/main.py
+│   ├── __init__.py                ✅ EXISTS — exports router + templates
+│   ├── views.py                   ✅ EXISTS — view-model helpers +
+│   │                                          OUTCOME_STYLES palette +
+│   │                                          Jinja filters (currency, pct,
+│   │                                          confidence, dt)
+│   ├── routes.py                  ✅ EXISTS — 5 GET routes + override POST
+│   │                                          with HTMX swap
+│   └── templates/
+│       ├── base.html              ✅ Tailwind + HTMX via CDN, nav
+│       ├── index.html             ✅ application list with outcome counts
+│       ├── application.html       ✅ DAG visualization by execution wave
+│       ├── decision.html          ✅ bundle + journal + policy + critic +
+│       │                            output + override + recalled lessons
+│       ├── _override_card.html    ✅ form / attached-review / auto-execute states
+│       ├── _override_result.html  ✅ HTMX swap target post-override
+│       └── queue.html             ✅ cross-application human queue table
+│
+├── tests/                         ⬜ partial — only context_store has tests
+│   └── core/context_store/test_in_memory.py
+│
 ├── CONTEXT.md                     ✅ EXISTS — session history
-├── docker-compose.yml             ✅ EXISTS (empty — needs Redis + Postgres services)
-├── requirements.txt               ✅ EXISTS (empty — needs pydantic, redis, asyncpg, pyyaml)
+├── docker-compose.yml             ✅ EXISTS — Postgres 16 + Redis 7 services
+├── requirements.txt               ✅ EXISTS — pydantic, redis, asyncpg, pyyaml,
+│                                              fastapi, uvicorn, anthropic, structlog,
+│                                              httpx, pytest, pytest-asyncio,
+│                                              jinja2, python-multipart
 ├── README.md                      ✅ EXISTS
 │
 │   NOT IN REPO YET:
-├── api/                           ⬜ TODO
-├── ui/                            ⬜ TODO
 ├── infra/                         ⬜ TODO
-├── tests/                         ⬜ TODO
 └── .env.example                   ⬜ TODO
 ```
 
@@ -702,39 +789,58 @@ decision-os/
 ## 19. BUILD SEQUENCE — NEXT STEPS IN ORDER
 
 ```
-  ✅ DONE (session 3)
-     core/normalizer/models.py     STEP 1 — typed events + entities + normalize_event
-     core/ontology/object_types.py STEP 2 — 8 object types + semantic links + projection
-     core/context_store/           STEP 3 — Redis + Postgres + ContextBuilder.
+  ✅ DONE
+     STEP 1  core/normalizer/models.py     — typed events + entities + normalize_event
+     STEP 2  core/ontology/object_types.py — 8 object types + semantic links + projection
+     STEP 3  core/context_store/           — Redis + Postgres + ContextBuilder.
                                             TTL per risk_level, lineage on all records,
                                             append-only with supersession + tombstones,
                                             decision-scoped read perms in projection.
+     STEP 4  core/connectors/              — base + push/pull split + mock_csv + mock_http,
+                                            correlation_id / request_id on BaseEvent.
+     STEP 5  core/decision_agents/         — base + atomic_tool + mode_router.
+                                            Bundled call enforces policy → reason →
+                                            policy → critic → trace_write → mode_route.
+     STEP 6  core/execution/dag_executor   — wave executor + InMemoryEventBus +
+                                            fraud_block_stops_pipeline short-circuit.
+     STEP 7  api/                          — FastAPI surface. POST /events,
+                                            GET /decisions/{app}/{decision}, GET /trace/{id},
+                                            POST /override, POST /connectors/webhook/{source},
+                                            POST /applications/{id}/run.
+     STEP 8  core/trace/reflection.py      — Override → AgentLearning → replay. 365d
+                                            retention. attach_human_review side-channel
+                                            on TraceWriter.
+     STEP 9  domains/lending/personas/     — 12 concrete DecisionAgent subclasses.
+                                            Deterministic offline path + opt-in Anthropic
+                                            path with prompt caching on the system block.
+     STEP 10 domains/lending/seed_events/  — 4 scenarios (happy_path, fraud_block,
+                                            contamination, compliance_block) replayed via
+                                            MockCSVConnector + MockHTTPConnector. Each
+                                            scenario asserts a hard rule end-to-end.
+     ALSO
+        core/policy_engine/loader.py       — single load+validate path for decisions.yaml.
+        api/ingest.py                      — EventLog + EntityHydrator (event → entity).
+
+     STEP 11 ui/                           — local FastAPI + Jinja2 + HTMX +
+                                            Tailwind via CDN. Mounted in api/main.py
+                                            with a lifespan that auto-replays the 4
+                                            seed scenarios on boot. 5 GET views +
+                                            HTMX-driven override form. Picked over
+                                            Next.js for ~2-session-to-v0 vs ~5;
+                                            port to Next.js when there's a polished
+                                            demo audience.
 
   NEXT
-  4  core/connectors/             Base + push/pull split + mock adapters.
-                                    base.py        — BaseConnector,
-                                                     PushConnector (source initiates),
-                                                     PullConnector (we initiate).
-                                    mock_csv.py    — push reference (file drops).
-                                    mock_http.py   — pull reference (recorded fixtures).
-                                  All adapters emit canonical BaseEvent via
-                                  normalize_event() — the interlingua. No entity
-                                  hydration here. Adds correlation_id + request_id
-                                  to BaseEvent so pull request↔response can be linked.
-  5  core/decision_agents/        Base class + atomic_tool + 12 persona implementations.
-                                  atomic_tool is the bundled call: context_build +
-                                  policy_check + trace_write + mode_route. LLM cannot
-                                  call steps separately.
-  6  core/execution/dag_executor  Walks execution_order. Event bus. Wakes dependents.
-  7  api/                         POST /events | GET /decisions/:id | GET /trace/:id
-                                  POST /override | POST /connectors/webhook/:source
-  8  core/trace/reflection.py     Override → AgentLearning → replay into next decision.
-  9  ui/                          Event stream | context view | trace viewer | human queue
-
-  PARALLEL (unblocks the Postgres/Redis path end-to-end)
-     requirements.txt             pydantic>=2, redis>=5, asyncpg, pyyaml, fastapi, structlog
-     docker-compose.yml           local Redis + Postgres services
-     core/context_store/schema.sql is already in place — apply it via init_schema().
+  14 tests/                       Persistent test suite — currently only context_store
+                                  has scaffolding; expand to api/, personas/,
+                                  seed_events, ui/ view-models. Three bugs in the
+                                  last two sessions would have been single failing
+                                  tests.
+  -- Real Anthropic calls         Personas have the path; unproven. Boot the UI
+                                  with one persona on the LLM path, see the work
+                                  journal side-by-side with the offline baseline.
+  12 core/trace/outcome_tracker   Live A/B + post-decision outcome scoring
+  13 core/simulation/replayer     Replay traces at point-in-time for backtesting
 ```
 
 ---
@@ -746,63 +852,84 @@ Paste this prompt at the start of every Claude Code session:
 ```
 Read these files in this order before doing anything:
 1. docs/PRD.md                        ← architecture, principles, build sequence
-2. domains/lending/decisions.yaml     ← source of truth for all 12 decisions
-3. domains/lending/knowledge_base.json ← vocabulary, ontology, dependency graph
+2. CONTEXT.md                         ← session history
+3. domains/lending/decisions.yaml     ← source of truth for all 12 decisions
+4. domains/lending/knowledge_base.json ← vocabulary, ontology, dependency graph
 
 Then verify what actually exists:
   find . -name "*.py" -o -name "*.yaml" -o -name "*.json" -o -name "*.sql" \
     | grep -v .git | grep -v __pycache__ | sort
 
-Files confirmed in repo:
-  core/semantic_layer/__init__.py      ✅
-  core/semantic_layer/resolver.py      ✅
-  core/trace/__init__.py               ✅
-  core/trace/trace_schema.py           ✅
-  core/trace/critic_agent.py           ✅
-  core/policy_engine/evaluator.py      ✅
-  domains/lending/decisions.yaml       ✅
-  domains/lending/knowledge_base.json  ✅
-  docs/PRD.md                          ✅
-  docker-compose.yml                   ✅
-  requirements.txt                     ✅
-  README.md                            ✅
-
 Do not assume anything else exists.
 Do not ask what the project is.
 Read the files and know.
 
-STEPS 1, 2, 3 are complete (session 3 — May 2026):
-  ✅ core/normalizer/models.py
-  ✅ core/ontology/object_types.py
-  ✅ core/context_store/{base,lending,redis_cache,postgres_store,context_builder}.py
-  ✅ core/context_store/schema.sql
+STEPS 1-11 are complete (sessions 3, 4, 5, 6):
+  ✅ STEP 1  core/normalizer/models.py
+  ✅ STEP 2  core/ontology/object_types.py
+  ✅ STEP 3  core/context_store/{base,lending,redis_cache,postgres_store,
+             context_builder}.py + schema.sql
+  ✅ STEP 4  core/connectors/{base,mock_csv,mock_http}.py
+             + correlation_id / request_id on BaseEvent
+  ✅ STEP 5  core/decision_agents/{base,atomic_tool,mode_router}.py
+             + core/trace/trace_writer.py
+  ✅ STEP 6  core/execution/dag_executor.py
+  ✅ STEP 7  api/{deps,ingest,routes,main}.py
+  ✅ STEP 8  core/trace/reflection.py
+             — AgentLearning + LearningStore + ReflectionService.capture/recall
+             — TraceWriter.attach_human_review side-channel
+  ✅ STEP 9  domains/lending/personas/ (12 concrete DecisionAgent subclasses)
+  ✅ STEP 10 domains/lending/seed_events/{happy_path,fraud_block,
+             contamination,compliance_block}/ + runner.py
+  ✅ STEP 11 ui/{__init__.py,views.py,routes.py,templates/}
+             — local FastAPI + Jinja2 + HTMX + Tailwind via CDN
+             — mounted at / by api/main.py via mount_ui flag
+             — lifespan auto-replays 4 scenarios on boot when seed_demo_data=True
+             — 5 GET routes + HTMX-driven override
+             — run: `uvicorn api.main:get_app --factory --reload`
+  ✅ ALSO   core/policy_engine/loader.py (DecisionsSpec)
+
+Verified end-to-end (in-memory backends):
+  - All 4 seed scenarios replay via MockCSVConnector + MockHTTPConnector,
+    DAG runs all 12 decisions, hard rules fire correctly:
+      happy_path        — full pipeline runs (recommend on human-approval modes
+                          since no human is in the loop in tests).
+      fraud_block       — fraud_screening BLOCK halts pipeline,
+                          7 dependents skipped with fraud_block_stops_pipeline.
+      contamination     — income_verification confidence 0.50 below 0.75
+                          → contamination_guard fires on dti_calculation.
+      compliance_block  — compliance_check BLOCK propagates to closing_readiness
+                          via compliance_block_stops_closing.
+  - POST /override (API) and /ui/.../override (HTMX) both call
+    ReflectionService.capture and produce identical AgentLearning records.
+  - UI smoke (TestClient): / lists 4 apps, /ui/applications/{id} renders
+    12-decision DAG, decision detail shows bundle + journal + policy + critic
+    + override workbench, /ui/queue lists 16 queued items, override POST
+    returns AgentLearning swap, reload shows attached review, same-outcome
+    submission renders inline error.
+
+Real-backend verification (STEPS 4-6 only) was scheduled for
+Sun May 3 2026 9am PT (routine trig_013QhFbYJaViJfNybCbr3KUX). If that
+PR has landed, review it; otherwise check the routine status link.
+STEPS 7-11 are NOT in scope of that scheduled run — separate
+verification needed when ready.
 
 Build next, in this order:
-  STEP 4: core/connectors/
-          base.py with BaseConnector + PushConnector (source initiates,
-          e.g. webhooks, file drops) + PullConnector (we initiate,
-          e.g. bureau pulls, Plaid). mock_csv.py as push reference,
-          mock_http.py as pull reference with recorded fixtures.
-          Add correlation_id + request_id to BaseEvent so pull
-          request↔response pairs can be linked. All adapters emit via
-          normalize_event() — entity hydration happens later via the
-          normalizer + ontology already in place.
-
-  STEP 5: core/decision_agents/{base,atomic_tool,mode_router}.py
-          Agent base class + bundled atomic_tool call + mode router.
-          atomic_tool = context_build + policy_check + trace_write +
-          mode_route, exposed as a single tool the LLM cannot decompose.
-
-  STEP 6: core/execution/dag_executor.py
-          Walks execution_order from decisions.yaml. Event bus.
-          Wakes dependents on record_updated. Honors
-          fraud_block_stops_pipeline + upstream_block_propagates.
-
-PARALLEL (so the Postgres/Redis path runs end-to-end):
-  - Populate requirements.txt: pydantic>=2, redis>=5, asyncpg, pyyaml,
-    fastapi, structlog.
-  - Populate docker-compose.yml with local Redis + Postgres services.
-  - Apply core/context_store/schema.sql via PostgresDurableStore.init_schema().
+  STEP 14 tests/                    Persistent test suite — only
+                                    context_store has scaffolding today;
+                                    cover api/, personas/, seed_events,
+                                    ui/ view-models. Three bugs in the
+                                    last two sessions would have been
+                                    single failing tests.
+  --      real Anthropic calls      Personas have the path
+                                    (use_anthropic=True, cache_control on
+                                    system block) but unproven. Boot the UI
+                                    with one persona on the LLM path, see
+                                    journal side-by-side with offline path.
+  STEP 12 core/trace/outcome_tracker.py   Post-decision outcome scoring +
+                                    live A/B comparisons.
+  STEP 13 core/simulation/replayer.py     Replay traces at point-in-time
+                                    for backtesting personas.
 ```
 
 ---

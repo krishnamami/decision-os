@@ -1,0 +1,32 @@
+[
+  {
+    "key": "credit",
+    "payload": {
+      "event_type": "credit_pulled",
+      "customer_id": "cust_fraud",
+      "application_id": "app_fraud",
+      "bureau": "experian",
+      "credit_score": 690,
+      "open_tradelines": 4,
+      "derogatory_marks": 0,
+      "credit_utilization": 0.30,
+      "thin_file": false,
+      "active_bankruptcy": false
+    }
+  },
+  {
+    "key": "fraud",
+    "payload": {
+      "event_type": "fraud_signal",
+      "customer_id": "cust_fraud",
+      "application_id": "app_fraud",
+      "signal_type": "watchlist_hit",
+      "fraud_score": 0.91,
+      "device_fingerprint": "df_known_bad",
+      "ip_geolocation": "RU-MOW",
+      "velocity_signal": "rapid_fire_apps",
+      "watchlist_match": true,
+      "synthetic_identity_flag": true
+    }
+  }
+]

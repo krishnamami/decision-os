@@ -1,0 +1,389 @@
+{% extends "base.html" %}
+{% block title %}{{ decision_id }} · {{ application_id }}{% endblock %}
+{% block content %}
+
+<div class="mb-4">
+  <a href="/ui/applications/{{ application_id }}"
+     class="text-sm text-indigo-600 hover:text-indigo-800">
+    ← {{ application_id }}
+  </a>
+</div>
+
+{# ── Header ─────────────────────────────────────────────────────── #}
+
+<div class="bg-white border border-slate-200 rounded-lg p-5 mb-6">
+  <div class="flex items-start justify-between mb-2">
+    <div>
+      <h1 class="text-2xl font-semibold tracking-tight">{{ spec.name }}</h1>
+      <div class="text-sm text-slate-500 mono mt-1">
+        {{ decision_id }} · {{ spec.persona }}
+      </div>
+    </div>
+    {% if trace %}
+      <div class="flex items-center gap-2">
+        <span class="px-2 py-1 rounded text-sm font-medium
+                     {{ outcome_style.bg }} {{ outcome_style.text }}">
+          {{ trace.outcome.value }}
+        </span>
+        <span class="text-sm text-slate-500">
+          confidence <span class="mono">{{ trace.confidence | confidence }}</span>
+        </span>
+      </div>
+    {% else %}
+      <span class="px-2 py-1 rounded text-sm font-medium bg-slate-100 text-slate-600">
+        not yet run
+      </span>
+    {% endif %}
+  </div>
+
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mt-4 pt-4 border-t border-slate-100 text-sm">
+    <div>
+      <div class="text-xs text-slate-400 mb-0.5">Mode</div>
+      <div class="mono">{{ spec.mode }}</div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400 mb-0.5">Risk</div>
+      <div class="mono">{{ spec.risk_level }}</div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400 mb-0.5">Owner</div>
+      <div class="mono">{{ spec.owner_team }}</div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400 mb-0.5">Window</div>
+      <div class="mono">{{ spec.context_window_days }}d</div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400 mb-0.5">SLA</div>
+      <div class="mono">{{ spec.sla_seconds | default('—') }}s</div>
+    </div>
+  </div>
+
+  {% if spec.depends_on %}
+    <div class="mt-4 pt-4 border-t border-slate-100">
+      <div class="text-xs text-slate-400 mb-1">Depends on</div>
+      <div class="flex flex-wrap gap-1.5">
+        {% for dep in spec.depends_on %}
+          <a href="/ui/applications/{{ application_id }}/decisions/{{ dep.decision }}"
+             class="text-xs mono bg-slate-100 text-slate-700 px-2 py-1 rounded
+                    hover:bg-slate-200">
+            {{ dep.decision }}
+          </a>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+</div>
+
+{# ── Two columns: bundle inputs (left) + reasoning + policy (right) ── #}
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+  {# ── Left column: bundle objects + upstream outputs ─────────────── #}
+  <aside class="lg:col-span-1 space-y-4">
+
+    <section class="bg-white border border-slate-200 rounded-lg p-4">
+      <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">
+        Bundle objects
+      </h2>
+      {% if bundle_objects %}
+        <div class="space-y-3">
+          {% for ot_id, entities in bundle_objects.items() %}
+            <details class="text-sm" open>
+              <summary class="cursor-pointer font-medium text-slate-700">
+                {{ ot_id }}
+                <span class="text-xs text-slate-400">({{ entities | length }})</span>
+              </summary>
+              {% for eid, fields in entities.items() %}
+                <div class="mt-2 ml-2 pl-2 border-l-2 border-slate-200">
+                  <div class="text-xs mono text-slate-400 mb-1">{{ eid }}</div>
+                  <dl class="text-xs space-y-0.5">
+                    {% for k, v in fields.items() %}
+                      {% if not k.startswith('_') %}
+                        <div class="grid grid-cols-2 gap-2">
+                          <dt class="text-slate-500 mono truncate">{{ k }}</dt>
+                          <dd class="mono text-slate-800 truncate">{{ v if v is not none else '—' }}</dd>
+                        </div>
+                      {% endif %}
+                    {% endfor %}
+                  </dl>
+                </div>
+              {% endfor %}
+            </details>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="text-sm text-slate-400">No readable entities found.</div>
+      {% endif %}
+    </section>
+
+    {% if upstream_outputs %}
+      <section class="bg-white border border-slate-200 rounded-lg p-4">
+        <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">
+          Upstream outputs
+        </h2>
+        <div class="space-y-2">
+          {% for upstream_id, payload in upstream_outputs.items() %}
+            <details class="text-sm">
+              <summary class="cursor-pointer flex items-center gap-2">
+                <a href="/ui/applications/{{ application_id }}/decisions/{{ upstream_id }}"
+                   class="mono text-indigo-700 hover:text-indigo-900">
+                  {{ upstream_id }}
+                </a>
+                {% if payload.outcome %}
+                  {% set up_style = outcome_palette[payload.outcome] %}
+                  <span class="text-xs px-1.5 py-0.5 rounded
+                               {{ up_style.bg }} {{ up_style.text }}">
+                    {{ payload.outcome }}
+                  </span>
+                {% else %}
+                  <span class="text-xs px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">
+                    not written
+                  </span>
+                {% endif %}
+              </summary>
+              <pre class="mt-2 ml-2 pl-2 border-l-2 border-slate-200 text-[11px] text-slate-700">{{ payload | tojson(indent=2) }}</pre>
+            </details>
+          {% endfor %}
+        </div>
+      </section>
+    {% endif %}
+
+    {# Boundary clauses for ground-truth on what the policy engine evaluated. #}
+    {% if boundary %}
+      <section class="bg-white border border-slate-200 rounded-lg p-4">
+        <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">
+          Boundary clauses
+        </h2>
+        <div class="space-y-3 text-xs">
+          {% for clause_name, rules in boundary.items() %}
+            {% if rules %}
+              {% set clause_style = {
+                'automate_if':  'text-emerald-700',
+                'recommend_if': 'text-amber-700',
+                'escalate_if':  'text-orange-700',
+                'block_if':     'text-rose-700',
+              } %}
+              <div>
+                <div class="mono font-medium {{ clause_style[clause_name] | default('text-slate-700') }}">
+                  {{ clause_name }}
+                  {% if trace and trace.matched_clause == clause_name %}
+                    <span class="ml-1 text-[10px] uppercase">matched</span>
+                  {% endif %}
+                </div>
+                <ul class="mt-1 ml-3 space-y-0.5 mono text-slate-600">
+                  {% for rule in rules %}
+                    <li>· {{ rule }}</li>
+                  {% endfor %}
+                </ul>
+              </div>
+            {% endif %}
+          {% endfor %}
+        </div>
+      </section>
+    {% endif %}
+
+  </aside>
+
+  {# ── Right column: work journal + policy + critic + output + override ── #}
+  <div class="lg:col-span-2 space-y-4">
+
+    {% if trace %}
+
+      {# Work journal #}
+      <section class="bg-white border border-slate-200 rounded-lg p-5">
+        <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">
+          Work journal
+        </h2>
+        <div class="space-y-4">
+          <div>
+            <div class="text-xs text-slate-400 mb-1">Hypothesis tested</div>
+            <div class="text-sm">{{ trace.reasoning.hypothesis_tested }}</div>
+          </div>
+          <div>
+            <div class="text-xs text-slate-400 mb-1">Conclusion</div>
+            <div class="text-sm">{{ trace.reasoning.conclusion }}</div>
+          </div>
+          <div>
+            <div class="text-xs text-slate-400 mb-1">Confidence basis</div>
+            <div class="text-sm">{{ trace.reasoning.confidence_basis }}</div>
+          </div>
+          <div>
+            <div class="text-xs text-slate-400 mb-1">Summary</div>
+            <div class="text-sm italic text-slate-700">
+              {{ trace.reasoning.human_readable_summary }}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {# Signals #}
+      {% if trace.reasoning.signals_evaluated %}
+        <section class="bg-white border border-slate-200 rounded-lg p-5">
+          <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">
+            Signals evaluated · {{ trace.reasoning.signals_evaluated | length }}
+          </h2>
+          <div class="space-y-1.5">
+            {% for signal in trace.reasoning.signals_evaluated %}
+              {% set dot = {
+                'supports':     'bg-emerald-500',
+                'contradicts':  'bg-rose-500',
+                'neutral':      'bg-slate-300',
+              } %}
+              <div class="flex items-center gap-3 text-sm">
+                <span class="w-2 h-2 rounded-full flex-none
+                             {{ dot[signal.direction] | default('bg-slate-300') }}"></span>
+                <span class="mono text-slate-700 flex-none w-56 truncate">{{ signal.name }}</span>
+                <span class="mono text-slate-900 truncate">
+                  {{ signal.value if signal.value is not none else '—' }}
+                </span>
+                {% if signal.weight %}
+                  <span class="ml-auto text-xs text-slate-400 mono">
+                    w={{ signal.weight }}
+                  </span>
+                {% endif %}
+              </div>
+            {% endfor %}
+          </div>
+        </section>
+      {% endif %}
+
+      {# Contradictions #}
+      {% if trace.reasoning.contradictions_found %}
+        <section class="bg-white border border-amber-200 rounded-lg p-5">
+          <h2 class="text-sm font-medium text-amber-700 uppercase tracking-wider mb-3">
+            Contradictions
+          </h2>
+          <div class="space-y-2">
+            {% for c in trace.reasoning.contradictions_found %}
+              <div class="text-sm">
+                <span class="mono text-slate-600">{{ c.signal_a }}</span>
+                <span class="text-slate-400">vs</span>
+                <span class="mono text-slate-600">{{ c.signal_b }}</span>
+                <div class="text-slate-700 mt-0.5">{{ c.description }}</div>
+                {% if c.resolved %}
+                  <div class="text-xs text-emerald-700 mt-0.5">resolved: {{ c.resolution }}</div>
+                {% else %}
+                  <div class="text-xs text-amber-700 mt-0.5">unresolved</div>
+                {% endif %}
+              </div>
+            {% endfor %}
+          </div>
+        </section>
+      {% endif %}
+
+      {# Policy outcome #}
+      <section class="bg-white border border-slate-200 rounded-lg p-5">
+        <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">
+          Policy outcome
+        </h2>
+        <div class="grid grid-cols-3 gap-4 text-sm">
+          <div>
+            <div class="text-xs text-slate-400">Engine outcome</div>
+            <div class="mono">{{ trace.policy_decision_outcome.value if trace.policy_decision_outcome else '—' }}</div>
+          </div>
+          <div>
+            <div class="text-xs text-slate-400">Matched clause</div>
+            <div class="mono">{{ trace.policy_matched_clause | default('—') }}</div>
+          </div>
+          <div>
+            <div class="text-xs text-slate-400">Contamination</div>
+            <div class="mono">{{ 'yes' if trace.contamination else 'no' }}</div>
+          </div>
+        </div>
+        {% if trace.policy_reasons %}
+          <div class="mt-3 text-xs text-slate-600">
+            {% for r in trace.policy_reasons %}
+              <div class="mono">· {{ r }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      </section>
+
+      {# Critic review #}
+      {% if trace.critic_review %}
+        <section class="bg-white border border-slate-200 rounded-lg p-5">
+          <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">
+            Critic review
+          </h2>
+          {% set verdict_style = {
+            'approved':  'bg-emerald-100 text-emerald-800',
+            'flagged':   'bg-amber-100 text-amber-800',
+            'escalated': 'bg-orange-100 text-orange-800',
+          } %}
+          <div class="flex items-center gap-3 text-sm mb-2">
+            <span class="px-2 py-0.5 rounded text-xs font-medium
+                         {{ verdict_style[trace.critic_review.verdict.value] | default('bg-slate-100') }}">
+              {{ trace.critic_review.verdict.value }}
+            </span>
+            <span class="text-slate-500">
+              by <span class="mono">{{ trace.critic_review.critic_id }}</span>
+            </span>
+            <span class="ml-auto text-xs text-slate-400 mono">
+              confidence {{ trace.critic_review.confidence | confidence }}
+            </span>
+          </div>
+          {% if trace.critic_review.findings %}
+            <ul class="text-xs mono text-slate-600 space-y-0.5 mt-2">
+              {% for f in trace.critic_review.findings %}
+                <li>· {{ f }}</li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+        </section>
+      {% endif %}
+
+      {# Output payload #}
+      {% if trace.output_payload %}
+        <section class="bg-white border border-slate-200 rounded-lg p-5">
+          <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">
+            Output payload
+          </h2>
+          <pre class="text-xs text-slate-700">{{ trace.output_payload | tojson(indent=2) }}</pre>
+        </section>
+      {% endif %}
+
+      {# Override workbench #}
+      <div id="override-card">
+        {% include "_override_card.html" %}
+      </div>
+
+      {# Past learnings #}
+      {% if learnings %}
+        <section class="bg-white border border-slate-200 rounded-lg p-5">
+          <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">
+            Recalled lessons · {{ learnings | length }}
+          </h2>
+          <div class="space-y-3 text-sm">
+            {% for lrn in learnings %}
+              <div class="border-l-2 border-indigo-300 pl-3">
+                <div class="text-xs text-slate-400 mb-1">
+                  by <span class="mono">{{ lrn.reviewer_role }}</span> ·
+                  <span class="mono">{{ lrn.captured_at | dt }}</span> ·
+                  expires <span class="mono">{{ lrn.expires_at | dt }}</span>
+                </div>
+                <div class="text-slate-700">{{ lrn.lesson }}</div>
+                <div class="mt-1 flex flex-wrap gap-1">
+                  {% for tag in lrn.similarity_tags %}
+                    <span class="text-[10px] mono bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded">
+                      {{ tag }}
+                    </span>
+                  {% endfor %}
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        </section>
+      {% endif %}
+
+    {% else %}
+      <section class="bg-white border border-slate-200 rounded-lg p-8 text-center text-slate-500">
+        This decision has not run for application
+        <span class="mono">{{ application_id }}</span> yet.
+      </section>
+    {% endif %}
+
+  </div>
+</div>
+
+{% endblock %}

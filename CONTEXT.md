@@ -116,10 +116,164 @@ Files confirmed in repo as of May 2026:
                                          upstreams aren't satisfied.
 ✅  core/trace/trace_writer.py           TraceWriter Protocol + InMemoryTraceWriter.
                                          Append-only contract; enforced by raising on
-                                         duplicate trace_id.
-✅  docs/PRD.md                          full product spec v0.5 (file-structure block in
-                                         §17 still shows STEPS 4-6 as ⬜ — out of sync until
-                                         next PRD pass; CONTEXT.md is authoritative).
+                                         duplicate trace_id. Session 5 added
+                                         attach_human_review() — the one allowed mutation,
+                                         used by POST /override to record a human review
+                                         on an immutable trace.
+✅  core/trace/reflection.py             STEP 8. AgentLearning model + LearningStore
+                                         protocol + InMemoryLearningStore +
+                                         ReflectionService.capture(trace, review) →
+                                         recall(agent, decision, similarity_tags).
+                                         365-day retention from decisions.yaml.
+                                         derive_similarity_tags() helper extracts tags
+                                         from a trace's output_payload.
+✅  core/policy_engine/loader.py         DecisionsSpec — single load+validate path for
+                                         decisions.yaml. Validates owner_team
+                                         (no_decision_without_owner), mode/risk enum
+                                         values, depends_on integrity, execution_order
+                                         references, and known hard_rules. Smoke-tested
+                                         against the live decisions.yaml. ContextBuilder
+                                         and PolicyEvaluator still accept raw dicts so
+                                         existing call sites are unchanged.
+✅  api/__init__.py
+✅  api/main.py                          create_app(platform=...) factory. Mounts the
+                                         router on FastAPI, exposes /health.
+✅  api/deps.py                          Platform container — assembles
+                                         LendingContextStore + ContextBuilder +
+                                         PolicyEvaluator + AtomicTool + CriticAgent +
+                                         DAGExecutor + ReflectionService + EventLog +
+                                         EntityHydrator + sink. agents and connectors
+                                         registries. _default_resolver walks the
+                                         InMemoryDurableStore's record list.
+✅  api/ingest.py                        EventLog (append-only buffer) +
+                                         EntityHydrator. Hydrator maps 8 event types
+                                         (lead, application, kyc, income_declared,
+                                         payroll, credit, fraud, property) onto 6
+                                         ontology entities under SHARED scope.
+                                         income_declared + payroll merge into one
+                                         IncomeProfile per (applicant, application).
+                                         build_event_sink() composes log + hydrator
+                                         into one EventSink.
+✅  api/routes.py                        POST /events, POST /override, POST
+                                         /connectors/webhook/{source}, GET
+                                         /decisions/{application_id}/{decision_id},
+                                         GET /trace/{trace_id}, GET
+                                         /applications/{id}/traces, POST
+                                         /applications/{id}/run (E2E helper).
+✅  domains/__init__.py
+✅  domains/lending/__init__.py
+✅  domains/lending/personas/__init__.py LENDING_PERSONA_CLASSES (decision_id → class),
+                                         build_lending_personas(use_anthropic=False),
+                                         register_with_platform(platform).
+✅  domains/lending/personas/base.py     LendingPersona base + Anthropic mixin.
+                                         Deterministic offline path computes the
+                                         canonical output_payload (intent_score, dti,
+                                         ltv, fraud_score, ...). LLM path is opt-in
+                                         (use_anthropic=True), uses cache_control on
+                                         the system block, falls back to offline when
+                                         no API key. Helpers: first_object,
+                                         latest_object, upstream_payload, make_signal.
+✅  domains/lending/personas/{12 files}  One persona per decision_id:
+                                           lead_scoring        → LeadQualificationAgent
+                                           income_verification → IncomeVerificationAgent
+                                           credit_assessment   → CreditRiskAgent
+                                           fraud_screening     → FraudDetectionAgent
+                                           compliance_check    → ComplianceAgent
+                                           dti_calculation     → DTICalculationAgent
+                                           ltv_assessment      → LTVAssessmentAgent
+                                           product_eligibility → ProductEligibilityAgent
+                                           rate_pricing        → PricingAgent
+                                           underwriting_decision → SeniorUnderwritingAgent
+                                           approval_routing    → WorkflowRoutingAgent
+                                           closing_readiness   → ClosingAgent
+✅  domains/lending/seed_events/__init__.py
+                                         SCENARIOS manifest + csv_connector(scenario,
+                                         sink), http_connector(scenario, sink),
+                                         load_extra_entities(scenario).
+✅  domains/lending/seed_events/runner.py
+                                         run_scenario(platform, scenario) — full E2E
+                                         replay: pushes events.csv through
+                                         MockCSVConnector.listen(), pulls
+                                         credit + fraud through MockHTTPConnector.fetch(),
+                                         seeds Loan + ComplianceRecord direct entities,
+                                         runs the DAG.
+✅  domains/lending/seed_events/happy_path/
+                                         events.csv + bureau_responses.json +
+                                         entities.json. 12/12 decisions complete.
+✅  domains/lending/seed_events/fraud_block/
+                                         watchlist_match=True →
+                                         fraud_block_stops_pipeline halts pipeline,
+                                         7 dependents skipped.
+✅  domains/lending/seed_events/contamination/
+                                         self_employed without payroll →
+                                         income_verification confidence 0.50, ESCALATE.
+                                         dti_calculation BLOCKs via
+                                         contamination_guard.reject_if_upstream_confidence_below.
+✅  domains/lending/seed_events/compliance_block/
+                                         fair_lending_violation=True → compliance_check
+                                         BLOCK; closing_readiness BLOCKs via
+                                         compliance_block_stops_closing.
+✅  ui/__init__.py                       STEP 11 — UI package, exports router + templates.
+✅  ui/views.py                          View-model helpers: list_applications(),
+                                         application_detail(), decision_detail(),
+                                         queue_view(). OUTCOME_STYLES palette.
+                                         Jinja filters: currency, pct, confidence, dt.
+                                         Reads in-memory durable store + trace writer
+                                         + human queue + learning store directly via
+                                         the Platform.
+✅  ui/routes.py                         5 GET routes (/, /ui/applications/{id},
+                                         /ui/applications/{id}/decisions/{decision},
+                                         /ui/queue) + POST override with HTMX swap
+                                         (returns _override_result partial on success,
+                                         _override_card partial with inline error on
+                                         same-outcome submission).
+✅  ui/templates/base.html               Layout. Tailwind via CDN
+                                         (cdn.tailwindcss.com), HTMX via CDN
+                                         (unpkg.com/htmx.org@1.9.12). Nav: Applications
+                                         | Human queue | Health | API docs.
+✅  ui/templates/index.html              Application list. Outcome counts as colored
+                                         dots, status pill (halted / pending review /
+                                         complete).
+✅  ui/templates/application.html        DAG visualization. Decisions grouped by
+                                         execution_order waves; each card color-coded
+                                         by outcome with persona, mode, risk,
+                                         confidence, matched_clause. Click → decision
+                                         detail.
+✅  ui/templates/decision.html           Three-column layout. Left: bundle objects
+                                         (per ObjectType, projected through
+                                         to_context_bundle), upstream outputs (with
+                                         click-through), boundary clauses (matched
+                                         clause labelled). Right: work journal
+                                         (hypothesis / conclusion / confidence_basis /
+                                         summary), signals (direction-coded dots),
+                                         contradictions, policy outcome + reasons,
+                                         critic review, output payload, override
+                                         workbench, recalled lessons.
+✅  ui/templates/_override_card.html     Three states: human_review attached (locked-in
+                                         display) | queueable outcome (form with
+                                         radios for new_outcome, reviewer_role,
+                                         reviewer_id, override_reason,
+                                         override_reason_code) | auto-executed
+                                         (no review needed banner). HTMX target:
+                                         #override-card.
+✅  ui/templates/_override_result.html   HTMX swap target after successful override.
+                                         Renders attached review + AgentLearning with
+                                         similarity tags.
+✅  ui/templates/queue.html              Cross-application queue table.
+✅  api/main.py                          Updated for STEP 11. Added asynccontextmanager
+                                         lifespan that runs _bootstrap_demo (registers
+                                         all 12 personas + replays 4 seed scenarios)
+                                         when seed_demo_data=True. Added mount_ui flag
+                                         (default True) for the ui router. Added
+                                         _known_application_ids() helper used by
+                                         /health. get_app() defaults to
+                                         seed_demo_data=True so uvicorn boots with
+                                         data.
+✅  docs/PRD.md                          v0.6 — §17 file-structure block reconciled,
+                                         §19 build sequence rewritten to mark
+                                         STEPS 1-10 done and shift STEP 11+ to
+                                         UI / outcome_tracker / simulation / tests.
+                                         §20 resume prompt rewritten.
 ✅  docker-compose.yml                   Postgres 16 + Redis 7 services with healthchecks.
 ✅  requirements.txt                     pydantic v2, redis, asyncpg, PyYAML, fastapi,
                                          uvicorn, anthropic, structlog, httpx, pytest,
@@ -127,32 +281,30 @@ Files confirmed in repo as of May 2026:
 ✅  README.md
 ```
 
-Also: BaseEvent in core/normalizer/models.py gained two optional fields
-this session — `correlation_id` and `request_id` — so pull-pattern
-connectors can pair an outbound request with the inbound response on
-the canonical event.
+Also: in Session 5 the Applicant ObjectType was extended with
+lead-stage fields (channel, lead_source, utm_params, session_behavior,
+prior_inquiries, ambiguous_identity, identity_match_confidence,
+applicant_dispute_flag, preferred_channel) so lead_scoring's persona
+can read them through to_context_bundle's projection. lead_scoring
+runs before an Application exists, so the lead data lives on the
+Applicant until the ApplicationSubmittedEvent fires.
 
 Files not yet built (next up):
 
 ```
-⬜  api/                                  STEP 7. POST /events | GET /decisions/:id |
-                                          GET /trace/:id | POST /override |
-                                          POST /connectors/webhook/:source
-⬜  core/policy_engine/loader.py         Loads + validates decisions.yaml at startup
-                                          (currently parsed ad hoc by ContextBuilder
-                                          and PolicyEvaluator).
+⬜  tests/                                STEP 14. Persistent test suite — only
+                                          context_store has scaffolding today;
+                                          cover api/, personas/, seed_events,
+                                          ui/ view-models.
+⬜  core/trace/outcome_tracker.py        STEP 12. Post-decision outcome scoring +
+                                          live A/B comparisons.
+⬜  core/simulation/replayer.py          STEP 13. Replay traces at point-in-time
+                                          for backtesting personas.
 ⬜  core/semantic_layer/flow.py          Event → entity → metric → signal mapper.
-⬜  core/trace/reflection.py             Override → AgentLearning → replay into next
-                                          decision. Persistent TraceWriter swap-in for the
-                                          in-memory variant.
-⬜  core/trace/outcome_tracker.py
-⬜  core/simulation/replayer.py
-⬜  domains/lending/personas/             12 concrete DecisionAgent subclasses (currently
-                                          only mocked in smoke tests).
-⬜  domains/lending/seed_events/          JSON/CSV fixtures replayed through MockCSVConnector
-                                          + MockHTTPConnector for end-to-end testing.
-⬜  ui/                                   Event stream | context view | trace viewer | queue
-⬜  tests/                                Only context_store has test scaffolding so far.
+                                          Currently the EntityHydrator in
+                                          api/ingest.py covers the event → entity
+                                          mapping; flow.py would add the
+                                          entity → metric → signal layer.
 ⬜  .env.example
 ```
 
@@ -494,22 +646,373 @@ opening a PR. Connect via `/web-setup` or the GitHub App if needed.
    real-backend smoke fails, look at what differs from the in-memory
    path (likely candidates: asyncpg JSONB codec, Redis JSON
    round-trip, schema.sql apply on a fresh DB).
-2. Build STEP 7: `api/` — FastAPI surface. Routes:
-   `POST /events` (ingest, hands to connector + normalizer),
-   `GET /decisions/:id`, `GET /trace/:id`, `POST /override`,
-   `POST /connectors/webhook/:source` (push connectors).
-3. Build `core/trace/reflection.py` — human override → `AgentLearning`
-   → replay into next similar decision (per decisions.yaml `reflection`
-   block).
-4. Build `core/policy_engine/loader.py` — single load+validate path
-   for decisions.yaml so ContextBuilder and PolicyEvaluator stop
-   parsing it ad hoc.
-5. Build `domains/lending/personas/` — 12 concrete DecisionAgent
-   subclasses (currently only mocked in smoke tests).
-6. Build `domains/lending/seed_events/` — fixtures for end-to-end
-   replay through MockCSVConnector + MockHTTPConnector.
-7. PRD §17 file-structure block is out of sync — schedule a pass to
-   reconcile it with what's now in the repo.
+2. Build STEP 7: `api/` — FastAPI surface.
+3. Build `core/trace/reflection.py` — human override → `AgentLearning`.
+4. Build `core/policy_engine/loader.py` — single load+validate path.
+5. Build `domains/lending/personas/` — 12 concrete DecisionAgent subclasses.
+6. Build `domains/lending/seed_events/` — fixtures for end-to-end replay.
+7. PRD §17 file-structure block is out of sync — schedule a reconcile pass.
+
+---
+
+### Session 5 — May 2 2026
+
+**What was built (STEPS 7, 8, 9, 10 + parallel jobs — full STEP 7-10
+sweep in a single session):**
+
+- `core/policy_engine/loader.py` — parallel job
+  - `DecisionsSpec` Pydantic model wraps decisions.yaml. Loads via
+    `from_path()` or `validate()`. Builds a `decision_index` and
+    pre-computed `execution_waves`.
+  - Validates: every decision has `owner_team`
+    (no_decision_without_owner), `mode` ∈ DecisionMode enum,
+    `risk_level` ∈ RiskLevel enum, every `depends_on.decision`
+    references a known decision, `execution_order` references only
+    known decisions and uses each at most once, `parallel_independent`
+    decisions have no `depends_on`. Hard-rule names checked against
+    `KNOWN_HARD_RULES`.
+  - Existing call sites unchanged — `PolicyEvaluator` and
+    `ContextBuilder` still accept raw dicts via `to_dict()`.
+
+- `core/trace/reflection.py` — STEP 8
+  - `AgentLearning` Pydantic model — agent_id, persona, decision_id,
+    trace_id, original_ai_decision, human_decision, override_reason,
+    override_reason_code, reviewer_role, lesson, similarity_tags,
+    captured_at, expires_at. Mirrors knowledge_base.json
+    `system_object_types.AgentLearning`.
+  - `LearningStore` Protocol + `InMemoryLearningStore` (append-only;
+    rejects duplicate ids).
+  - `ReflectionService.capture(trace, review)` — refuses if
+    `review.overridden=False` or original==final. Auto-tags by
+    `decision_id`, `reviewer_role`, `override_reason_code`. Body is a
+    plain-language summary the next agent can read verbatim.
+  - `ReflectionService.recall(agent_id, decision_id, similarity_tags,
+    limit=5)` — pulls active lessons (filters expired at recall, no
+    destructive deletes), ranks by tag overlap then recency.
+  - `derive_similarity_tags(trace)` helper extracts tags from
+    `output_payload` (employment_type, credit_band, loan_purpose,
+    loan_type) so the API doesn't need a per-decision tag function.
+  - `TraceWriter` Protocol gained `attach_human_review(trace_id,
+    review)` — the one allowed mutation. `InMemoryTraceWriter`
+    implements via `model_copy(update={"human_review": review})`.
+
+- `api/` — STEP 7
+  - `api/main.py` — `create_app(platform=None)` factory. Mounts
+    router, exposes `/health`. `get_app()` for `uvicorn
+    api.main:get_app --factory`.
+  - `api/deps.py` — `Platform` container. Holds spec, store, builder,
+    evaluator, critic, trace_writer, learning_store, reflection,
+    event_log, hydrator, sink, atomic_tool, mode_router, human_queue,
+    entity_resolver. Two registries (`agents`, `connectors`) plus a
+    lazy DAGExecutor that rebuilds when agents change.
+    `build_default_platform()` wires every in-memory backend; the
+    Postgres + Redis swap replaces just that one call.
+  - `api/ingest.py` — `EventLog` (in-memory append-only) +
+    `EntityHydrator`. Hydrator handles 8 event types →
+    Applicant / Application / IncomeProfile / CreditProfile /
+    FraudProfile / Property writes under SHARED scope
+    (lineage.decision_id=None). `income_declared` and
+    `payroll_received` MERGE into one IncomeProfile per
+    (applicant, application) — fixed a determinism bug from the
+    initial cut where two competing rows produced a 100% income
+    discrepancy. `build_event_sink(log, hydrator)` composes the
+    canonical sink.
+  - `api/routes.py` — six routes:
+      POST /events                                   ingest canonical event
+      POST /connectors/webhook/{source}              push-connector entry; falls back to
+                                                     normalize_event() if no adapter is
+                                                     registered for source
+      GET  /decisions/{application_id}/{decision_id} read DecisionRecord
+      GET  /trace/{trace_id}                         read DecisionTrace
+      GET  /applications/{id}/traces                 list traces for an application
+      POST /override                                 human override → reflection.capture
+      POST /applications/{id}/run                    DAG E2E helper (not in original
+                                                     STEP 7 list; trivial to add and
+                                                     lets seed_events drive end-to-end)
+    `POST /override` rejects when new_outcome==trace.outcome (that's
+    a confirmation, not an override). Updates trace via
+    attach_human_review then captures the AgentLearning.
+
+- `domains/lending/personas/` — STEP 9
+  - `base.py` — `LendingPersona(DecisionAgent)` with two reasoning
+    paths:
+      offline (default) — `_compute_offline(bundle, policy)` returns
+                          `OfflineReasoning(output_payload, signals,
+                          contradictions, ...)`. Smoke tests + the
+                          scheduled real-backend verification run on
+                          this path (no API key required).
+      anthropic (opt-in) — `_reason_anthropic()` calls AsyncAnthropic
+                          with cache_control on the system block.
+                          Falls back to offline narrative if the
+                          response can't be parsed or no API key.
+  - 12 concrete subclasses, one per decision_id (see `__init__.py`
+    `LENDING_PERSONA_CLASSES` map). Each computes the canonical
+    output_payload values the boundary clauses in decisions.yaml
+    care about (intent_score, channel; income_confidence_score,
+    employment_type, payroll_verified, income_discrepancy_pct;
+    credit_score, credit_band, active_bankruptcy; fraud_score,
+    watchlist_match, synthetic_identity_flag; etc.).
+  - `register_with_platform(platform)` — bulk-registers all 12.
+
+- `domains/lending/seed_events/` — STEP 10
+  - 4 scenario directories: `happy_path/`, `fraud_block/`,
+    `contamination/`, `compliance_block/`. Each contains
+    `events.csv` (push events for MockCSVConnector),
+    `bureau_responses.json` (pull responses for MockHTTPConnector),
+    `entities.json` (Loan + ComplianceRecord direct seeds).
+  - `runner.py` — `run_scenario(platform, scenario)` replays a
+    scenario end-to-end: `MockCSVConnector.listen()` →
+    `MockHTTPConnector.fetch({key: credit})` and
+    `fetch({key: fraud})` → seed direct entities → DAG run.
+  - `__init__.py` — manifest + connector loaders + entity loader.
+
+- `core/ontology/object_types.py` — incidental fix
+  - Applicant ObjectType properties extended with lead-stage fields
+    (channel, lead_source, utm_params, session_behavior,
+    prior_inquiries, ambiguous_identity, identity_match_confidence,
+    applicant_dispute_flag, preferred_channel) so lead_scoring's
+    persona can read them through `to_context_bundle`. lead_scoring
+    runs before an Application exists, so the lead data lives on the
+    Applicant until ApplicationSubmittedEvent fires.
+
+- `docs/PRD.md` — v0.6
+  - §17 file-structure block reconciled with the actual repo state.
+  - §19 build sequence rewritten — STEPS 1-10 marked done, next
+    steps shifted to 11 (UI), 12 (outcome_tracker), 13
+    (simulation/replayer), 14 (tests).
+  - §20 resume prompt rewritten to match.
+
+**Smoke-tested end-to-end (in-memory backends only):**
+
+All 4 scenarios via `runner.run_scenario`:
+
+  scenario             completed  skipped  failed  halted  halt_reason
+  happy_path           12         0        0       no      —
+  fraud_block          5          7        0       yes     fraud_block_stops_pipeline
+  contamination        12         0        0       no      —
+  compliance_block     12         0        0       no      —
+
+  - `contamination` proves `contamination_guard.reject_if_upstream_confidence_below: 0.75`
+    fires at the policy engine. dti_calculation trace.policy_reasons
+    reads: "upstream income_verification confidence 0.50 below
+    contamination_guard threshold 0.75" with contamination=True.
+  - `compliance_block` proves both `compliance_block_stops_closing`
+    and `upstream_block_propagates_to_dependents`.
+  - `fraud_block` proves the executor-level
+    `fraud_block_stops_pipeline` short-circuit halts every later
+    wave.
+  - `happy_path` mixes `allow` (auto modes) with `recommend`
+    (human_approval-mode decisions): income_verification + compliance
+    don't writeback under human_approval, so underwriting +
+    approval_routing legitimately recommend pending human review.
+    This is the realistic outcome — not a bug.
+
+API liveness:
+  - GET /health 200, lists agents/connectors counts.
+  - POST /events 201 with hydration; 422 on missing event_type.
+  - GET /trace/<unknown> 404.
+  - POST /override 201, returns updated trace with human_review +
+    AgentLearning. ReflectionService.recall returns the lesson on
+    the next similar event, ranked by overlap on
+    (decision_id, reviewer_role, override_reason_code).
+
+**Hard rules backed in this session:**
+- The reflection block in decisions.yaml — `human_override` →
+  `AgentLearning` → `feed_back_to: same_agent_next_similar_event` is
+  now a runtime path: `POST /override` calls
+  `ReflectionService.capture` which writes the learning, and the next
+  call to `ReflectionService.recall(agent_id, decision_id, tags)`
+  pulls it back ranked by tag overlap.
+
+**Real-backend verification still scheduled** — Sun May 3 2026 9am PT,
+routine `trig_013QhFbYJaViJfNybCbr3KUX`. Should open
+`session-4-real-backend-verification` PR. STEPS 1-6 verification (not
+yet 7-10).
+
+**Still pending (next session):**
+1. Review the Sunday PR (real-backend verification of STEPS 4-6) when
+   it lands. STEPS 7-10 were not in scope of that scheduled run.
+2. STEP 14: `tests/` — persistent pytest suite. Today only
+   `tests/core/context_store/test_in_memory.py` exists; cover
+   `core/policy_engine/loader.py`, `core/trace/reflection.py`, the
+   API surface (TestClient against each route), each persona's
+   `_compute_offline()` against canonical fixtures, and the 4
+   seed_events scenarios as canonical regressions. Two of the bugs
+   surfaced this session (income hydrator double-write, default
+   resolver shape) would have been single failing tests.
+3. STEP 11: `ui/` — event stream / context view / trace viewer /
+   human queue. Highest-leverage user-visible thing.
+4. STEPS 12-13: outcome_tracker, simulation/replayer.
+5. Architecture follow-up: `human_approval` mode currently does not
+   writeback (matches PRD §13 "human's resolution drives the eventual
+   writeback"), so downstream sees missing upstream output for
+   queued decisions. The senior_underwriting persona handles this
+   correctly by recommending instead of approving when upstream is
+   missing. Decide: should there be a "simulate human approvals" mode
+   for tests, or do all tests need an explicit human-approval step?
+
+---
+
+### Session 6 — May 2 2026
+
+**What was built (STEP 11 — local UI):**
+
+User direction: "build UI to see things running locally per persona,
+focus end-to-end on in-memory, go to cloud only once we see value."
+Picked FastAPI + Jinja2 + HTMX + Tailwind-via-CDN over Next.js for
+~2-session-to-v0 instead of ~5. Mounted into the existing api/main.py
+so it's all one process.
+
+- `api/main.py` — extended with an asynccontextmanager `lifespan` that
+  runs `_bootstrap_demo(platform)` when `seed_demo_data=True`. Bootstrap
+  registers all 12 personas via
+  `domains.lending.personas.register_with_platform` and replays the 4
+  seed scenarios via `domains.lending.seed_events.runner.run_scenario`
+  so the UI has 4 applications, ~48 traces, ~16 queued items waiting
+  on first page load. `get_app()` now defaults to
+  `seed_demo_data=True`. New `mount_ui` flag (default True) for the ui
+  router; tests can set False to skip. `_known_application_ids()`
+  helper walks the durable store for distinct Application entity_ids.
+
+- `ui/__init__.py` — exports router + templates.
+
+- `ui/views.py` — view-model helpers separate from routes so
+  templates stay legible. `list_applications`, `application_detail`,
+  `decision_detail`, `queue_view`. `OUTCOME_STYLES` palette
+  (allow → emerald, recommend → amber, escalate → orange, block →
+  rose, skipped → slate) keeps the CSS classes in one place. Jinja
+  filters: `currency`, `pct`, `confidence`, `dt`. View-models read
+  the in-memory durable store, trace writer, human queue, and
+  learning store directly via the `Platform` — synchronous reads on
+  the in-memory backends; will need an async pass for the Postgres
+  swap.
+
+- `ui/routes.py` — 5 GET routes:
+    /                                                       app list
+    /ui/applications/{id}                                    DAG view
+    /ui/applications/{id}/decisions/{decision_id}            decision detail
+    /ui/queue                                               cross-app queue
+    POST /ui/applications/{id}/decisions/{decision_id}/override
+                                                             HTMX form
+  Override flow: validates the trace, builds a HumanReview, calls
+  `trace_writer.attach_human_review` and `reflection.capture` (same
+  path as POST /override). Returns the `_override_result` partial as
+  HTMX swap target. Same-outcome submissions render
+  `_override_card` partial with an inline error message and stay in
+  place.
+
+- `ui/templates/base.html` — single layout. Tailwind via
+  `cdn.tailwindcss.com`, HTMX via `unpkg.com/htmx.org@1.9.12`. Nav:
+  Applications · Human queue · Health · API docs. Footer reminds the
+  reader that hard rules are code, traces are append-only, backend is
+  in-memory.
+
+- `ui/templates/index.html` — application list. Outcome counts as
+  colored dots inline; status pill is halted (rose) /
+  pending review (amber) / complete (emerald). Empty state instructs
+  the user to boot with seed_demo_data=True.
+
+- `ui/templates/application.html` — DAG view. Application metadata
+  card on top (loan_purpose, requested_amount, state, submitted_at).
+  Below, the 12 decisions grouped by execution_order waves —
+  parallel_independent first, then dependent waves 1-7 in order. Each
+  decision card is color-coded by outcome and shows persona, mode
+  (auto/human/rec/shadow), risk, confidence, matched_clause. Click →
+  decision detail.
+
+- `ui/templates/decision.html` — the workhorse. Three-column layout.
+  Left aside: bundle objects (per ObjectType, with field projection
+  visible — `_object_type`, `_primary_key`, `_decision_id` filtered
+  in the template), upstream outputs (with outcome pill and JSON
+  payload in `<details>`), boundary clauses (each clause's rules
+  listed; `matched` label on the clause that fired). Right column:
+  work journal (hypothesis, conclusion, confidence_basis, plain-
+  language summary), signals evaluated (direction-coded dots —
+  emerald supports / rose contradicts / slate neutral),
+  contradictions (resolved/unresolved status), policy outcome
+  (engine_outcome, matched_clause, contamination flag, policy
+  reasons), critic review (verdict + findings), output payload as
+  JSON, override workbench, recalled past learnings (with similarity
+  tags).
+
+- `ui/templates/_override_card.html` — partial covering 3 states.
+  human_review already attached → locked-in review card showing
+  reviewer + role + original + final + override reason. queueable
+  outcome → form with radio-pill outcome selector
+  (new_outcome ∈ {allow, recommend, escalate, block}), select for
+  reviewer_role, free-text reason, optional reason_code. auto-
+  executed → emerald banner "no review needed". The form submits via
+  HTMX (`hx-post` + `hx-target="#override-card"`) — never leaves the
+  page.
+
+- `ui/templates/_override_result.html` — HTMX swap target on
+  successful override. Shows attached review + the captured
+  AgentLearning with similarity tags + an explanation of what will
+  happen on the next similar event ("ReflectionService.recall() will
+  return this lesson ranked by overlap"). Closes the reflection loop
+  visually.
+
+- `ui/templates/queue.html` — cross-application queue table. App
+  link + decision id + persona (small mono) + proposed outcome pill +
+  confidence + enqueued_at + Review→ link. Footer explains queue
+  mechanics: "decisions land here when mode ∈ {recommend,
+  human_approval} or outcome ∈ {recommend, escalate} — the
+  ModeRouter chose QUEUE_HUMAN over auto-writeback."
+
+**Smoke-tested end-to-end (TestClient):**
+- GET /                                          200, 4 applications rendered
+- GET /health                                    agents=12, applications=4
+- GET /ui/applications/app_happy                 200, 12 decision cards
+- GET /ui/applications/app_happy/decisions/underwriting_decision
+                                                 200, override form shown
+- GET /ui/queue                                  200, 16 queued items
+- POST override → 200, response contains "AgentLearning captured" +
+  "Override recorded" sections
+- Reload decision detail post-override          shows attached review
+- Same-outcome submission                       inline error rendered
+                                                 ("matches the AI")
+
+**Run locally:**
+```bash
+uvicorn api.main:get_app --factory --reload --port 8000
+```
+Open http://localhost:8000/. seed_demo_data is on by default in
+get_app() so the 4 scenarios are pre-loaded.
+
+**Dependencies added:**
+- `jinja2>=3.1` (already had it but pinned now)
+- `python-multipart>=0.0.9` (FastAPI form parsing)
+
+**Tradeoffs noted:**
+- View-models read the in-memory store synchronously. The Postgres
+  swap will need an async pass — every helper in views.py becomes
+  async and the routes need `await`. Easy migration, but flagged.
+- Override doesn't dequeue. The HumanQueue's design has no "resolve"
+  method yet — items stay in `list_open()` until the queue itself is
+  reset. Functionally fine for v0; real human-queue UX needs a
+  resolved/dismissed state.
+- Tailwind via CDN means no purge — payload is fine for local but
+  not for production. When this goes to a polished demo, swap for a
+  built CSS bundle.
+- HTMX target replaces `#override-card` only. Other parts of the
+  page (bundle, journal, recalled lessons) don't refresh — a full
+  page reload is needed to see the new attached review propagate
+  upstream. Acceptable; reload link is in the result partial.
+
+**Still pending (next session):**
+1. Real hands-on use — boot the UI, walk through scenarios, find
+   what's confusing or missing. Likely surface area for changes:
+   per-persona signal renderers (e.g. lead_scoring's intent score
+   could be a meter, ltv could be an appraised-vs-loan diagram), live
+   refresh of decision detail post-override.
+2. STEP 14 tests — UI view-models are pure functions of Platform
+   state and would test cleanly. Cover list_applications,
+   application_detail.waves, decision_detail.bundle_objects projection,
+   queue_view ordering.
+3. STEPS 12-13: outcome_tracker, simulation/replayer.
+4. Real Anthropic calls — the personas have the path but it's
+   unproven. Would let users see the Anthropic-driven journal
+   side-by-side with the offline path.
 
 ---
 
@@ -535,55 +1038,113 @@ Then verify what actually exists:
 Do not ask what the project is. Do not ask what was built.
 Read the files and know.
 
-STEPS 1-6 are complete:
-  ✅ STEP 1 normalizer/models.py
-  ✅ STEP 2 ontology/object_types.py
-  ✅ STEP 3 context_store/{base,lending,redis_cache,postgres_store,
-            context_builder}.py + schema.sql
-  ✅ STEP 4 connectors/{base,mock_csv,mock_http}.py + correlation_id /
-            request_id on BaseEvent
-  ✅ STEP 5 decision_agents/{base,atomic_tool,mode_router}.py +
-            trace/trace_writer.py
-  ✅ STEP 6 execution/dag_executor.py with InMemoryEventBus and
-            fraud_block_stops_pipeline short-circuit
+STEPS 1-11 are complete (sessions 3, 4, 5, 6):
+  ✅ STEP 1  core/normalizer/models.py
+  ✅ STEP 2  core/ontology/object_types.py
+  ✅ STEP 3  core/context_store/{base,lending,redis_cache,
+             postgres_store,context_builder}.py + schema.sql
+  ✅ STEP 4  core/connectors/{base,mock_csv,mock_http}.py
+             + correlation_id / request_id on BaseEvent
+  ✅ STEP 5  core/decision_agents/{base,atomic_tool,mode_router}.py
+             + core/trace/trace_writer.py
+  ✅ STEP 6  core/execution/dag_executor.py
+             + InMemoryEventBus + fraud_block_stops_pipeline
+  ✅ STEP 7  api/{deps,ingest,routes,main}.py
+  ✅ STEP 8  core/trace/reflection.py
+  ✅ STEP 9  domains/lending/personas/ — 12 concrete persona classes
+  ✅ STEP 10 domains/lending/seed_events/ + runner.py
+  ✅ STEP 11 ui/ — local FastAPI + Jinja2 + HTMX + Tailwind via CDN.
+             Mounted in api/main.py via the create_app(mount_ui=True)
+             flag. Bootstrap lifespan auto-replays the 4 seed
+             scenarios on boot when seed_demo_data=True. 5 GET routes
+             (/, /ui/applications/{id},
+             /ui/applications/{id}/decisions/{decision}, /ui/queue,
+             /health) + POST /ui/.../override with HTMX swap.
+             Deliberately picked HTMX over Next.js for ~2-session-to-v0
+             instead of ~5; user wants to validate value locally
+             before any cloud / polished-demo work.
+  ✅ ALSO    core/policy_engine/loader.py (DecisionsSpec).
+             docs/PRD.md §17/§19/§20 reconciled (v0.6).
 
-Real-backend verification is scheduled for Sun May 3 2026 9am PT
-(routine trig_013QhFbYJaViJfNybCbr3KUX). It will open a PR on branch
-session-4-real-backend-verification with the result. If that PR has
-already landed, start by reviewing it; otherwise check
-https://claude.ai/code/routines/trig_013QhFbYJaViJfNybCbr3KUX for
-status.
+Run the UI locally:
+  uvicorn api.main:get_app --factory --reload --port 8000
+  → http://localhost:8000/
+
+End-to-end verified (in-memory backends only):
+  - All 4 seed scenarios pass via run_scenario(platform, name).
+  - UI smoke (TestClient): /, /ui/applications/{id}, decision detail,
+    /ui/queue, override POST returning AgentLearning swap, reload
+    showing attached review, same-outcome rejection rendering inline
+    error in the form partial.
+  - POST /override (the API route) and /ui/.../override (the HTMX
+    route) both call ReflectionService.capture and produce identical
+    AgentLearning records.
+
+Real-backend verification (STEPS 4-6 only) was scheduled for
+Sun May 3 2026 9am PT, routine trig_013QhFbYJaViJfNybCbr3KUX.
+If the PR has landed on branch session-4-real-backend-verification,
+start by reviewing it; otherwise check
+https://claude.ai/code/routines/trig_013QhFbYJaViJfNybCbr3KUX
+for status. Note: STEPS 7-11 are NOT in scope of that scheduled run
+— they need a separate verification when ready.
 
 Build next, in this order:
-  STEP 7: api/                  FastAPI surface.
-          Routes:
-            POST /events                       — ingest, push through
-                                                 normalize_event() +
-                                                 connector EventSink
-            GET  /decisions/:id                — read DecisionRecord
-            GET  /trace/:id                    — read DecisionTrace
-            POST /override                     — human override; feeds
-                                                 trace/reflection.py
-            POST /connectors/webhook/:source   — push-connector entry
-  STEP 8: core/trace/reflection.py
-          Human override → AgentLearning record (per decisions.yaml
-          reflection block) → replayed to same agent on next similar
-          event. 365-day retention.
-  STEP 9: domains/lending/personas/
-          12 concrete DecisionAgent subclasses (currently only mocked
-          in smoke tests). One file per persona; subclass calls into
-          Anthropic SDK with the bundle + policy and returns
-          AgentReasoning.
-  STEP 10: domains/lending/seed_events/
-          JSON / CSV fixtures replayed through MockCSVConnector +
-          MockHTTPConnector for end-to-end tests.
+  STEP 14 tests/                Persistent pytest suite. Today only
+                                tests/core/context_store/test_in_memory.py
+                                exists. Cover:
+                                - core/policy_engine/loader.py against
+                                  the real decisions.yaml.
+                                - core/trace/reflection.py capture +
+                                  recall + retention.
+                                - Each persona's _compute_offline()
+                                  against canonical input fixtures.
+                                - The 4 seed_events scenarios as
+                                  canonical end-to-end regressions.
+                                - api/ via fastapi.testclient on every
+                                  route, including the override flow.
+                                - ui/views.py view-models as pure
+                                  functions of Platform state.
+                                Three bugs found in sessions 5 + 6
+                                (income hydrator double-write,
+                                _default_resolver shape, view-model
+                                async/sync mismatch) would have been
+                                single failing tests instead of full
+                                DAG / full UI runs to debug.
 
-PARALLEL (small jobs):
-  - core/policy_engine/loader.py — single load+validate path so
-    ContextBuilder and PolicyEvaluator stop parsing decisions.yaml ad
-    hoc.
-  - PRD §17 file-structure block is out of date — bring it in sync
-    with the repo (CONTEXT.md is currently authoritative).
+  AFTER UI HANDS-ON      Real Anthropic calls. Personas have the path
+                         (use_anthropic=True, cache_control on the
+                         system block) but it's unproven. Boot the UI
+                         with one persona on the LLM path, see the
+                         work journal side-by-side with the offline
+                         baseline. Surfaces:
+                           - prompt-cache hit rate
+                           - JSON-parse robustness on the journal
+                           - latency per persona
+
+  STEP 12 core/trace/outcome_tracker.py
+                                Post-decision outcome scoring + live
+                                A/B comparisons. Needs a per-decision
+                                ground-truth feed.
+
+  STEP 13 core/simulation/replayer.py
+                                Replay traces at point-in-time for
+                                backtesting personas. Hook into
+                                InMemoryDurableStore.get_at_time
+                                (already supports it).
+
+OPEN ARCHITECTURAL QUESTIONS:
+  - human_approval mode currently doesn't writeback (per PRD §13
+    "human's resolution drives the eventual writeback"). Downstream
+    decisions see missing upstream output for queued decisions and
+    recommend rather than approve. Decide: do tests need a
+    "simulate human approvals" mode, or do all tests use an explicit
+    POST /override step to mark the queued decisions resolved?
+  - HumanQueue has no "resolved/dismissed" state. After override, the
+    item stays in list_open(). UX-wise this is wrong; functionally
+    it's fine for v0. Add a resolve() method on the HumanQueue
+    Protocol when you wire the dequeue flow.
+  - ui/views.py reads the in-memory store synchronously. Needs an
+    async pass for the Postgres swap; flagged in Session 6 notes.
 ```
 
 ---
@@ -603,4 +1164,4 @@ PARALLEL (small jobs):
 
 ---
 
-*Decision OS · CONTEXT.md · Updated May 2026*
+*Decision OS · CONTEXT.md · Updated May 2 2026 (Session 6 — local UI live)*

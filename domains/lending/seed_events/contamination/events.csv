@@ -1,0 +1,6 @@
+event_type,customer_id,application_id,lead_source,channel,session_behavior,loan_purpose,requested_amount,property_state,kyc_status,identity_match_confidence,stated_income,employment_type,employer,gross_amount,period_start,period_end,verified,address,appraised_value,purchase_price
+lead_received,cust_contam,,referral,digital,"{""pages_viewed"": 4, ""time_on_site_seconds"": 90}",,,,,,,,,,,,,,,
+application_submitted,cust_contam,app_contam,,,,purchase,350000,TX,,,,,,,,,,,,
+kyc_completed,cust_contam,app_contam,,,,,,,verified,0.93,,,,,,,,,,
+income_declared,cust_contam,app_contam,,,,,,,,,180000,self_employed,,,,,,,,
+property_appraised,cust_contam,app_contam,,,,,,,,,,,,,,,,"45 Loop St, Austin, TX",420000,400000

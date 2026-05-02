@@ -1,0 +1,26 @@
+[
+  {
+    "entity_type": "Loan",
+    "entity_id": "loan_fraud",
+    "value": {
+      "loan_id": "loan_fraud",
+      "application_id": "app_fraud",
+      "loan_type": "conforming",
+      "principal_amount": 250000,
+      "term_months": 360
+    }
+  },
+  {
+    "entity_type": "ComplianceRecord",
+    "entity_id": "comp_fraud",
+    "value": {
+      "compliance_record_id": "comp_fraud",
+      "application_id": "app_fraud",
+      "all_hmda_fields_complete": true,
+      "fair_lending_violation": false,
+      "missing_required_disclosures": false,
+      "state_rules_passed": true,
+      "cd_timing_compliant": true
+    }
+  }
+]

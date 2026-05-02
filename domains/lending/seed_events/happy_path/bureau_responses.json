@@ -1,0 +1,32 @@
+[
+  {
+    "key": "credit",
+    "payload": {
+      "event_type": "credit_pulled",
+      "customer_id": "cust_happy",
+      "application_id": "app_happy",
+      "bureau": "experian",
+      "credit_score": 740,
+      "open_tradelines": 6,
+      "derogatory_marks": 0,
+      "credit_utilization": 0.18,
+      "thin_file": false,
+      "active_bankruptcy": false
+    }
+  },
+  {
+    "key": "fraud",
+    "payload": {
+      "event_type": "fraud_signal",
+      "customer_id": "cust_happy",
+      "application_id": "app_happy",
+      "signal_type": "baseline",
+      "fraud_score": 0.05,
+      "device_fingerprint": "df_abc",
+      "ip_geolocation": "US-CA",
+      "velocity_signal": "normal",
+      "watchlist_match": false,
+      "synthetic_identity_flag": false
+    }
+  }
+]

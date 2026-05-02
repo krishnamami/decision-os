@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional, Protocol
 from uuid import UUID
 
-from .trace_schema import DecisionTrace
+from .trace_schema import DecisionTrace, HumanReview
 
 
 class TraceWriter(Protocol):
@@ -12,13 +12,24 @@ class TraceWriter(Protocol):
     The atomic_tool calls write() exactly once per decision execution.
     Production swaps this for a Postgres-backed writer; the in-memory
     variant exercises the contract in tests and seeds the upcoming
-    reflection / outcome-tracker work."""
+    reflection / outcome-tracker work.
+
+    `attach_human_review` is the one allowed mutation: a HumanReview
+    arrives later, after the agent's trace is already on disk. The
+    trace's identity (trace_id, reasoning, policy outcome, original
+    confidence) never changes — only the human_review side-channel is
+    set. Postgres swap implements this as either a row update on the
+    traces table or an INSERT into a sibling human_reviews table that
+    get() joins on read; both satisfy the contract."""
 
     async def write(self, trace: DecisionTrace) -> UUID: ...
     async def get(self, trace_id: UUID) -> Optional[DecisionTrace]: ...
     async def list_for_application(
         self, application_id: str
     ) -> list[DecisionTrace]: ...
+    async def attach_human_review(
+        self, trace_id: UUID, review: HumanReview
+    ) -> Optional[DecisionTrace]: ...
 
 
 class InMemoryTraceWriter:
@@ -47,6 +58,16 @@ class InMemoryTraceWriter:
             t for t in self._traces.values()
             if t.application_id == application_id
         ]
+
+    async def attach_human_review(
+        self, trace_id: UUID, review: HumanReview
+    ) -> Optional[DecisionTrace]:
+        existing = self._traces.get(trace_id)
+        if existing is None:
+            return None
+        updated = existing.model_copy(update={"human_review": review})
+        self._traces[trace_id] = updated
+        return updated
 
     def __len__(self) -> int:
         return len(self._traces)

@@ -1,0 +1,7 @@
+event_type,customer_id,application_id,lead_source,channel,session_behavior,loan_purpose,requested_amount,property_state,kyc_status,identity_match_confidence,stated_income,employment_type,employer,gross_amount,period_start,period_end,verified,address,appraised_value,purchase_price
+lead_received,cust_comp,,broker,digital,"{""pages_viewed"": 6, ""time_on_site_seconds"": 180}",,,,,,,,,,,,,,,
+application_submitted,cust_comp,app_comp,,,,cash_out_refinance,500000,FL,,,,,,,,,,,,
+kyc_completed,cust_comp,app_comp,,,,,,,verified,0.96,,,,,,,,,,
+income_declared,cust_comp,app_comp,,,,,,,,,150000,salaried,,,,,,,,
+payroll_received,cust_comp,app_comp,,,,,,,,,,,Acme,150000,2026-01-01T00:00:00,2026-04-30T00:00:00,true,,,
+property_appraised,cust_comp,app_comp,,,,,,,,,,,,,,,,"7 Bayfront Ct, Miami, FL",680000,640000

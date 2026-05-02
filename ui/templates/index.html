@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Applications · Decision OS{% endblock %}
+{% block content %}
+
+<div class="flex items-baseline justify-between mb-6">
+  <h1 class="text-2xl font-semibold tracking-tight">Applications</h1>
+  <div class="text-sm text-slate-500">
+    {{ applications | length }} total · {{ agent_count }} personas registered
+  </div>
+</div>
+
+{% if applications %}
+  <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-slate-50 text-slate-500 text-left">
+        <tr>
+          <th class="px-4 py-3 font-medium">Application</th>
+          <th class="px-4 py-3 font-medium">Loan</th>
+          <th class="px-4 py-3 font-medium">State</th>
+          <th class="px-4 py-3 font-medium">Decisions</th>
+          <th class="px-4 py-3 font-medium">Outcomes</th>
+          <th class="px-4 py-3 font-medium">Status</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for app in applications %}
+          <tr class="hover:bg-slate-50">
+            <td class="px-4 py-3">
+              <a href="/ui/applications/{{ app.application_id }}"
+                 class="font-medium text-indigo-700 hover:text-indigo-900 mono">
+                {{ app.application_id }}
+              </a>
+              <div class="text-xs text-slate-400 mt-0.5">
+                {{ app.submitted_at | dt }}
+              </div>
+            </td>
+            <td class="px-4 py-3">
+              {{ app.loan_purpose | default('—') }}
+              <div class="text-xs text-slate-400 mt-0.5 mono">
+                {{ app.requested_amount | currency }}
+              </div>
+            </td>
+            <td class="px-4 py-3 mono text-slate-600">
+              {{ app.property_state | default('—') }}
+            </td>
+            <td class="px-4 py-3">
+              <span class="font-medium">{{ app.completed }}</span>
+              <span class="text-slate-400">/ 12</span>
+            </td>
+            <td class="px-4 py-3">
+              <div class="flex items-center gap-1.5 flex-wrap">
+                {% for outcome, count in app.outcome_counts.items() %}
+                  {% set palette = {
+                    'allow':     'bg-emerald-500',
+                    'recommend': 'bg-amber-500',
+                    'escalate':  'bg-orange-500',
+                    'block':     'bg-rose-500',
+                  } %}
+                  <span class="inline-flex items-center gap-1 text-xs">
+                    <span class="w-2 h-2 rounded-full {{ palette[outcome] | default('bg-slate-400') }}"></span>
+                    <span class="mono text-slate-600">{{ count }} {{ outcome }}</span>
+                  </span>
+                {% endfor %}
+              </div>
+            </td>
+            <td class="px-4 py-3">
+              {% if app.halted %}
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs
+                             bg-rose-100 text-rose-800 font-medium">
+                  halted · {{ app.halt_reason }}
+                </span>
+              {% elif app.queued_count %}
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs
+                             bg-amber-100 text-amber-800 font-medium">
+                  {{ app.queued_count }} pending review
+                </span>
+              {% else %}
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs
+                             bg-emerald-100 text-emerald-800 font-medium">
+                  complete
+                </span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <div class="bg-white border border-slate-200 rounded-lg p-8 text-center text-slate-500">
+    No applications loaded. Boot the server with seed_demo_data=True or
+    POST events to / events.
+  </div>
+{% endif %}
+
+<div class="mt-8 text-xs text-slate-500 leading-relaxed">
+  <strong class="text-slate-700">What you're looking at:</strong>
+  Each application has run through the 12-decision lending pipeline. The
+  outcome columns count how many of those decisions ended in
+  <span class="mono">allow</span> · <span class="mono">recommend</span> ·
+  <span class="mono">escalate</span> · <span class="mono">block</span>.
+  Click into an application to see the per-decision detail, or open the
+  human queue to act on a queued decision.
+</div>
+
+{% endblock %}
