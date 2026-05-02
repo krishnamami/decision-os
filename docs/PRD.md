@@ -1,5 +1,5 @@
 # DECISION OS — PRODUCT REQUIREMENTS DOCUMENT
-# Version: 0.4 | Updated: May 2026 | Source of truth for Claude Code every session
+# Version: 0.5 | Updated: May 2026 | Source of truth for Claude Code every session
 
 ---
 
@@ -603,65 +603,68 @@ DecisionTrace {
 
 ---
 
-## 17. FILE STRUCTURE — CURRENT STATE
+## 17. FILE STRUCTURE — ACTUAL STATE IN REPO
+
+These are the ONLY files that exist in the repo right now.
+Do not assume anything else exists. Verify with find before building.
 
 ```
 decision-os/
 ├── core/
-│   ├── normalizer/
-│   │   ├── __init__.py
-│   │   └── models.py              ✅ DONE — all lending event types
 │   ├── semantic_layer/
-│   │   ├── resolver.py            ✅ DONE — synonym resolver
-│   │   └── flow.py                ⬜ TODO
-│   ├── ontology/
-│   │   └── object_types.py        ✅ DONE — 8 object types + semantic links
-│   ├── context_store/
+│   │   ├── __init__.py            ✅ EXISTS
+│   │   └── resolver.py            ✅ EXISTS — synonym resolver
+│   │   └── flow.py                ⬜ TODO — event → entity → signal mapper
+│   ├── policy_engine/
+│   │   └── evaluator.py           ✅ EXISTS — boundary evaluator + hard rules
+│   │   └── loader.py              ⬜ TODO — loads + validates decisions.yaml
+│   ├── trace/
+│   │   ├── __init__.py            ✅ EXISTS
+│   │   ├── trace_schema.py        ✅ EXISTS — WorkJournalEntry + DecisionTrace
+│   │   └── critic_agent.py        ✅ EXISTS — independent critic, SelfReviewError
+│   │   └── trace_writer.py        ⬜ TODO
+│   │   └── reflection.py          ⬜ TODO — override → AgentLearning → replay
+│   │   └── outcome_tracker.py     ⬜ TODO
+│   ├── normalizer/                ⬜ TODO — BUILD FIRST
+│   │   └── models.py              ⬜ TODO — all lending Pydantic event models
+│   ├── ontology/                  ⬜ TODO — BUILD SECOND
+│   │   └── object_types.py        ⬜ TODO — 8 object types + semantic links
+│   ├── context_store/             ⬜ TODO — BUILD THIRD
 │   │   ├── base.py                ⬜ TODO
 │   │   ├── redis_cache.py         ⬜ TODO
 │   │   ├── postgres_store.py      ⬜ TODO
 │   │   ├── lending.py             ⬜ TODO
 │   │   ├── schema.sql             ⬜ TODO
 │   │   └── context_builder.py     ⬜ TODO
-│   ├── policy_engine/
-│   │   ├── loader.py              ✅ DONE
-│   │   └── evaluator.py           ✅ DONE
-│   ├── decision_agents/
+│   ├── decision_agents/           ⬜ TODO
 │   │   ├── base.py                ⬜ TODO
 │   │   ├── atomic_tool.py         ⬜ TODO
 │   │   └── mode_router.py         ⬜ TODO
-│   ├── trace/
-│   │   ├── trace_schema.py        ✅ DONE
-│   │   ├── critic_agent.py        ✅ DONE
-│   │   ├── trace_writer.py        ⬜ TODO
-│   │   ├── reflection.py          ⬜ TODO
-│   │   └── outcome_tracker.py     ⬜ TODO
-│   ├── simulation/
-│   │   ├── replayer.py            ⬜ TODO
-│   │   └── comparator.py          ⬜ TODO
-│   ├── execution/
-│   │   └── dag_executor.py        ⬜ TODO
-│   └── connectors/
-│       └── base.py                ⬜ TODO
+│   ├── simulation/                ⬜ TODO
+│   ├── execution/                 ⬜ TODO
+│   └── connectors/                ⬜ TODO
 │
 ├── domains/lending/
-│   ├── decisions.yaml             ✅ DONE
-│   ├── knowledge_base.json        ✅ DONE
+│   ├── decisions.yaml             ✅ EXISTS — source of truth, all 12 decisions
+│   ├── knowledge_base.json        ✅ EXISTS — vocabulary, ontology, dep graph
 │   ├── personas/                  ⬜ TODO
 │   ├── policies/                  ⬜ TODO
 │   └── seed_events/               ⬜ TODO
 │
+├── docs/
+│   └── PRD.md                     ✅ EXISTS — this file
+│
+├── docker-compose.yml             ✅ EXISTS
+├── requirements.txt               ✅ EXISTS
+├── README.md                      ✅ EXISTS
+│
+│   NOT IN REPO YET:
+├── CONTEXT.md                     ⬜ CREATE — session history
 ├── api/                           ⬜ TODO
 ├── ui/                            ⬜ TODO
-├── infra/docker-compose.yml       ✅ DONE
+├── infra/                         ⬜ TODO
 ├── tests/                         ⬜ TODO
-├── docs/
-│   ├── PRD.md                     ✅ DONE
-│   └── CLAUDE_CODE_CONTEXT.md     ← THIS FILE
-├── CONTEXT.md                     ✅ DONE
-├── README.md                      ✅ DONE
-├── requirements.txt               ✅ DONE
-└── .env.example                   ✅ DONE
+└── .env.example                   ⬜ TODO
 ```
 
 ---
@@ -702,17 +705,50 @@ Paste this prompt at the start of every Claude Code session:
 
 ```
 Read these files in this order before doing anything:
-1. docs/CLAUDE_CODE_CONTEXT.md
-2. CONTEXT.md
-3. domains/lending/decisions.yaml
-4. domains/lending/knowledge_base.json
+1. docs/PRD.md                        ← architecture, principles, build sequence
+2. domains/lending/decisions.yaml     ← source of truth for all 12 decisions
+3. domains/lending/knowledge_base.json ← vocabulary, ontology, dependency graph
 
-Then run:
-  find . -name "*.py" -o -name "*.json" -o -name "*.sql" | grep -v .git | grep -v __pycache__
+Then verify what actually exists:
+  find . -name "*.py" -o -name "*.yaml" -o -name "*.json" -o -name "*.sql" \
+    | grep -v .git | grep -v __pycache__ | sort
 
-Do not ask what the project is. Do not ask what was built.
+Files confirmed in repo:
+  core/semantic_layer/__init__.py      ✅
+  core/semantic_layer/resolver.py      ✅
+  core/trace/__init__.py               ✅
+  core/trace/trace_schema.py           ✅
+  core/trace/critic_agent.py           ✅
+  core/policy_engine/evaluator.py      ✅
+  domains/lending/decisions.yaml       ✅
+  domains/lending/knowledge_base.json  ✅
+  docs/PRD.md                          ✅
+  docker-compose.yml                   ✅
+  requirements.txt                     ✅
+  README.md                            ✅
+
+Do not assume anything else exists.
+Do not ask what the project is.
 Read the files and know.
-The next thing to build is: core/context_store/
+
+Build in this exact order:
+  STEP 1: core/normalizer/models.py
+          Pydantic v2 event models for all lending event types defined in decisions.yaml.
+          Enums, base NormalizedEvent class, one typed class per event type,
+          EVENT_REGISTRY dict, normalize_event() function.
+          Everything downstream depends on this.
+
+  STEP 2: core/ontology/object_types.py
+          8 object types: Applicant, Application, Property, Loan,
+          CreditProfile, IncomeProfile, FraudProfile, ComplianceRecord.
+          Base ObjectType class. Semantic links with cardinality.
+          decisions_that_read_it list per object. to_context_bundle() method.
+
+  STEP 3: core/context_store/
+          base.py, redis_cache.py, postgres_store.py, lending.py,
+          schema.sql, context_builder.py.
+          Redis TTL from context_window_days in decisions.yaml.
+          Lineage on every ContextRecord. Non-negotiable.
 ```
 
 ---
@@ -749,4 +785,4 @@ The next thing to build is: core/context_store/
 
 ---
 
-*Decision OS · CLAUDE_CODE_CONTEXT.md · v0.4 · Read at the start of every session*
+*Decision OS · docs/PRD.md · v0.5 · Read at the start of every Claude Code session*
