@@ -1,0 +1,94 @@
+{# Underwriting decision persona panel: 6-input synthesis grid + risk_score gauge + outcome. #}
+{% set pv = persona_view %}
+
+<section class="bg-white border border-slate-200 rounded-lg p-5">
+  <div class="flex items-baseline justify-between mb-4">
+    <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider">
+      Underwriting decision · persona view
+    </h2>
+    <span class="text-xs text-slate-400">senior_underwriting_agent</span>
+  </div>
+
+  {# 6-input synthesis grid #}
+  <div class="mb-4">
+    <div class="text-xs text-slate-400 mb-2">
+      Upstream synthesis · 6 inputs · contamination_guard fail_if_any_upstream_blocked
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-2">
+      {% for pill in pv.upstream_pills %}
+        <div class="border rounded px-3 py-2 {{ pill.outcome_style.bg }} border-{{ pill.outcome_style.text.replace('text-','').replace('-800','-300') }}">
+          <div class="text-xs mono {{ pill.outcome_style.text }} truncate">{{ pill.decision_id }}</div>
+          <div class="text-[10px] uppercase tracking-wider opacity-70 mt-0.5">{{ pill.outcome }}</div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {# Risk score gauge #}
+  <div class="mb-4">
+    <div class="flex items-baseline justify-between mb-1">
+      <div class="text-xs text-slate-400">Composite risk_score</div>
+      <div class="text-2xl font-semibold mono">
+        {{ '%.2f'|format(pv.risk_score) if pv.risk_score is not none else '—' }}
+      </div>
+    </div>
+    <div class="relative h-7 rounded overflow-hidden flex">
+      <div class="bg-emerald-200 flex items-center justify-center" style="width: 25%;">
+        <span class="text-[10px] uppercase tracking-wider text-emerald-800">auto ≤ 0.25</span>
+      </div>
+      <div class="bg-amber-200 flex items-center justify-center" style="width: 35%;">
+        <span class="text-[10px] uppercase tracking-wider text-amber-800">recommend ≤ 0.60</span>
+      </div>
+      <div class="bg-orange-200 flex items-center justify-center" style="width: 40%;">
+        <span class="text-[10px] uppercase tracking-wider text-orange-800">escalate &gt; 0.60</span>
+      </div>
+      {% if pv.risk_pct is not none %}
+        <div class="absolute top-0 bottom-0 w-0.5 bg-slate-900" style="left: {{ pv.risk_pct }}%;"></div>
+        <div class="absolute -top-1 -translate-x-1/2" style="left: {{ pv.risk_pct }}%;">
+          <div class="w-2 h-2 bg-slate-900 rotate-45"></div>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {# Underwriting outcome + flags #}
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+    {% set uo = pv.underwriting_outcome %}
+    {% set uo_tone = ({'approve':'emerald','conditional_approve':'amber','decline':'rose'})[uo] | default('slate') %}
+    <div class="border border-{{ uo_tone }}-300 bg-{{ uo_tone }}-50 rounded p-3 col-span-2">
+      <div class="text-xs text-slate-400">underwriting_outcome</div>
+      <div class="text-lg mono text-{{ uo_tone }}-800">{{ uo | default('—') }}</div>
+    </div>
+    <div class="border rounded p-3
+                {% if pv.all_upstream_auto %}border-emerald-200 bg-emerald-50{% else %}border-slate-200{% endif %}">
+      <div class="text-xs text-slate-400">all_upstream_auto</div>
+      <div class="mono">{{ 'yes' if pv.all_upstream_auto else 'no' }}</div>
+    </div>
+    <div class="border rounded p-3
+                {% if pv.any_upstream_block %}border-rose-300 bg-rose-50{% else %}border-slate-200{% endif %}">
+      <div class="text-xs text-slate-400">any_upstream_block</div>
+      <div class="mono {% if pv.any_upstream_block %}text-rose-700{% endif %}">
+        {{ 'yes · BLOCK' if pv.any_upstream_block else 'no' }}
+      </div>
+    </div>
+  </div>
+
+  {% if pv.exceptions %}
+    <div class="border-t border-slate-100 pt-4">
+      <div class="text-xs text-slate-400 mb-2">
+        Exceptions · {{ pv.exceptions | length }}
+      </div>
+      <div class="flex flex-wrap gap-1.5">
+        {% for ex in pv.exceptions %}
+          <span class="text-xs mono px-2 py-1 rounded bg-amber-50 text-amber-800 border border-amber-200">
+            {{ ex }}
+          </span>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  {% if pv.senior_review_required %}
+    <div class="text-xs text-orange-700 mono mt-3">⚠ senior_underwriter_review_required</div>
+  {% endif %}
+</section>

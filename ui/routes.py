@@ -16,8 +16,10 @@ from .views import (
     application_detail,
     decision_detail,
     list_applications,
+    list_workbenches,
     queue_view,
     templates,
+    workbench_view,
 )
 
 
@@ -89,6 +91,44 @@ async def queue_view_route(
             "request": request,
             "items": queue_view(platform),
         },
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Workbench — operator-centric view per owner_team
+# ─────────────────────────────────────────────────────────────────────
+
+
+@router.get("/ui/workbench", response_class=HTMLResponse)
+async def workbench_index(
+    request: Request,
+    platform: Platform = Depends(get_platform),
+):
+    return templates.TemplateResponse(
+        "workbench_index.html",
+        {
+            "request": request,
+            "workbenches": list_workbenches(platform),
+        },
+    )
+
+
+@router.get("/ui/workbench/{owner_team}", response_class=HTMLResponse)
+async def workbench(
+    owner_team: str,
+    request: Request,
+    application_id: Optional[str] = None,
+    platform: Platform = Depends(get_platform),
+):
+    detail = workbench_view(platform, owner_team, application_id)
+    if detail is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"unknown owner_team {owner_team!r}",
+        )
+    return templates.TemplateResponse(
+        "workbench.html",
+        {"request": request, **detail},
     )
 
 

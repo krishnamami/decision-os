@@ -1,0 +1,79 @@
+{# Lead scoring persona panel: 0-1 intent meter + channel/source pills. #}
+{% set pv = persona_view %}
+
+<section class="bg-white border border-slate-200 rounded-lg p-5">
+  <div class="flex items-baseline justify-between mb-4">
+    <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider">
+      Lead scoring · persona view
+    </h2>
+    <span class="text-xs text-slate-400">lead_qualification_agent</span>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
+    <div>
+      <div class="text-xs text-slate-400 mb-1">Intent score</div>
+      <div class="text-3xl font-semibold mono">
+        {{ '%.2f'|format(pv.intent_score) if pv.intent_score is not none else '—' }}
+      </div>
+      <div class="relative h-3 bg-slate-100 rounded mt-3">
+        {% if pv.intent_pct is not none %}
+          <div class="absolute inset-y-0 left-0 bg-indigo-400 rounded"
+               style="width: {{ pv.intent_pct }}%;"></div>
+        {% endif %}
+        {# Threshold marks: auto 0.7, recommend 0.5 #}
+        <div class="absolute top-0 bottom-0 w-px bg-emerald-600" style="left: 70%;"></div>
+        <div class="absolute top-0 bottom-0 w-px bg-amber-600"   style="left: 50%;"></div>
+      </div>
+      <div class="flex items-center gap-3 mt-2 text-xs">
+        <span class="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 mono">auto ≥ 0.7</span>
+        <span class="px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 mono">rec ≥ 0.5</span>
+      </div>
+    </div>
+
+    <div>
+      <div class="text-xs text-slate-400 mb-1">Routing inputs</div>
+      <div class="space-y-1.5 text-sm">
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-slate-400 w-20">channel</span>
+          <span class="mono text-slate-800">{{ pv.channel | default('—') }}</span>
+          {% if pv.channel_fit %}
+            <span class="text-[10px] uppercase tracking-wider text-emerald-700">fit · auto</span>
+          {% else %}
+            <span class="text-[10px] uppercase tracking-wider text-slate-400">no fit</span>
+          {% endif %}
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-slate-400 w-20">source</span>
+          <span class="mono text-slate-800">{{ pv.source | default('—') }}</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-slate-400 w-20">priority</span>
+          {% set tone = ({'high':'emerald','medium':'amber','low':'slate'})[pv.lead_priority] | default('slate') %}
+          <span class="text-xs mono px-2 py-0.5 rounded bg-{{ tone }}-100 text-{{ tone }}-800">
+            {{ pv.lead_priority | default('—') }}
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="border-t border-slate-100 pt-4">
+    <div class="text-xs text-slate-400 mb-2">Boundary triggers</div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      {% for f in pv.flags %}
+        {% set tone = ({'block':'rose','escalate':'orange','recommend':'amber','auto':'emerald'})[f.trigger] | default('slate') %}
+        <div class="border rounded px-3 py-2
+                    {% if f.fired %}border-{{ tone }}-300 bg-{{ tone }}-50{% else %}border-slate-200{% endif %}">
+          <div class="flex items-center justify-between">
+            <span class="text-xs mono {% if f.fired %}text-{{ tone }}-800{% else %}text-slate-500{% endif %}">{{ f.label }}</span>
+            <span class="text-[10px] uppercase tracking-wider {% if f.fired %}text-{{ tone }}-700{% else %}text-slate-400{% endif %}">→ {{ f.trigger }}</span>
+          </div>
+          <div class="text-xs mono mt-1">
+            {{ f.value if f.value is not none else '—' }}
+            {% if f.fired %}<span class="ml-1 text-{{ tone }}-700">· fired</span>{% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>

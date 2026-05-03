@@ -193,9 +193,14 @@ class LendingContextStore(ContextStore):
             merged.setdefault(entity_type, {})[entity_id] = rec.value
 
         for upstream in upstream_decision_ids or []:
-            rec = await self._durable.get_latest(
-                "decision", f"{application_id}:{upstream}", upstream
-            )
+            if at is not None:
+                rec = await self._durable.get_at_time(
+                    "decision", f"{application_id}:{upstream}", upstream, at
+                )
+            else:
+                rec = await self._durable.get_latest(
+                    "decision", f"{application_id}:{upstream}", upstream
+                )
             if rec is None or rec.superseded_at is not None:
                 continue
             records.append(rec)

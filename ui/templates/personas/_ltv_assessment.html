@@ -1,0 +1,101 @@
+{# LTV persona panel: appraised vs loan stack + LTV bar with PMI/cap markers. #}
+{% set pv = persona_view %}
+
+<section class="bg-white border border-slate-200 rounded-lg p-5">
+  <div class="flex items-baseline justify-between mb-4">
+    <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider">
+      LTV assessment · persona view
+    </h2>
+    <span class="text-xs text-slate-400">underwriting_agent</span>
+  </div>
+
+  {# Appraised vs loan amount comparison #}
+  <div class="mb-4">
+    <div class="text-xs text-slate-400 mb-2">Appraised value vs loan amount</div>
+    <div class="space-y-2">
+      <div>
+        <div class="flex items-baseline justify-between text-xs">
+          <span class="text-slate-500">appraised_value</span>
+          <span class="mono text-slate-800">{{ pv.appraised_value | currency }}</span>
+        </div>
+        <div class="relative h-2 bg-slate-100 rounded mt-1">
+          {% if pv.appraised_bar is not none %}
+            <div class="absolute inset-y-0 left-0 bg-emerald-500 rounded" style="width: {{ pv.appraised_bar }}%;"></div>
+          {% endif %}
+        </div>
+      </div>
+      <div>
+        <div class="flex items-baseline justify-between text-xs">
+          <span class="text-slate-500">loan_amount</span>
+          <span class="mono text-slate-800">{{ pv.loan_amount | currency }}</span>
+        </div>
+        <div class="relative h-2 bg-slate-100 rounded mt-1">
+          {% if pv.loan_bar is not none %}
+            <div class="absolute inset-y-0 left-0 bg-indigo-500 rounded" style="width: {{ pv.loan_bar }}%;"></div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# LTV ratio bar with PMI / cap markers #}
+  <div class="mb-4">
+    <div class="flex items-baseline justify-between mb-1">
+      <div class="text-xs text-slate-400">LTV ratio</div>
+      <div class="text-2xl font-semibold mono">
+        {{ pv.ltv | pct(1) if pv.ltv is not none else '—' }}
+      </div>
+    </div>
+    <div class="relative h-7 rounded overflow-hidden flex">
+      <div class="bg-emerald-200 flex items-center justify-center" style="width: 80%;">
+        <span class="text-[10px] uppercase tracking-wider text-emerald-800">auto ≤ 0.80</span>
+      </div>
+      <div class="bg-amber-200 flex items-center justify-center" style="width: 15%;">
+        <span class="text-[10px] uppercase tracking-wider text-amber-800">rec ≤ 0.95</span>
+      </div>
+      <div class="bg-rose-200 flex items-center justify-center" style="width: 5%;">
+        <span class="text-[10px] uppercase tracking-wider text-rose-800">block</span>
+      </div>
+      {% if pv.ltv_pct is not none %}
+        <div class="absolute top-0 bottom-0 w-0.5 bg-slate-900" style="left: {{ pv.ltv_pct }}%;"></div>
+        <div class="absolute -top-1 -translate-x-1/2" style="left: {{ pv.ltv_pct }}%;">
+          <div class="w-2 h-2 bg-slate-900 rotate-45"></div>
+        </div>
+      {% endif %}
+    </div>
+    <div class="flex items-center gap-3 mt-2 text-xs">
+      <span class="text-slate-500 mono">PMI ≥ 0.80</span>
+      <span class="text-slate-500 mono">agency cap ≈ 0.97</span>
+      {% if pv.max_allowable_ltv is not none %}
+        <span class="ml-auto text-slate-500 mono">
+          band cap {{ pv.max_allowable_ltv | pct(0) }}
+        </span>
+      {% endif %}
+    </div>
+    {% if pv.exceeds_max_allowed %}
+      <div class="text-xs text-rose-700 mt-1 mono">⚠ exceeds band-allowable cap</div>
+    {% endif %}
+  </div>
+
+  {% if pv.flags %}
+    <div class="border-t border-slate-100 pt-4">
+      <div class="text-xs text-slate-400 mb-2">Boundary triggers</div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {% for f in pv.flags %}
+          {% set tone = ({'block':'rose','escalate':'orange','recommend':'amber','auto':'emerald'})[f.trigger] | default('slate') %}
+          <div class="border rounded px-3 py-2
+                      {% if f.fired %}border-{{ tone }}-300 bg-{{ tone }}-50{% else %}border-slate-200{% endif %}">
+            <div class="flex items-center justify-between">
+              <span class="text-xs mono {% if f.fired %}text-{{ tone }}-800{% else %}text-slate-500{% endif %}">{{ f.label }}</span>
+              <span class="text-[10px] uppercase tracking-wider {% if f.fired %}text-{{ tone }}-700{% else %}text-slate-400{% endif %}">→ {{ f.trigger }}</span>
+            </div>
+            <div class="text-xs mono mt-1">
+              {{ f.value if f.value is not none else '—' }}
+              {% if f.fired %}<span class="ml-1 text-{{ tone }}-700">· fired</span>{% endif %}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+</section>

@@ -20,14 +20,23 @@
       </div>
     </div>
     {% if trace %}
-      <div class="flex items-center gap-2">
-        <span class="px-2 py-1 rounded text-sm font-medium
-                     {{ outcome_style.bg }} {{ outcome_style.text }}">
-          {{ trace.outcome.value }}
-        </span>
-        <span class="text-sm text-slate-500">
-          confidence <span class="mono">{{ trace.confidence | confidence }}</span>
-        </span>
+      <div class="flex flex-col items-end gap-1">
+        <div class="flex items-center gap-2">
+          <span class="px-2 py-1 rounded text-sm font-medium
+                       {{ outcome_style.bg }} {{ outcome_style.text }}">
+            {{ trace.outcome.value }}
+          </span>
+          <span class="text-sm text-slate-500">
+            confidence <span class="mono">{{ trace.confidence | confidence }}</span>
+          </span>
+        </div>
+        {% if routing_target %}
+          {% set tone = routing_target.tone %}
+          <span class="text-xs px-2 py-0.5 rounded
+                       bg-{{ tone }}-50 text-{{ tone }}-700 border border-{{ tone }}-200">
+            {{ routing_target.label }}
+          </span>
+        {% endif %}
       </div>
     {% else %}
       <span class="px-2 py-1 rounded text-sm font-medium bg-slate-100 text-slate-600">
@@ -59,6 +68,21 @@
     </div>
   </div>
 
+  {% if read_permissions %}
+    <div class="mt-4 pt-4 border-t border-slate-100">
+      <div class="text-xs text-slate-400 mb-1.5">
+        Reads · <span class="text-slate-500">no_agent_without_permissions</span>
+      </div>
+      <div class="flex flex-wrap gap-1.5">
+        {% for ot_id in read_permissions %}
+          <span class="text-xs mono bg-slate-100 text-slate-700 px-2 py-1 rounded">
+            {{ ot_id }}
+          </span>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
   {% if spec.depends_on %}
     <div class="mt-4 pt-4 border-t border-slate-100">
       <div class="text-xs text-slate-400 mb-1">Depends on</div>
@@ -73,13 +97,85 @@
       </div>
     </div>
   {% endif %}
+
+  {% if contamination_guard %}
+    <div class="mt-4 pt-4 border-t border-slate-100">
+      <div class="text-xs text-slate-400 mb-1">Contamination guard</div>
+      <div class="flex flex-wrap gap-1.5 text-xs mono text-slate-700">
+        {% for k, v in contamination_guard.items() %}
+          <span class="bg-amber-50 text-amber-800 border border-amber-200 px-2 py-1 rounded">
+            {{ k }} = {{ v }}
+          </span>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
 </div>
+
+{# ── Atomic-tool pipeline strip — PRD §7 ──────────────────────────── #}
+{% if atomic_steps %}
+<div class="bg-white border border-slate-200 rounded-lg p-3 mb-6">
+  <div class="text-xs text-slate-400 mb-2 px-2">
+    Atomic tool · <span class="mono">PRD §7</span>
+  </div>
+  <div class="flex items-stretch gap-1 overflow-x-auto">
+    {% for step in atomic_steps %}
+      {% set tone = ({
+        'matched': 'bg-emerald-50 border-emerald-200 text-emerald-800',
+        'skipped': 'bg-slate-50 border-slate-200 text-slate-500',
+        'pending': 'bg-slate-50 border-slate-200 text-slate-400',
+      })[step.status] %}
+      <div class="{{ tone }} border rounded px-3 py-2 flex-1 min-w-[110px]">
+        <div class="text-[10px] uppercase tracking-wider opacity-70">
+          {{ loop.index }}. {{ step.label }}
+        </div>
+        <div class="text-xs mono mt-0.5 truncate">
+          {{ step.value | default(step.status) }}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{# ── Upstream status row (dependents only) ────────────────────────── #}
+{% if upstream_status %}
+<div class="bg-white border border-slate-200 rounded-lg p-4 mb-6">
+  <div class="text-xs text-slate-400 mb-2">
+    Upstream status · <span class="mono">upstream_block_propagates_to_dependents</span>
+  </div>
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+    {% for up in upstream_status %}
+      <a href="/ui/applications/{{ application_id }}/decisions/{{ up.decision_id }}"
+         class="flex items-center justify-between gap-2 px-3 py-2 rounded
+                border border-slate-200 hover:border-slate-300
+                {{ up.outcome_style.bg }}">
+        <div class="min-w-0">
+          <div class="text-xs mono {{ up.outcome_style.text }} truncate">
+            {{ up.decision_id }}
+          </div>
+          <div class="text-[10px] uppercase tracking-wider opacity-70">
+            {{ up.outcome }}
+          </div>
+        </div>
+        <div class="text-xs mono text-slate-700">
+          {% if up.confidence is not none %}
+            {{ up.confidence | confidence }}
+          {% else %}
+            —
+          {% endif %}
+        </div>
+      </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
 
 {# ── Two columns: bundle inputs (left) + reasoning + policy (right) ── #}
 
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-  {# ── Left column: bundle objects + upstream outputs ─────────────── #}
+  {# ── Left column: bundle objects + upstream outputs + boundary lit ── #}
   <aside class="lg:col-span-1 space-y-4">
 
     <section class="bg-white border border-slate-200 rounded-lg p-4">
@@ -149,31 +245,55 @@
       </section>
     {% endif %}
 
-    {# Boundary clauses for ground-truth on what the policy engine evaluated. #}
+    {# Boundary clauses lit against current values. The matched clause
+       is highlighted; every rule shows ✓ or ✗. #}
     {% if boundary %}
       <section class="bg-white border border-slate-200 rounded-lg p-4">
         <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">
-          Boundary clauses
+          Boundary
+          <span class="text-[10px] normal-case text-slate-400">
+            (lit against output_payload + bundle)
+          </span>
         </h2>
         <div class="space-y-3 text-xs">
-          {% for clause_name, rules in boundary.items() %}
-            {% if rules %}
-              {% set clause_style = {
-                'automate_if':  'text-emerald-700',
-                'recommend_if': 'text-amber-700',
-                'escalate_if':  'text-orange-700',
-                'block_if':     'text-rose-700',
-              } %}
-              <div>
-                <div class="mono font-medium {{ clause_style[clause_name] | default('text-slate-700') }}">
-                  {{ clause_name }}
-                  {% if trace and trace.matched_clause == clause_name %}
-                    <span class="ml-1 text-[10px] uppercase">matched</span>
-                  {% endif %}
+          {% for clause_name in ['block_if', 'escalate_if', 'recommend_if', 'automate_if'] %}
+            {% set clause = boundary_eval.get(clause_name) %}
+            {% if clause and clause.rule_count > 0 %}
+              {% set tone = ({
+                'block_if':     'rose',
+                'escalate_if':  'orange',
+                'recommend_if': 'amber',
+                'automate_if':  'emerald',
+              })[clause_name] %}
+              {% set matched_now = clause.all_matched %}
+              {% set was_chosen = trace and trace.matched_clause == clause_name %}
+              <div class="border rounded p-2
+                          {% if was_chosen %}border-{{ tone }}-300 bg-{{ tone }}-50{% else %}border-slate-200{% endif %}">
+                <div class="flex items-center justify-between mb-1">
+                  <div class="mono font-medium text-{{ tone }}-700">
+                    {{ clause_name }}
+                  </div>
+                  <div class="text-[10px] uppercase tracking-wider">
+                    {% if was_chosen %}
+                      <span class="text-{{ tone }}-700">matched · chosen</span>
+                    {% elif matched_now %}
+                      <span class="text-{{ tone }}-700">all true</span>
+                    {% else %}
+                      <span class="text-slate-400">not matched</span>
+                    {% endif %}
+                  </div>
                 </div>
-                <ul class="mt-1 ml-3 space-y-0.5 mono text-slate-600">
-                  {% for rule in rules %}
-                    <li>· {{ rule }}</li>
+                <ul class="space-y-0.5 mono">
+                  {% for rule in clause.rules %}
+                    <li class="flex items-start gap-2">
+                      <span class="flex-none mt-[2px] w-3 text-center
+                                   {% if rule.matched %}text-emerald-600{% else %}text-slate-300{% endif %}">
+                        {% if rule.matched %}✓{% else %}·{% endif %}
+                      </span>
+                      <span class="{% if rule.matched %}text-slate-800{% else %}text-slate-400{% endif %}">
+                        {{ rule.rule }}
+                      </span>
+                    </li>
                   {% endfor %}
                 </ul>
               </div>
@@ -185,8 +305,13 @@
 
   </aside>
 
-  {# ── Right column: work journal + policy + critic + output + override ── #}
+  {# ── Right column: persona panel + work journal + policy + critic + output + override ── #}
   <div class="lg:col-span-2 space-y-4">
+
+    {# Persona-specific panel — included only when one exists for this decision_id. #}
+    {% if persona_panel and persona_view %}
+      {% include persona_panel %}
+    {% endif %}
 
     {% if trace %}
 

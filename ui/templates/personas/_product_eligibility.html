@@ -1,0 +1,65 @@
+{# Product eligibility persona panel: eligible products + exception products. #}
+{% set pv = persona_view %}
+
+<section class="bg-white border border-slate-200 rounded-lg p-5">
+  <div class="flex items-baseline justify-between mb-4">
+    <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider">
+      Product eligibility · persona view
+    </h2>
+    <span class="text-xs text-slate-400">product_eligibility_agent</span>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div>
+      <div class="text-xs text-slate-400 mb-2">
+        Eligible · {{ pv.eligible_products | length }}
+      </div>
+      {% if pv.eligible_products %}
+        <ul class="space-y-1.5">
+          {% for product in pv.eligible_products %}
+            <li class="flex items-center gap-2 px-3 py-2 rounded border border-emerald-200 bg-emerald-50">
+              <span class="text-emerald-700">✓</span>
+              <span class="text-sm mono text-emerald-800">{{ product }}</span>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <div class="px-3 py-4 rounded border border-rose-200 bg-rose-50 text-sm text-rose-800">
+          {% if pv.no_eligible_products %}
+            No eligible products · block
+          {% else %}
+            No products
+          {% endif %}
+        </div>
+      {% endif %}
+    </div>
+
+    <div>
+      <div class="text-xs text-slate-400 mb-2">
+        Eligible with exceptions · {{ pv.exceptions_required | length }}
+      </div>
+      {% if pv.exceptions_required %}
+        <ul class="space-y-1.5">
+          {% for product in pv.exceptions_required %}
+            <li class="flex items-center gap-2 px-3 py-2 rounded border border-amber-200 bg-amber-50">
+              <span class="text-amber-700">!</span>
+              <span class="text-sm mono text-amber-800">{{ product }}</span>
+              <span class="ml-auto text-[10px] uppercase tracking-wider text-amber-700">guideline exception</span>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <div class="px-3 py-4 rounded border border-slate-200 bg-slate-50 text-xs text-slate-500">
+          no exceptions required
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="border-t border-slate-100 pt-4 mt-4 text-xs text-slate-500 mono">
+    boundary: automate_if eligible.count ≥ 1 AND no exceptions ·
+    recommend_if eligible_with_exceptions ·
+    block_if no_eligible_products ·
+    escalate_if guideline_exception_required
+  </div>
+</section>

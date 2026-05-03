@@ -1,0 +1,77 @@
+{# Rate pricing persona panel: base + LLPA waterfall vs usury cap. #}
+{% set pv = persona_view %}
+
+<section class="bg-white border border-slate-200 rounded-lg p-5">
+  <div class="flex items-baseline justify-between mb-4">
+    <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider">
+      Rate pricing · persona view
+    </h2>
+    <span class="text-xs text-slate-400">pricing_agent</span>
+  </div>
+
+  {# Rate vs usury limit bar #}
+  <div class="mb-4">
+    <div class="flex items-baseline justify-between mb-1">
+      <div class="text-xs text-slate-400">Interest rate vs usury cap</div>
+      <div class="text-2xl font-semibold mono">
+        {{ pv.interest_rate | pct(3) if pv.interest_rate is not none else '—' }}
+      </div>
+    </div>
+    <div class="relative h-7 bg-slate-100 rounded overflow-hidden">
+      {# Base #}
+      {% if pv.base_pct_of_usury is not none %}
+        <div class="absolute inset-y-0 left-0 bg-indigo-300" style="width: {{ pv.base_pct_of_usury }}%;"></div>
+      {% endif %}
+      {# LLPA add-on stacked on top of base #}
+      {% if pv.base_pct_of_usury is not none and pv.llpa_pct_of_usury is not none %}
+        <div class="absolute inset-y-0 bg-orange-400"
+             style="left: {{ pv.base_pct_of_usury }}%; width: {{ pv.llpa_pct_of_usury }}%;"></div>
+      {% endif %}
+      {# Normal-band marker at 10% APR #}
+      {% set normal_pct = (0.10 / pv.usury_limit) * 100 %}
+      <div class="absolute top-0 bottom-0 w-px bg-emerald-700" style="left: {{ normal_pct }}%;"></div>
+      {# Usury limit marker (right edge) #}
+      <div class="absolute top-0 bottom-0 w-px bg-rose-700" style="left: 100%;"></div>
+    </div>
+    <div class="flex items-center gap-4 mt-2 text-[11px] mono">
+      <span class="flex items-center gap-1">
+        <span class="w-3 h-3 inline-block bg-indigo-300 rounded-sm"></span>
+        base {{ pv.base_rate | pct(2) }}
+      </span>
+      <span class="flex items-center gap-1">
+        <span class="w-3 h-3 inline-block bg-orange-400 rounded-sm"></span>
+        LLPA {{ pv.llpa | pct(2) }}
+      </span>
+      <span class="ml-auto text-emerald-700">normal band ≤ 10%</span>
+      <span class="text-rose-700">usury cap {{ pv.usury_limit | pct(0) }}</span>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4 text-sm">
+    <div class="border border-slate-200 rounded p-3">
+      <div class="text-xs text-slate-400">loan_type</div>
+      <div class="mono">{{ pv.loan_type | default('—') }}</div>
+    </div>
+    <div class="border border-slate-200 rounded p-3
+                {% if pv.rate_within_normal_band %}border-emerald-200 bg-emerald-50{% endif %}">
+      <div class="text-xs text-slate-400">in normal band</div>
+      <div class="mono">{{ 'yes' if pv.rate_within_normal_band else 'no' }}</div>
+    </div>
+    <div class="border border-slate-200 rounded p-3
+                {% if pv.no_manual_adjustments %}border-emerald-200 bg-emerald-50{% else %}border-amber-200 bg-amber-50{% endif %}">
+      <div class="text-xs text-slate-400">no manual adj</div>
+      <div class="mono">{{ 'yes' if pv.no_manual_adjustments else 'no' }}</div>
+    </div>
+    <div class="border border-slate-200 rounded p-3
+                {% if pv.rate_exceeds_usury %}border-rose-300 bg-rose-50{% endif %}">
+      <div class="text-xs text-slate-400">usury limit</div>
+      <div class="mono {% if pv.rate_exceeds_usury %}text-rose-700{% endif %}">
+        {{ 'EXCEEDS' if pv.rate_exceeds_usury else 'ok' }}
+      </div>
+    </div>
+  </div>
+
+  {% if pv.concurrent_lock_conflict %}
+    <div class="text-xs text-orange-700 mono">⚠ concurrent_rate_lock_conflict · escalate</div>
+  {% endif %}
+</section>

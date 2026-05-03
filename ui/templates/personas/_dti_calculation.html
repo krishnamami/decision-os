@@ -1,0 +1,82 @@
+{# DTI calculation persona panel: DTI bar with thresholds + upstream provenance + contamination guard. #}
+{% set pv = persona_view %}
+
+<section class="bg-white border border-slate-200 rounded-lg p-5">
+  <div class="flex items-baseline justify-between mb-4">
+    <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider">
+      DTI calculation · persona view
+    </h2>
+    <span class="text-xs text-slate-400">underwriting_agent</span>
+  </div>
+
+  {# DTI ratio bar #}
+  <div class="mb-4">
+    <div class="flex items-baseline justify-between mb-1">
+      <div class="text-xs text-slate-400">DTI ratio</div>
+      <div class="text-2xl font-semibold mono">
+        {{ pv.dti | pct(1) if pv.dti is not none else '—' }}
+      </div>
+    </div>
+    <div class="relative h-7 rounded overflow-hidden flex">
+      <div class="bg-emerald-200 flex items-center justify-center" style="width: 60%;">
+        <span class="text-[10px] uppercase tracking-wider text-emerald-800">auto ≤ 0.36</span>
+      </div>
+      <div class="bg-amber-200 flex items-center justify-center" style="width: 12%;">
+        <span class="text-[10px] uppercase tracking-wider text-amber-800">rec</span>
+      </div>
+      <div class="bg-orange-200 flex items-center justify-center" style="width: 11%;">
+        <span class="text-[10px] uppercase tracking-wider text-orange-800">esc</span>
+      </div>
+      <div class="bg-rose-200 flex items-center justify-center" style="width: 17%;">
+        <span class="text-[10px] uppercase tracking-wider text-rose-800">block &gt; 0.50</span>
+      </div>
+      {% if pv.dti_pct is not none %}
+        <div class="absolute top-0 bottom-0 w-0.5 bg-slate-900" style="left: {{ pv.dti_pct }}%;"></div>
+        <div class="absolute -top-1 -translate-x-1/2" style="left: {{ pv.dti_pct }}%;">
+          <div class="w-2 h-2 bg-slate-900 rotate-45"></div>
+        </div>
+      {% endif %}
+    </div>
+    <div class="text-[11px] mt-2 mono text-slate-500">
+      thresholds 0.36 · 0.43 · 0.50 (gauge max 0.60)
+    </div>
+  </div>
+
+  {# Income / obligations breakdown #}
+  <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4 text-sm">
+    <div class="border border-slate-200 rounded p-3">
+      <div class="text-xs text-slate-400">verified_income (annual)</div>
+      <div class="mono">{{ pv.verified_income | currency }}</div>
+      {% if pv.pulled_from_upstream %}
+        <div class="text-[10px] text-indigo-700 mt-1">↑ from income_verification</div>
+      {% endif %}
+    </div>
+    <div class="border border-slate-200 rounded p-3">
+      <div class="text-xs text-slate-400">monthly income</div>
+      <div class="mono">{{ pv.monthly_income | currency }}</div>
+    </div>
+    <div class="border border-slate-200 rounded p-3">
+      <div class="text-xs text-slate-400">monthly obligations</div>
+      <div class="mono">{{ pv.monthly_obligations | currency }}</div>
+    </div>
+  </div>
+
+  {# Contamination guard awareness #}
+  {% if pv.guard_threshold is not none %}
+    <div class="border-t border-slate-100 pt-4">
+      <div class="text-xs text-slate-400 mb-2">
+        Contamination guard · reject_if_upstream_confidence_below
+      </div>
+      <div class="flex items-center gap-3 text-sm">
+        <span class="text-xs text-slate-500">upstream income_verification confidence</span>
+        <span class="mono">{{ pv.upstream_confidence | confidence }}</span>
+        <span class="text-xs text-slate-400 mono">vs threshold {{ pv.guard_threshold }}</span>
+        {% if pv.guard_fired %}
+          <span class="ml-auto text-xs px-2 py-0.5 rounded bg-rose-100 text-rose-800">guard fired · BLOCK</span>
+        {% else %}
+          <span class="ml-auto text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">guard clear</span>
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
+</section>

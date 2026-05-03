@@ -1,0 +1,105 @@
+{# Fraud screening persona panel: traffic-light fraud_score + identity match + halt warning. #}
+{% set pv = persona_view %}
+
+<section class="bg-white border {% if pv.halts_pipeline %}border-rose-300{% else %}border-slate-200{% endif %} rounded-lg p-5">
+  <div class="flex items-baseline justify-between mb-4">
+    <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider">
+      Fraud screening · persona view
+    </h2>
+    <span class="text-xs text-slate-400">fraud_detection_agent</span>
+  </div>
+
+  {% if pv.halts_pipeline %}
+    <div class="mb-4 p-3 rounded bg-rose-50 border border-rose-200">
+      <div class="flex items-center gap-2 text-rose-800 text-sm font-medium">
+        ⚠ fraud_block_stops_pipeline · 7 downstream decisions skipped
+      </div>
+      <div class="text-xs text-rose-700 mt-1">
+        Hard rule from PRD §5. dti_calculation, ltv_assessment, product_eligibility,
+        rate_pricing, underwriting_decision, approval_routing, closing_readiness
+        will not run.
+      </div>
+    </div>
+  {% endif %}
+
+  {# Traffic-light gauge #}
+  <div class="mb-4">
+    <div class="flex items-baseline justify-between mb-1">
+      <div class="text-xs text-slate-400">Fraud score</div>
+      <div class="text-2xl font-semibold mono text-{{ pv.fraud_tone }}-700">
+        {{ '%.2f'|format(pv.fraud_score) if pv.fraud_score is not none else '—' }}
+      </div>
+    </div>
+    <div class="relative h-7 rounded overflow-hidden flex">
+      <div class="bg-emerald-200 flex items-center justify-center" style="width: 20%;">
+        <span class="text-[10px] uppercase tracking-wider text-emerald-800">auto</span>
+      </div>
+      <div class="bg-amber-200 flex items-center justify-center" style="width: 30%;">
+        <span class="text-[10px] uppercase tracking-wider text-amber-800">recommend</span>
+      </div>
+      <div class="bg-rose-200 flex items-center justify-center" style="width: 50%;">
+        <span class="text-[10px] uppercase tracking-wider text-rose-800">block</span>
+      </div>
+      {% if pv.fraud_pct is not none %}
+        <div class="absolute top-0 bottom-0 w-0.5 bg-slate-900" style="left: {{ pv.fraud_pct }}%;"></div>
+        <div class="absolute -top-1 -translate-x-1/2" style="left: {{ pv.fraud_pct }}%;">
+          <div class="w-2 h-2 bg-slate-900 rotate-45"></div>
+        </div>
+      {% endif %}
+    </div>
+    <div class="flex items-center gap-3 mt-2 text-xs">
+      <span class="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 mono">auto &lt; 0.20</span>
+      <span class="px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 mono">block ≥ 0.50</span>
+    </div>
+  </div>
+
+  {# Identity / document scores #}
+  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+    <div>
+      <div class="text-xs text-slate-400">identity_match_confidence</div>
+      <div class="flex items-baseline gap-2">
+        <div class="text-lg mono">{{ pv.identity_match | confidence }}</div>
+        <div class="text-[11px] text-slate-500 mono">auto ≥ 0.95</div>
+      </div>
+      <div class="relative h-2 bg-slate-100 rounded mt-1">
+        {% if pv.id_match_pct is not none %}
+          <div class="absolute inset-y-0 left-0 bg-indigo-400 rounded" style="width: {{ pv.id_match_pct }}%;"></div>
+        {% endif %}
+        <div class="absolute top-0 bottom-0 w-px bg-emerald-600" style="left: 95%;"></div>
+      </div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400">document_authenticity_score</div>
+      <div class="flex items-baseline gap-2">
+        <div class="text-lg mono">{{ pv.doc_auth | confidence }}</div>
+        <div class="text-[11px] text-slate-500 mono">escalate &lt; 0.80</div>
+      </div>
+      <div class="relative h-2 bg-slate-100 rounded mt-1">
+        {% if pv.doc_auth_pct is not none %}
+          <div class="absolute inset-y-0 left-0 bg-indigo-400 rounded" style="width: {{ pv.doc_auth_pct }}%;"></div>
+        {% endif %}
+        <div class="absolute top-0 bottom-0 w-px bg-orange-600" style="left: 80%;"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="border-t border-slate-100 pt-4">
+    <div class="text-xs text-slate-400 mb-2">Boundary triggers</div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      {% for f in pv.flags %}
+        {% set tone = ({'block':'rose','escalate':'orange','recommend':'amber','auto':'emerald'})[f.trigger] | default('slate') %}
+        <div class="border rounded px-3 py-2
+                    {% if f.fired %}border-{{ tone }}-300 bg-{{ tone }}-50{% else %}border-slate-200{% endif %}">
+          <div class="flex items-center justify-between">
+            <span class="text-xs mono {% if f.fired %}text-{{ tone }}-800{% else %}text-slate-500{% endif %}">{{ f.label }}</span>
+            <span class="text-[10px] uppercase tracking-wider {% if f.fired %}text-{{ tone }}-700{% else %}text-slate-400{% endif %}">→ {{ f.trigger }}</span>
+          </div>
+          <div class="text-xs mono mt-1">
+            {{ f.value if f.value is not none else '—' }}
+            {% if f.fired %}<span class="ml-1 text-{{ tone }}-700">· fired</span>{% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>

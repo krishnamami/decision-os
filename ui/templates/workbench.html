@@ -1,0 +1,356 @@
+{% extends "base.html" %}
+{% block title %}{{ label }} workbench{% endblock %}
+{% block content %}
+
+<div class="mb-4">
+  <a href="/ui/workbench" class="text-sm text-indigo-600 hover:text-indigo-800">
+    ← All workbenches
+  </a>
+</div>
+
+{# ── Header ─────────────────────────────────────────────────────── #}
+<div class="bg-white border border-slate-200 rounded-lg p-5 mb-4">
+  <div class="flex items-baseline justify-between">
+    <h1 class="text-2xl font-semibold tracking-tight">{{ label }} workbench</h1>
+    <span class="text-xs mono text-slate-400">{{ owner_team }}</span>
+  </div>
+  <div class="text-xs text-slate-500 mt-1">
+    Owns
+    {% for d in owned_decisions %}
+      <span class="mono text-slate-700">{{ d.id }}</span><span class="text-slate-400">
+        ({{ d.mode }} · {{ d.risk_level }}){% if not loop.last %}, {% endif %}
+      </span>
+    {% endfor %}
+  </div>
+</div>
+
+{# ── KPI strip ──────────────────────────────────────────────────── #}
+<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-4">
+  <div class="bg-white border border-slate-200 rounded-lg p-3">
+    <div class="text-xs text-slate-400">Open queue</div>
+    <div class="text-2xl font-semibold mono
+                {% if kpis.open_queue > 0 %}text-amber-700{% else %}text-slate-700{% endif %}">
+      {{ kpis.open_queue }}
+    </div>
+    <div class="text-[10px] text-slate-400">pending user action</div>
+  </div>
+  <div class="bg-white border border-slate-200 rounded-lg p-3">
+    <div class="text-xs text-slate-400">Completed</div>
+    <div class="text-2xl font-semibold mono text-slate-700">{{ kpis.completed }}</div>
+    <div class="text-[10px] text-slate-400">across all apps</div>
+  </div>
+  <div class="bg-white border border-slate-200 rounded-lg p-3">
+    <div class="text-xs text-slate-400">Auto-cleared</div>
+    <div class="text-2xl font-semibold mono text-emerald-700">{{ kpis.auto_cleared }}</div>
+    <div class="text-[10px] text-slate-400">no review needed</div>
+  </div>
+  <div class="bg-white border border-slate-200 rounded-lg p-3">
+    <div class="text-xs text-slate-400">Blocked</div>
+    <div class="text-2xl font-semibold mono
+                {% if kpis.blocked > 0 %}text-rose-700{% else %}text-slate-500{% endif %}">
+      {{ kpis.blocked }}
+    </div>
+    <div class="text-[10px] text-slate-400">hard-rule fires</div>
+  </div>
+  <div class="bg-white border border-slate-200 rounded-lg p-3">
+    <div class="text-xs text-slate-400">Portfolio</div>
+    <div class="text-xl font-semibold mono text-slate-700">{{ kpis.portfolio_value | currency }}</div>
+    <div class="text-[10px] text-slate-400">{{ kpis.applications_touched }} app{% if kpis.applications_touched != 1 %}s{% endif %} touched</div>
+  </div>
+  <div class="bg-white border border-slate-200 rounded-lg p-3">
+    <div class="text-xs text-slate-400">Downstream pending</div>
+    <div class="text-2xl font-semibold mono
+                {% if kpis.downstream_pending > 0 %}text-amber-700{% else %}text-slate-500{% endif %}">
+      {{ kpis.downstream_pending }}
+    </div>
+    <div class="text-[10px] text-slate-400">waiting on me</div>
+  </div>
+  <div class="bg-white border border-slate-200 rounded-lg p-3">
+    <div class="text-xs text-slate-400">Avg duration</div>
+    <div class="text-xl font-semibold mono text-slate-700">
+      {% if kpis.avg_duration_ms is not none %}{{ '%.0f'|format(kpis.avg_duration_ms) }} ms{% else %}—{% endif %}
+    </div>
+    <div class="text-[10px] text-slate-400">
+      SLA {% if kpis.sla_pct is not none %}{{ '%.0f'|format(kpis.sla_pct) }}%{% else %}—{% endif %}
+    </div>
+  </div>
+</div>
+
+{# ── Application picker ─────────────────────────────────────────── #}
+<div class="bg-white border border-slate-200 rounded-lg p-4 mb-4">
+  <form method="get" class="flex flex-wrap items-center gap-3">
+    <label class="text-xs text-slate-500 mono">Application</label>
+    <select name="application_id"
+            onchange="this.form.submit()"
+            class="border border-slate-300 rounded px-3 py-1.5 text-sm mono bg-white">
+      <option value="">— pick an application —</option>
+      {% for opt in application_options %}
+        <option value="{{ opt.application_id }}"
+                {% if opt.application_id == selected_application_id %}selected{% endif %}>
+          {{ opt.application_id }}
+          ·
+          {{ opt.team_decisions }} of mine
+          {% if opt.in_queue %} · pending review{% endif %}
+          {% if opt.any_block %} · blocked{% endif %}
+        </option>
+      {% endfor %}
+    </select>
+    {% if selected_application_id %}
+      <a href="/ui/workbench/{{ owner_team }}"
+         class="text-xs text-indigo-600 hover:text-indigo-800">clear</a>
+    {% endif %}
+    <span class="ml-auto text-xs text-slate-400">
+      {{ all_application_ids | length }} applications in scope
+    </span>
+  </form>
+</div>
+
+{# ── No app selected → queue table ──────────────────────────────── #}
+{% if not selected_application_id %}
+<div class="bg-white border border-slate-200 rounded-lg p-5">
+  <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">
+    My queue · {{ queue | length }} pending
+  </h2>
+  {% if queue %}
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-xs uppercase tracking-wider text-slate-400 border-b border-slate-200">
+          <th class="text-left py-2">Application</th>
+          <th class="text-left py-2">Decision</th>
+          <th class="text-left py-2">Proposed</th>
+          <th class="text-left py-2">Confidence</th>
+          <th class="text-left py-2">Enqueued</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for q in queue %}
+          <tr class="border-b border-slate-100">
+            <td class="py-2">
+              <a href="/ui/workbench/{{ owner_team }}?application_id={{ q.application_id }}"
+                 class="mono text-indigo-700 hover:text-indigo-900">{{ q.application_id }}</a>
+            </td>
+            <td class="py-2 mono text-slate-700">{{ q.decision_id }}</td>
+            <td class="py-2">
+              <span class="text-xs px-2 py-0.5 rounded {{ q.outcome_style.bg }} {{ q.outcome_style.text }}">
+                {{ q.proposed_outcome }}
+              </span>
+            </td>
+            <td class="py-2 mono text-slate-700">{{ q.confidence | confidence }}</td>
+            <td class="py-2 text-xs mono text-slate-500">{{ q.enqueued_at | dt }}</td>
+            <td class="py-2 text-right">
+              <a href="/ui/applications/{{ q.application_id }}/decisions/{{ q.decision_id }}"
+                 class="text-xs text-indigo-600 hover:text-indigo-800">Review →</a>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <div class="text-sm text-slate-400">Nothing in your queue right now. Pick an application above to see what's been finished and what's still pending.</div>
+  {% endif %}
+</div>
+{% endif %}
+
+{# ── App selected → focused view ────────────────────────────────── #}
+{% if focused %}
+<div class="bg-white border border-slate-200 rounded-lg p-5 mb-4">
+  <div class="flex items-baseline justify-between">
+    <h2 class="text-lg font-semibold tracking-tight mono">{{ focused.application_id }}</h2>
+    <a href="/ui/applications/{{ focused.application_id }}"
+       class="text-xs text-indigo-600 hover:text-indigo-800">Open full DAG view →</a>
+  </div>
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mt-3 text-sm">
+    <div>
+      <div class="text-xs text-slate-400">Applicant</div>
+      <div class="mono text-slate-800">{{ focused.applicant_id | default('—') }}</div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400">Loan purpose</div>
+      <div class="mono text-slate-800">{{ focused.loan_purpose | default('—') }}</div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400">Requested amount</div>
+      <div class="mono text-slate-800">{{ focused.requested_amount | currency }}</div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400">Property state</div>
+      <div class="mono text-slate-800">{{ focused.property_state | default('—') }}</div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400">Decisions</div>
+      <div class="mono text-slate-800">
+        {{ focused.decisions_completed }} / {{ focused.total_decisions_in_pipeline }}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+  {# ── What I finished ──────────────────────────────────────────── #}
+  <section class="bg-white border border-slate-200 rounded-lg p-5">
+    <div class="flex items-baseline justify-between mb-3">
+      <h3 class="text-sm font-medium text-slate-500 uppercase tracking-wider">
+        What I finished
+      </h3>
+      <span class="text-xs text-slate-400 mono">{{ focused.finished | length }}</span>
+    </div>
+    {% if focused.finished %}
+      <ul class="space-y-2">
+        {% for f in focused.finished %}
+          <li class="border border-slate-200 rounded p-3">
+            <div class="flex items-center justify-between">
+              <a href="/ui/applications/{{ focused.application_id }}/decisions/{{ f.decision_id }}"
+                 class="mono text-sm text-slate-800 hover:text-indigo-700">
+                {{ f.decision_id }}
+              </a>
+              <span class="text-xs px-2 py-0.5 rounded {{ f.outcome_style.bg }} {{ f.outcome_style.text }}">
+                {{ f.outcome }}
+              </span>
+            </div>
+            <div class="text-xs text-slate-500 mt-1">
+              {{ f.name }}
+              · <span class="mono">{{ f.mode }}</span>
+              · confidence <span class="mono">{{ f.confidence | confidence }}</span>
+              {% if f.matched_clause %}
+                · matched <span class="mono">{{ f.matched_clause }}</span>
+              {% endif %}
+              {% if f.human_reviewed %}
+                · <span class="text-indigo-700">reviewed by {{ f.reviewer_role }}</span>
+              {% endif %}
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <div class="text-sm text-slate-400">Nothing finished on this application yet.</div>
+    {% endif %}
+  </section>
+
+  {# ── Pending for me ───────────────────────────────────────────── #}
+  <section class="bg-white border {% if focused.pending_for_me %}border-amber-200{% else %}border-slate-200{% endif %} rounded-lg p-5">
+    <div class="flex items-baseline justify-between mb-3">
+      <h3 class="text-sm font-medium text-slate-500 uppercase tracking-wider">
+        Pending for me
+      </h3>
+      <span class="text-xs mono {% if focused.pending_for_me %}text-amber-700{% else %}text-slate-400{% endif %}">
+        {{ focused.pending_for_me | length }}
+      </span>
+    </div>
+    {% if focused.pending_for_me %}
+      <ul class="space-y-2">
+        {% for p in focused.pending_for_me %}
+          <li class="border border-amber-200 bg-amber-50 rounded p-3">
+            <div class="flex items-center justify-between">
+              <a href="/ui/applications/{{ focused.application_id }}/decisions/{{ p.decision_id }}"
+                 class="mono text-sm text-amber-900 hover:text-amber-950">
+                {{ p.decision_id }}
+              </a>
+              <span class="text-xs px-2 py-0.5 rounded {{ p.outcome_style.bg }} {{ p.outcome_style.text }}">
+                proposed: {{ p.proposed_outcome }}
+              </span>
+            </div>
+            <div class="text-xs text-amber-800 mt-1">
+              {{ p.name }}
+              · confidence <span class="mono">{{ p.confidence | confidence }}</span>
+              · enqueued <span class="mono">{{ p.enqueued_at | dt }}</span>
+            </div>
+            {% if p.reasons %}
+              <ul class="mt-2 text-[11px] mono text-amber-800 space-y-0.5">
+                {% for r in p.reasons %}<li>· {{ r }}</li>{% endfor %}
+              </ul>
+            {% endif %}
+            <a href="/ui/applications/{{ focused.application_id }}/decisions/{{ p.decision_id }}"
+               class="inline-block mt-2 text-xs text-indigo-700 hover:text-indigo-900">
+              Open review →
+            </a>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <div class="text-sm text-slate-400">Nothing pending for you on this application.</div>
+    {% endif %}
+  </section>
+
+  {# ── Waiting on upstream ──────────────────────────────────────── #}
+  <section class="bg-white border border-slate-200 rounded-lg p-5">
+    <div class="flex items-baseline justify-between mb-3">
+      <h3 class="text-sm font-medium text-slate-500 uppercase tracking-wider">
+        Waiting on upstream
+      </h3>
+      <span class="text-xs text-slate-400 mono">{{ focused.waiting_upstream | length }}</span>
+    </div>
+    {% if focused.waiting_upstream %}
+      <ul class="space-y-2">
+        {% for w in focused.waiting_upstream %}
+          <li class="border border-slate-200 rounded p-3">
+            <div class="mono text-sm text-slate-800">{{ w.decision_id }}</div>
+            <div class="text-xs text-slate-500 mt-1">{{ w.name }}</div>
+            <div class="text-[11px] mono mt-2 text-slate-500">depends on:</div>
+            <div class="flex flex-wrap gap-1 mt-1">
+              {% for d in w.depends_on %}
+                {% set is_missing = d in w.missing_upstream %}
+                <a href="/ui/applications/{{ focused.application_id }}/decisions/{{ d }}"
+                   class="text-[10px] mono px-1.5 py-0.5 rounded
+                          {% if is_missing %}bg-amber-50 text-amber-800 border border-amber-200{% else %}bg-emerald-50 text-emerald-800 border border-emerald-200{% endif %}">
+                  {{ d }}{% if is_missing %} · pending{% else %} · ✓{% endif %}
+                </a>
+              {% endfor %}
+            </div>
+            {% if w.any_blocked %}
+              <div class="text-xs text-rose-700 mt-2 mono">⚠ upstream block — won't run</div>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <div class="text-sm text-slate-400">Nothing upstream is blocking your work.</div>
+    {% endif %}
+  </section>
+
+  {# ── Downstream waiting on me ─────────────────────────────────── #}
+  <section class="bg-white border border-slate-200 rounded-lg p-5">
+    <div class="flex items-baseline justify-between mb-3">
+      <h3 class="text-sm font-medium text-slate-500 uppercase tracking-wider">
+        Downstream waiting on me
+      </h3>
+      <span class="text-xs text-slate-400 mono">{{ focused.downstream_waiting | length }}</span>
+    </div>
+    {% if focused.downstream_waiting %}
+      <ul class="space-y-2">
+        {% for d in focused.downstream_waiting %}
+          <li class="border border-slate-200 rounded p-3">
+            <div class="flex items-center justify-between">
+              <a href="/ui/applications/{{ focused.application_id }}/decisions/{{ d.decision_id }}"
+                 class="mono text-sm text-slate-800 hover:text-indigo-700">
+                {{ d.decision_id }}
+              </a>
+              <span class="text-xs px-2 py-0.5 rounded {{ d.outcome_style.bg }} {{ d.outcome_style.text }}">
+                {{ d.status }}
+              </span>
+            </div>
+            <div class="text-xs text-slate-500 mt-1">
+              {{ d.name }}
+              · owned by <span class="mono">{{ d.owner_team_label }}</span>
+            </div>
+            <div class="text-[11px] mono mt-2 text-slate-500">depends on mine:</div>
+            <div class="flex flex-wrap gap-1 mt-1">
+              {% for u in d.depends_on_mine %}
+                <span class="text-[10px] mono bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded">
+                  {{ u }}
+                </span>
+              {% endfor %}
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <div class="text-sm text-slate-400">Nothing downstream is waiting on you.</div>
+    {% endif %}
+  </section>
+
+</div>
+{% endif %}
+
+{% endblock %}

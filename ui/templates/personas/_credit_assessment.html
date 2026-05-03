@@ -1,0 +1,126 @@
+{# Credit assessment persona panel.
+   Renders the credit_score gauge with band thresholds,
+   the auto / recommend thresholds marked, and a flags grid showing
+   which boundary triggers fired.
+   Inputs: persona_view (built by views._credit_assessment_view).
+#}
+
+<section class="bg-white border border-slate-200 rounded-lg p-5">
+  <div class="flex items-baseline justify-between mb-4">
+    <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider">
+      Credit assessment · persona view
+    </h2>
+    <span class="text-xs text-slate-400">credit_risk_agent</span>
+  </div>
+
+  {# ── Score gauge ────────────────────────────────────────────────── #}
+  {% set pv = persona_view %}
+  <div class="mb-4">
+    <div class="flex items-baseline justify-between mb-2">
+      <div>
+        <div class="text-xs text-slate-400">Credit score</div>
+        <div class="text-3xl font-semibold mono">
+          {{ pv.score if pv.score is not none else '—' }}
+        </div>
+      </div>
+      <div class="text-right">
+        <div class="text-xs text-slate-400">Band</div>
+        {% set band_tone = ({
+          'super_prime':  'indigo',
+          'prime':        'emerald',
+          'near_prime':   'amber',
+          'subprime':     'orange',
+          'deep_subprime': 'rose',
+          'thin_file':    'slate',
+        })[pv.band] | default('slate') %}
+        <div class="text-lg mono px-2 py-0.5 rounded inline-block
+                    bg-{{ band_tone }}-100 text-{{ band_tone }}-800">
+          {{ pv.band | default('—') }}
+        </div>
+      </div>
+    </div>
+
+    {# Band gradient strip with score marker #}
+    <div class="relative h-7 rounded overflow-hidden flex">
+      {% for b in pv.bands %}
+        {% set band_w = ((b.high - b.low) / (850 - 300)) * 100 %}
+        <div class="bg-{{ b.tone }}-200 flex items-center justify-center"
+             style="width: {{ band_w }}%;">
+          <span class="text-[9px] uppercase tracking-wider text-{{ b.tone }}-800 truncate px-1">
+            {{ b.label }}
+          </span>
+        </div>
+      {% endfor %}
+      {% if pv.score_pct is not none %}
+        <div class="absolute top-0 bottom-0 w-0.5 bg-slate-900"
+             style="left: {{ pv.score_pct }}%;"></div>
+        <div class="absolute -top-1 -translate-x-1/2"
+             style="left: {{ pv.score_pct }}%;">
+          <div class="w-2 h-2 bg-slate-900 rotate-45"></div>
+        </div>
+      {% endif %}
+    </div>
+
+    {# Threshold tick row #}
+    <div class="relative mt-1 text-[10px] mono text-slate-500 h-4">
+      {% for tick in [300, 600, 660, 700, 760, 850] %}
+        {% set pct = ((tick - 300) / (850 - 300)) * 100 %}
+        <div class="absolute -translate-x-1/2" style="left: {{ pct }}%;">{{ tick }}</div>
+      {% endfor %}
+    </div>
+
+    {# Auto / recommend cutoffs callout #}
+    <div class="flex items-center gap-3 mt-3 text-xs">
+      <span class="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 mono">
+        auto ≥ {{ pv.thresholds.auto }}
+      </span>
+      <span class="px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 mono">
+        recommend ≥ {{ pv.thresholds.recommend }}
+      </span>
+      {% if pv.score is not none %}
+        {% if pv.score >= pv.thresholds.auto %}
+          <span class="text-emerald-700">→ auto threshold met</span>
+        {% elif pv.score >= pv.thresholds.recommend %}
+          <span class="text-amber-700">→ recommend band</span>
+        {% else %}
+          <span class="text-rose-700">→ below recommend</span>
+        {% endif %}
+      {% endif %}
+    </div>
+  </div>
+
+  {# ── Boundary triggers grid ─────────────────────────────────────── #}
+  <div class="border-t border-slate-100 pt-4">
+    <div class="text-xs text-slate-400 mb-2">
+      Boundary triggers from output_payload
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      {% for flag in pv.flags %}
+        {% set tone = ({
+          'block':    'rose',
+          'escalate': 'orange',
+          'auto':     'emerald',
+        })[flag.trigger] | default('slate') %}
+        {% set fired = flag.fired %}
+        <div class="border rounded px-3 py-2
+                    {% if fired %}border-{{ tone }}-300 bg-{{ tone }}-50{% else %}border-slate-200{% endif %}">
+          <div class="flex items-center justify-between">
+            <span class="text-xs mono {% if fired %}text-{{ tone }}-800{% else %}text-slate-500{% endif %}">
+              {{ flag.label }}
+            </span>
+            <span class="text-[10px] uppercase tracking-wider
+                         {% if fired %}text-{{ tone }}-700{% else %}text-slate-400{% endif %}">
+              → {{ flag.trigger }}
+            </span>
+          </div>
+          <div class="text-xs mono mt-1">
+            {{ flag.value if flag.value is not none else '—' }}
+            {% if fired %}
+              <span class="ml-1 text-{{ tone }}-700">·  fired</span>
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>

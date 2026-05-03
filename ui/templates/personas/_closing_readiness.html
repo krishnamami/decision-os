@@ -1,0 +1,70 @@
+{# Closing readiness persona panel: closing checklist + outstanding conditions + flags. #}
+{% set pv = persona_view %}
+
+<section class="bg-white border {% if pv.halts_block %}border-rose-300{% else %}border-slate-200{% endif %} rounded-lg p-5">
+  <div class="flex items-baseline justify-between mb-4">
+    <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider">
+      Closing readiness · persona view
+    </h2>
+    <span class="text-xs text-slate-400">closing_agent</span>
+  </div>
+
+  <div class="mb-4">
+    <div class="flex items-baseline justify-between mb-2">
+      <div class="text-xs text-slate-400">Clear-to-close posture</div>
+      {% if pv.clear_to_close %}
+        <span class="px-2 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-800">CLEAR TO CLOSE</span>
+      {% else %}
+        <span class="px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">not yet clear</span>
+      {% endif %}
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      {% for item in pv.checklist %}
+        <div class="flex items-center gap-2 px-3 py-2 rounded border
+                    {% if item.ok %}border-emerald-200 bg-emerald-50{% else %}border-rose-200 bg-rose-50{% endif %}">
+          <span class="text-lg
+                       {% if item.ok %}text-emerald-700{% else %}text-rose-700{% endif %}">
+            {% if item.ok %}✓{% else %}✗{% endif %}
+          </span>
+          <span class="text-xs mono
+                       {% if item.ok %}text-emerald-800{% else %}text-rose-800{% endif %}">
+            {{ item.label }}
+          </span>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {% if pv.outstanding_conditions %}
+    <div class="mb-4">
+      <div class="text-xs text-slate-400 mb-2">Outstanding conditions</div>
+      <div class="flex flex-wrap gap-1.5">
+        {% for c in pv.outstanding_conditions %}
+          <span class="text-xs mono px-2 py-1 rounded bg-amber-50 text-amber-800 border border-amber-200">
+            {{ c }}
+          </span>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  <div class="border-t border-slate-100 pt-4">
+    <div class="text-xs text-slate-400 mb-2">Boundary triggers</div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      {% for f in pv.flags %}
+        {% set tone = ({'block':'rose','escalate':'orange','recommend':'amber','auto':'emerald'})[f.trigger] | default('slate') %}
+        <div class="border rounded px-3 py-2
+                    {% if f.fired %}border-{{ tone }}-300 bg-{{ tone }}-50{% else %}border-slate-200{% endif %}">
+          <div class="flex items-center justify-between">
+            <span class="text-xs mono {% if f.fired %}text-{{ tone }}-800{% else %}text-slate-500{% endif %}">{{ f.label }}</span>
+            <span class="text-[10px] uppercase tracking-wider {% if f.fired %}text-{{ tone }}-700{% else %}text-slate-400{% endif %}">→ {{ f.trigger }}</span>
+          </div>
+          <div class="text-xs mono mt-1">
+            {{ f.value if f.value is not none else '—' }}
+            {% if f.fired %}<span class="ml-1 text-{{ tone }}-700">· fired</span>{% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>

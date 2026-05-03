@@ -295,17 +295,36 @@ Files not yet built (next up):
 ⬜  tests/                                STEP 14. Persistent test suite — only
                                           context_store has scaffolding today;
                                           cover api/, personas/, seed_events,
-                                          ui/ view-models.
+                                          ui/ view-models, simulation/replayer.
 ⬜  core/trace/outcome_tracker.py        STEP 12. Post-decision outcome scoring +
                                           live A/B comparisons.
-⬜  core/simulation/replayer.py          STEP 13. Replay traces at point-in-time
-                                          for backtesting personas.
 ⬜  core/semantic_layer/flow.py          Event → entity → metric → signal mapper.
                                           Currently the EntityHydrator in
                                           api/ingest.py covers the event → entity
                                           mapping; flow.py would add the
                                           entity → metric → signal layer.
 ⬜  .env.example
+```
+
+```
+✅  core/simulation/__init__.py          STEP 13 DONE.
+✅  core/simulation/replayer.py          Replayer + ReplayResult /
+                                          ReplayComparison / DecisionComparison.
+                                          _ReadOnlyAtTimeShim wraps the live
+                                          durable so reads pin to replay_at and
+                                          writes raise; _ShadowModeRouter blocks
+                                          all writeback (auto + BLOCK both go
+                                          to SHADOW_RECORD). Two entry points:
+                                          replay_application(persona_overrides)
+                                          and replay_decision(persona_override).
+                                          Replayer.from_platform() avoids the
+                                          core->api import direction; takes the
+                                          components directly otherwise.
+✅  scripts/smoke_replayer.py            End-to-end smoke for STEP 13: as-is
+                                          parity, persona swap, validation,
+                                          full-DAG override; asserts live
+                                          trace_writer + durable fingerprint
+                                          unchanged after every replay.
 ```
 
 ---
@@ -853,6 +872,372 @@ yet 7-10).
 
 ---
 
+### Session 8 — May 2 2026
+
+**What was built (UI iteration on STEP 11):**
+
+User direction: "build UI for each persona who actually works on
+individual loan applications — workbench with KPIs and per-app
+drill-down. Then show me the entire data flow start to end."
+
+The decision detail page had earlier picked up cross-cutting strips
+(routing pill, read-permission chips, atomic-tool pipeline, upstream
+status, boundary lit) and the credit_assessment persona panel.
+This session pushed it the rest of the way:
+
+- 11 remaining persona panels — one Jinja partial + one
+  view-model helper each. Domain-shaped visuals per persona:
+    lead_scoring         intent meter (0-1) + channel/source pills
+    income_verification  stated vs verified bars + confidence ring
+    fraud_screening      traffic-light gauge + halt warning when block
+    compliance_check     HMDA checklist + halts_closing warning
+    dti_calculation      DTI bar with thresholds + contamination guard
+    ltv_assessment       appraised vs loan stack + LTV bar with PMI/cap
+    product_eligibility  eligible products + exception products lists
+    rate_pricing         base + LLPA waterfall vs usury cap
+    underwriting_decision 6-input synthesis grid + risk_score gauge
+    approval_routing     routing target + channel + timeline cards
+    closing_readiness    closing checklist + outstanding conditions
+
+  Cross-cutting helpers added in ui/views.py:
+    _routing_target(mode, outcome) — derives routing label from
+      (mode, outcome) mirroring ModeRouter (trace doesn't persist
+      routed.action; we derive for the UI)
+    _evaluate_boundary(boundary, output_payload, bundle_objects)
+      — runs every YAML rule against current values via
+      core.policy_engine.evaluator._evaluate_rule, returns ✓/✗
+      per rule. Used to "light" the boundary section for ALL 12
+      decisions, not just credit_assessment.
+    _atomic_pipeline(trace, routing_target) — 7-step descriptor
+      list for the PRD §7 pipeline strip.
+    _read_permissions(decision_id) — list of ObjectType ids per
+      decisions_that_read_it for the chip row.
+    _persona_view dispatcher reads from PERSONA_PANELS map and
+      _PERSONA_VIEW_BUILDERS dict — adding a new persona panel
+      is one map entry + one builder + one partial.
+
+  Verified all 12 panels via scripts/smoke_ui_all_panels.py
+  across app_happy + app_fraud + app_comp + app_contam (covering
+  the fraud-block warning, compliance-block warning, contamination
+  guard fired badge).
+
+- 9 owner-team workbenches — operator-centric views.
+  /ui/workbench (index of 9 teams) +
+  /ui/workbench/{owner_team}?application_id=... with a KPI strip,
+  application picker, queue table OR focused-app view.
+
+  Per the user's spec the focused view splits into:
+    - What I finished
+    - Pending for me (queue items)
+    - Waiting on upstream
+    - Downstream waiting on me
+
+  KPIs per team: open_queue, completed, auto_cleared, blocked,
+  portfolio_value, applications_touched, downstream_pending,
+  avg_duration_ms, sla_pct, decisions_per_loan_avg.
+
+  Workbench design choice: per owner_team (9), not per persona
+  (12) — because in real lending one team handles multiple
+  decisions (Underwriting owns 4 decisions). The team's daily
+  view aggregates all of their work.
+
+  Verified all 4 scenarios via scripts/smoke_workbench.py:
+    happy_path through Underwriting
+    fraud_block through Fraud Ops
+    contamination through Underwriting (DTI guard fires)
+    compliance_block through Compliance + Closing Ops
+
+  Side fix during smoke: kept block-cascaded downstream decisions
+  visible in "Downstream waiting on me" so a compliance officer
+  can see they blocked closing too. Was filtering them out as
+  "terminal" — corrected to filter only `allow` (cleanly cleared)
+  but keep `block` visible so the impact is auditable.
+
+- Top nav reorganized — "Workbench" added as the primary entry,
+  before "Applications", "Human queue", "Health", "API docs".
+
+**What was discussed (no code, but locked in):**
+
+- Walked through Growth Ops workbench in detail with user.
+- Q&A on data flow, context, production readiness:
+  - Confirmed event-driven model (no scheduled refresh; push +
+    pull connectors with on-demand fetch; batch is one connector
+    pattern not the only one)
+  - Clarified the 3-layer mental model:
+      Layer 1: shared world (8 ObjectTypes, append-only with
+               lineage)
+      Layer 2: per-decision context bundle (focused projection,
+               snapshotted)
+      Layer 3: decision output (decision record + trace +
+               becomes upstream input)
+  - Defined "context" precisely: the curated, focused, frozen
+    view of the world that ONE decision needs to reason. Each
+    of the 12 decisions builds its own bundle; there's no
+    global context.
+  - Production readiness assessment: architecture is
+    production-grade; what's missing is integrations and
+    operational hardening. Three deployment paths laid out
+    (shadow pilot 3mo, co-pilot 5-6mo, full system-of-record
+    12-18mo).
+
+**STRATEGIC DIRECTION LOCKED: PATH C — full DecisionOS as system
+of record (12-18 months). The build sequence in PRD §19 is
+broken into 6 tiers; complete a tier before opening the next.**
+
+**Files added this session:**
+  ui/templates/personas/_lead_scoring.html
+  ui/templates/personas/_income_verification.html
+  ui/templates/personas/_fraud_screening.html
+  ui/templates/personas/_compliance_check.html
+  ui/templates/personas/_dti_calculation.html
+  ui/templates/personas/_ltv_assessment.html
+  ui/templates/personas/_product_eligibility.html
+  ui/templates/personas/_rate_pricing.html
+  ui/templates/personas/_underwriting_decision.html
+  ui/templates/personas/_approval_routing.html
+  ui/templates/personas/_closing_readiness.html
+  ui/templates/workbench_index.html
+  ui/templates/workbench.html
+  scripts/smoke_ui_all_panels.py
+  scripts/smoke_workbench.py
+  (also from earlier in session: ui/templates/personas/_credit_assessment.html
+   and scripts/smoke_ui_credit.py)
+
+**Files modified:**
+  ui/views.py            — workbench view-models + 11 persona view-models +
+                           cross-cutting helpers (routing target, boundary
+                           eval, atomic_steps, persona dispatcher)
+  ui/routes.py           — /ui/workbench + /ui/workbench/{owner_team}
+  ui/templates/base.html — Workbench nav link added as primary entry
+  ui/templates/decision.html — cross-cutting strips + persona panel
+                               dispatcher block at top of right column
+  docs/PRD.md            — v0.8 (workbench + panels + path-C tier breakdown
+                           in §19)
+
+**Tomorrow's concrete starting point:**
+
+  1. Read CONTEXT.md (this file) + docs/PRD.md
+  2. Check status of routine trig_013QhFbYJaViJfNybCbr3KUX
+     (real-backend verification PR scheduled for Sun May 3 9am PT).
+     If the PR landed on branch session-4-real-backend-verification,
+     review it. If not, fire it manually:
+       docker compose up -d postgres redis
+       psql ... -f core/context_store/schema.sql
+       swap PostgresDurableStore + RedisHotCache in api/deps.py
+       re-run all smoke scripts + run_scenario for the 4 scenarios
+  3. Begin TIER 1 — STEP 14 pytest scaffolding. Bug-catchers first:
+       tests/core/policy_engine/test_loader.py
+         (decisions.yaml structural validation against the real file)
+       tests/core/trace/test_reflection.py
+         (capture + recall + retention + duplicate-id rejection)
+       tests/domains/lending/test_seed_scenarios.py
+         (4 scenarios as canonical regressions: happy_path, fraud_block,
+          contamination, compliance_block — assert outcome counts +
+          halt reasons + contamination_guard fires)
+     Then expand to:
+       tests/api/  via fastapi.testclient
+       tests/ui/   view-model functions + workbench rollups
+       tests/core/decision_agents/ each persona's _compute_offline()
+       tests/core/simulation/ replayer + invariants
+  4. Async pass on ui/views.py (replace _records walks) and
+     Postgres-aware resolver — needed before the live DB swap.
+
+**Then TIER 2 (real connectors) — see PRD §19 for full sequence.**
+
+OPEN ARCHITECTURAL QUESTIONS for path C:
+  - Tenant model: row-level (recommended for first 10 tenants) vs
+    schema-per-tenant (cleaner isolation but more ops overhead).
+    Decide before TIER 3 multi-tenancy work.
+  - LOS integration order: Encompass (~50% US mortgage market) vs
+    Blend (newer, growing). Driven by first design partner's stack.
+  - Critic model: separate Anthropic call per critique? PRD §8 says
+    independent critic; recommend Sonnet for persona, Opus for
+    critic so SelfReviewError can never fire.
+  - Borrower portal: separate frontend project consuming the API,
+    NOT in this repo. Decide naming + ownership.
+  - human_approval simulate-mode for tests: still open from
+    Session 6 — do test fixtures auto-approve queued items mid-DAG,
+    or do they explicitly POST /override? Recommend: option (a) for
+    seed-scenario regressions (faster, reads like real lender),
+    option (b) for one dedicated override-flow test (exercises the
+    actual override path).
+  - HumanQueue.resolve(): still open from Session 6. Add when
+    wiring the dequeue flow in TIER 3.
+
+---
+
+### Session 7 — May 2 2026
+
+**What was built (STEP 13 — simulation / replayer):**
+
+User direction: "lets finish simulation." STEP 13 from the resume
+prompt — replay traces at point-in-time for backtesting personas,
+hooking into InMemoryDurableStore.get_at_time.
+
+- `core/simulation/__init__.py` — re-exports `Replayer`,
+  `ReplayResult`, `ReplayComparison`, `DecisionComparison`.
+
+- `core/simulation/replayer.py` — the simulation layer.
+
+  Building blocks (all internal `_`-prefixed, file-local):
+
+    `_ReadOnlyAtTimeShim`
+        Wraps a durable backend (InMemoryDurableStore today, the
+        Postgres path will work the same once the resolver supports
+        SQL). `get_latest(...)` proxies to
+        `inner.get_at_time(..., at=replay_at)`; `get_at_time(at)` caps
+        at the replay frame so callers can never see records newer
+        than the pinned moment. `insert_record` and `tombstone` raise
+        — replays may NOT mutate the live durable. `insert_snapshot`
+        is captured on the shim only (not propagated) so the bundle
+        still gets a valid snapshot_id without polluting production
+        history.
+
+    `_ShadowModeRouter`
+        Duck-types `ModeRouter`. Routes every decision as
+        `RouteAction.SHADOW_RECORD` regardless of mode/outcome — even
+        BLOCK and AUTO_WRITEBACK. Replays don't need writeback for
+        downstream propagation because the executor's
+        `UpstreamSummary` state already carries each wave's outcomes
+        forward. Note string `"replay: shadow only, no writeback"` is
+        appended to `routed.notes` so the trace is honest about it.
+
+  Public surface:
+
+    `Replayer.from_platform(platform)` — convenience constructor that
+        duck-types Platform via attributes (store, evaluator, spec,
+        trace_writer, agents, critic). Keeps `core/simulation/`
+        independent of `api/` — no import cycle.
+
+    `Replayer.__init__(*, store, evaluator, spec, trace_writer,
+                       agents, critic=None)` — the explicit form for
+        anyone wiring without a Platform.
+
+    `replay_application(application_id, *, at=None,
+                        persona_overrides=None,
+                        include_critic=False) -> ReplayResult`
+        Re-run the full DAG against a fresh shadow trace_writer.
+        `at` defaults to the latest known trace timestamp for the
+        application — so the natural meaning of
+        `replay_application(app_id)` is "re-run as if at the moment
+        the live pipeline finished", reproducible across calls.
+        `persona_overrides` is a `{decision_id: DecisionAgent}` map;
+        each agent's `decision_id` must match the override key (else
+        ValueError).
+
+    `replay_decision(application_id, decision_id, *, at=None,
+                     persona_override=None,
+                     include_critic=False)
+                     -> tuple[AtomicToolResult, DecisionComparison]`
+        Re-run a single decision at the snapshot the original saw.
+        Upstream summaries are reconstructed from the live trace
+        writer (filtered to `started_at <= at`), not from a fresh
+        simulation — so the decision sees what it actually saw.
+
+  Result types:
+
+    `DecisionComparison` — original vs simulated for one
+        decision_id. Carries both outcomes, both confidences,
+        confidence_delta, both matched_clauses,
+        original/simulated payloads, payload_diff
+        ({added, removed, changed}), persona_swapped flag, notes.
+
+    `ReplayComparison` — application-level wrapper. total /
+        agreements / disagreements counters + per-decision list.
+
+    `ReplayResult` — adds executor outputs (completed / skipped /
+        failed / halted / halt_reason / outcomes) plus the
+        comparison.
+
+- `core/context_store/lending.py` — small fix in `snapshot()`. Was
+  always reading upstream decision outputs via `get_latest(...)`,
+  which means an at-aware snapshot would mix point-in-time entity
+  reads with current-time upstream reads. Now: when `at` is set, the
+  upstream read uses `get_at_time(..., at=at)`. Live path is
+  unchanged — no live caller passes `at` today; replay correctness
+  depends on it.
+
+- `scripts/smoke_replayer.py` — runnable smoke (
+  `python -X utf8 scripts/smoke_replayer.py`) covering 4 phases:
+
+    1. As-is replay of happy_path → 12/12 agreements; live trace
+       writer + durable store fingerprint byte-identical before and
+       after.
+    2. `replay_decision("credit_assessment", persona_override=
+       StrictCreditAgent())` → comparison surfaces `credit_band`
+       payload diff `'prime' -> 'near_prime'`, persona_swapped=True,
+       outcome unchanged (the strict downgrade still lands within
+       the same boundary clause).
+    3. `replay_decision("fraud_screening", persona_override=
+       StrictCreditAgent())` → ValueError as expected
+       (decision_id mismatch).
+    4. `replay_application(persona_overrides={"credit_assessment":
+       ...})` → swap visible at credit_assessment with
+       payload_changed=True; live state still byte-identical after
+       all 4 phases (12 traces / 17 records throughout).
+
+  Observation worth noting (NOT a bug): downstream personas
+  (ltv_assessment, rate_pricing, underwriting_decision) didn't show
+  payload_changed in phase 4. They re-derive their inputs from the
+  bundle's entity reads rather than consuming `credit_band` from
+  upstream output, so band downgrade alone doesn't cascade. Real
+  cascading requires either (a) upstream personas to write the
+  derived band into the entity store, or (b) downstream personas to
+  read the upstream output payload directly. Worth investigating
+  before judging whether the replayer is "useful enough" for
+  backtesting persona changes — a different override (e.g. credit
+  score thresholding) would cascade through the LTV/pricing chain.
+
+**Hard rules backed in this session:**
+
+  no_action_without_policy / no_execution_without_trace are
+  preserved in replay because the AtomicTool runs unchanged — only
+  the trace_writer + router are swapped.
+
+  The "replays must not mutate live state" invariant is enforced
+  in two layers:
+    - `_ReadOnlyAtTimeShim.insert_record` / `.tombstone` raise.
+    - `_ShadowModeRouter` never calls `store.set()`.
+  The smoke test asserts both layers are tight by fingerprinting the
+  live trace writer + durable store before/after every replay.
+
+**Tradeoffs noted:**
+
+  - Resolver is in-memory only. `_build_replay_resolver` mirrors
+    `api.deps._default_resolver` and walks `inner._records` directly;
+    Postgres backend will need a SQL implementation. Same limitation
+    the live resolver has — not a regression.
+
+  - Critic is OFF by default (`include_critic=False`). Replay is
+    observational; critic findings on the same trace twice would
+    double-count. Opt in for "compare critic verdicts across
+    persona V1 and V2" workflows.
+
+  - Single-decision replay's upstream is reconstructed from the
+    live trace writer. If the live pipeline didn't run an upstream
+    (e.g. fraud_screening was skipped), the replayed decision sees
+    no upstream summary for it and the contamination_guard /
+    fraud_block_stops_pipeline rules don't fire — which is correct,
+    because they didn't fire originally either.
+
+**Still pending (next session):**
+
+  1. STEP 14 tests/ — now also covers `core/simulation/replayer`.
+     The smoke script is good for ad hoc, but a pytest suite would
+     pin the live-state-not-mutated invariant on every CI run.
+  2. Postgres-aware resolver — both for the live path (api.deps)
+     and the replay path. Single SQL statement; just needs writing.
+  3. Real Anthropic calls — STEP 13 is more useful with persona V2
+     being an actual LLM-backed persona to compare against the
+     deterministic offline path.
+  4. STEP 12 outcome_tracker — natural follow-on. If replays
+     produce simulated outcomes and we have a per-decision
+     ground-truth feed, the comparison shape from STEP 13
+     (`DecisionComparison`) is most of what an outcome A/B
+     tracker needs.
+
+---
+
 ### Session 6 — May 2 2026
 
 **What was built (STEP 11 — local UI):**
@@ -1038,7 +1423,7 @@ Then verify what actually exists:
 Do not ask what the project is. Do not ask what was built.
 Read the files and know.
 
-STEPS 1-11 are complete (sessions 3, 4, 5, 6):
+STEPS 1-11 + 13 + Session-8 UI expansion are complete:
   ✅ STEP 1  core/normalizer/models.py
   ✅ STEP 2  core/ontology/object_types.py
   ✅ STEP 3  core/context_store/{base,lending,redis_cache,
@@ -1054,17 +1439,40 @@ STEPS 1-11 are complete (sessions 3, 4, 5, 6):
   ✅ STEP 9  domains/lending/personas/ — 12 concrete persona classes
   ✅ STEP 10 domains/lending/seed_events/ + runner.py
   ✅ STEP 11 ui/ — local FastAPI + Jinja2 + HTMX + Tailwind via CDN.
-             Mounted in api/main.py via the create_app(mount_ui=True)
-             flag. Bootstrap lifespan auto-replays the 4 seed
-             scenarios on boot when seed_demo_data=True. 5 GET routes
-             (/, /ui/applications/{id},
-             /ui/applications/{id}/decisions/{decision}, /ui/queue,
-             /health) + POST /ui/.../override with HTMX swap.
-             Deliberately picked HTMX over Next.js for ~2-session-to-v0
-             instead of ~5; user wants to validate value locally
-             before any cloud / polished-demo work.
+  ✅ STEP 13 core/simulation/replayer — point-in-time replay, persona
+             swap surface, never mutates live state. Smoke at
+             scripts/smoke_replayer.py.
+  ✅ Session 8 UI expansion:
+       ui/templates/personas/*.html — 12 per-persona panels
+       ui/templates/decision.html cross-cutting strips (routing,
+         read-perms, atomic-tool pipeline, upstream status, lit
+         boundary)
+       ui/templates/workbench{,_index}.html — 9 owner-team
+         workbenches with KPI strip + app picker + queue / focused
+         view (finished / pending / waiting / downstream impact)
+       Top nav reorganised — Workbench is the primary entry.
+  ✅ STEP 13 core/simulation/{__init__,replayer}.py
+             — Replayer + ReplayResult/ReplayComparison/
+               DecisionComparison. _ReadOnlyAtTimeShim wraps the live
+               durable so reads pin to replay_at and writes raise.
+               _ShadowModeRouter forces every action to SHADOW_RECORD.
+               Two entry points: replay_application(persona_overrides)
+               for full-DAG backtests, replay_decision(persona_override)
+               for single-decision swap. Replayer.from_platform()
+               keeps core/simulation independent of api/.
+             — Side fix in core/context_store/lending.py snapshot:
+               when at is set, upstream decision reads now use
+               get_at_time too (was always get_latest). Live path
+               unchanged; replay correctness depends on it.
+             — Smoke: scripts/smoke_replayer.py
+               (run with `python -X utf8 scripts/smoke_replayer.py`)
+               4 phases: as-is parity, persona swap surfaces credit
+               band downgrade, validation raises on decision_id
+               mismatch, full-DAG override; live trace_writer +
+               durable store fingerprint byte-identical before & after
+               every replay.
   ✅ ALSO    core/policy_engine/loader.py (DecisionsSpec).
-             docs/PRD.md §17/§19/§20 reconciled (v0.6).
+             docs/PRD.md §17/§19 reconciled (v0.7).
 
 Run the UI locally:
   uvicorn api.main:get_app --factory --reload --port 8000
@@ -1079,72 +1487,272 @@ End-to-end verified (in-memory backends only):
   - POST /override (the API route) and /ui/.../override (the HTMX
     route) both call ReflectionService.capture and produce identical
     AgentLearning records.
+  - Replayer: as-is replay produces 12/12 outcome agreements;
+    persona-swap surfaces payload diffs without touching live state.
 
 Real-backend verification (STEPS 4-6 only) was scheduled for
 Sun May 3 2026 9am PT, routine trig_013QhFbYJaViJfNybCbr3KUX.
 If the PR has landed on branch session-4-real-backend-verification,
 start by reviewing it; otherwise check
 https://claude.ai/code/routines/trig_013QhFbYJaViJfNybCbr3KUX
-for status. Note: STEPS 7-11 are NOT in scope of that scheduled run
-— they need a separate verification when ready.
+for status. Note: STEPS 7-11 + 13 are NOT in scope of that scheduled
+run — they need a separate verification when ready.
 
-Build next, in this order:
+STRATEGIC DIRECTION (locked Session 8): PATH C — full DecisionOS as
+system of record, 12-18 month roadmap. Build sequence in PRD §19 is
+broken into 6 tiers; complete a tier before opening the next.
+
+═══════════════════════════════════════════════════════════════════
+SESSION 9 SETUP (user direction at end of Session 8 — READ FIRST)
+═══════════════════════════════════════════════════════════════════
+
+User said:
+  "I would research UIs for workbench for all personas and we can
+   design UI accordingly. Lets simulate with more applicants and
+   get more confident about it. One thing we missed are the
+   rules/policies — every decision needs to validate against a
+   rule active at that time, may be a Type 2 kind of design and
+   a shared object. Lets come up with Policies for different
+   types of rules for Freddie Mac and others and also have
+   connectors defined so we pull these external sources
+   periodically."
+
+That reshapes tomorrow into 4 work-streams. The third is the big
+architectural one — DON'T jump to STEP 14 tests until the policy
+data model is decided, because the schema + trace shape changes.
+
+  STREAM A — UI research (USER doing this, not Claude)
+    User will bring industry references (Encompass workstation,
+    Blend underwriter UX, etc.). Wait for designs before iterating
+    further on the workbench.
+
+  STREAM B — More seed scenarios for confidence
+    Today only 4 scenarios (happy_path, fraud_block, contamination,
+    compliance_block). Add 6-10 more applicants covering:
+      - jumbo loan (loan_amount > conforming limit)
+      - self-employed with 2-yr tax returns vs 1-yr (income confidence)
+      - first-time homebuyer with FHA (different agency rules)
+      - VA loan (zero-down, different LTV cap)
+      - investment property (lower LTV cap, higher rate adjustment)
+      - cash-out refinance (different LTV math)
+      - HELOC / second-lien (different priority)
+      - mixed-use property (compliance edge)
+      - co-applicant scenarios (joint income, joint credit)
+      - re-application (same Applicant, new Application — tests the
+        WHO vs WHAT-NOW ontology distinction in PRD §9.1)
+    Each scenario lives in domains/lending/seed_events/<name>/ with
+    events.csv + bureau_responses.json + entities.json + an
+    expected_outcome map.
+
+  STREAM C — Policies as Type-2 versioned shared object (BIG)
+    The architectural gap the user surfaced: today decisions.yaml
+    is static config. PolicyEvaluator reads it once at startup. A
+    DecisionTrace doesn't reference which version of the policy
+    was in effect when the decision was made. For real lending
+    this is insufficient because:
+      - Agency guidelines change ~6x/year (Freddie Mac selling
+        guide, Fannie Mae selling guide, FHA HUD handbook, VA
+        circulars, USDA HB-1-3555 updates)
+      - Regulators want to see "what rule was in effect when you
+        decided this loan" — Type 2 SCD answers that
+      - Different products use different agency rules for the same
+        decision (e.g. LTV cap for conforming vs FHA vs VA)
+      - A lender may have their own OVERLAY rules on top of the
+        agency rules (stricter than agency)
+      - Replay correctness: a 2024 decision must be replayed
+        against the 2024 rule, not today's rule
+
+    Architectural sketch (decide together at start of Session 9):
+
+      Policy (new ObjectType, top-level entity)
+        primary_key: policy_id
+        properties:
+          policy_id, name, description, owner_team,
+          agency (enum<freddie|fannie|fha|va|usda|lender_overlay|state>),
+          decision_id (which of the 12 lending decisions this rule
+                       applies to; nullable for cross-cutting),
+          product_scope (list of loan_type values this applies to),
+          state_scope (list of states; null = all states)
+        decisions_that_read_it: [whichever decisions the policy gates]
+
+      PolicyVersion (new ObjectType, versioned)
+        primary_key: policy_version_id
+        properties:
+          policy_version_id, policy_id (FK to Policy),
+          version_number, valid_from, valid_to (null = current),
+          source_url (link to agency guideline document),
+          source_revision (e.g. "Freddie Selling Guide Bulletin 2026-04"),
+          boundary (the actual clauses — same shape as
+                    decisions.yaml today, but per-version),
+          contamination_guard, hard_rules_subscribed,
+          ingested_at, ingested_by (connector id),
+          superseded_at, superseded_by (Type 2 chain)
+
+      PolicyEvaluator refactor:
+        evaluate(decision_id, context, *, at, agency_chain)
+          → looks up the active PolicyVersion at `at`, walks the
+            agency_chain (e.g. [lender_overlay, freddie] — overlay
+            wins), evaluates clauses against context, returns
+            PolicyDecision with policy_version_id stamped.
+
+      DecisionTrace gets a new field:
+        policy_version_id: UUID  # exactly which rule version fired
+        policy_chain: list[UUID] # agency stack consulted
+
+      Connector pattern (PullConnector subclass):
+        FreddieMacGuidelineConnector — schedule weekly poll of
+          their bulletin RSS, fetch new selling-guide chapters,
+          parse boundary clauses (or feed to LLM for extraction),
+          insert as new PolicyVersion with valid_from = bulletin
+          effective date, valid_to = null. Old version's valid_to
+          gets set to (new.valid_from - 1 day).
+        FannieMaeGuidelineConnector — similar.
+        FHAHandbookConnector, VACircularConnector, USDAHandbookConnector.
+        LenderOverlayConnector — internal; pulls from a config
+          repo or DB the lender maintains.
+
+      Migration path for the existing decisions.yaml:
+        - Option 1: keep decisions.yaml as the lender_overlay seed
+          (load once, write as PolicyVersion rows)
+        - Option 2: split decisions.yaml into per-decision policy
+          files indexed by agency, version-stamped
+        - Option 3: deprecate decisions.yaml entirely; everything
+          comes from the policy store
+        Decide tomorrow.
+
+      Replayer interaction (already correct architecturally):
+        Replayer pins reads to `at` via _ReadOnlyAtTimeShim. Once
+        PolicyEvaluator looks up policies by (decision, at),
+        replays automatically use the right rule version. No
+        Replayer changes needed beyond passing `at` through.
+
+  STREAM D — Connectors for periodic agency-guideline pulls
+    Concrete sources to define connectors for:
+      Freddie Mac Selling Guide:
+        https://guide.freddiemac.com/app/guide/
+        publishes Bulletins (~6/year) with effective dates
+      Fannie Mae Selling Guide:
+        https://selling-guide.fanniemae.com/
+        publishes Selling Guide Announcements
+      FHA HUD Handbook 4000.1:
+        https://www.hud.gov/program_offices/housing/sfh/handbook_4000-1
+        published as a single document, revised periodically
+      VA Lender's Handbook (M26-7):
+        https://benefits.va.gov/warms/pam26_7.asp
+        circulars issued as updates
+      USDA HB-1-3555:
+        https://www.rd.usda.gov/resources/directives/handbooks
+      State regulators: 50 of them, varying formats
+
+    Connector design:
+      class AgencyGuidelineConnector(PullConnector):
+        - schedule: weekly (most agencies bulletin monthly-ish but
+          weekly poll catches mid-cycle releases)
+        - fetch: scrape RSS / API / HTML index, diff against last
+          ingested revision
+        - normalize: extract effective_date, source_url, revision_id,
+          and the boundary clause text
+        - emit: PolicyVersionIngestedEvent → EntityHydrator writes
+          a new PolicyVersion row, sets old version's valid_to
+
+      Big open question for tomorrow: how to extract boundary
+      clauses from natural-language guidelines. Two paths:
+        (a) Manual SME translation (slow, accurate, defensible)
+        (b) LLM extraction with a structured rubric (fast, needs
+            review, less defensible to a regulator)
+      Probably (a) for v1 — at least until we have a flow for
+      reviewing LLM-extracted rules before activating them.
+
+═══════════════════════════════════════════════════════════════════
+EFFECT ON TIER 1 PRIORITY
+═══════════════════════════════════════════════════════════════════
+
+Original Session 8 plan was: STEP 14 tests → real-backend
+verification → async pass.
+
+Reordered for Session 9:
+  1. Design policy data model (STREAM C above) — DECIDE the
+     ObjectType shape, the PolicyEvaluator refactor, the trace
+     field, and the migration path for decisions.yaml. This
+     happens BEFORE any code so we don't write code we'll
+     immediately rewrite.
+  2. Write more seed scenarios (STREAM B) — these double as
+     test fixtures. Build the scenarios to be policy-aware
+     (each scenario can reference an agency_chain).
+  3. THEN STEP 14 tests, with the new schema in mind.
+  4. Real-backend verification + async pass slot in after.
+
+UI work (STREAM A) is unblocked from Claude's side — wait for
+user's research before any further workbench iteration.
+
+═══════════════════════════════════════════════════════════════════
+
+
+Build next — TIER 1 (FOUNDATION — nothing else proceeds without these):
   STEP 14 tests/                Persistent pytest suite. Today only
                                 tests/core/context_store/test_in_memory.py
-                                exists. Cover:
-                                - core/policy_engine/loader.py against
-                                  the real decisions.yaml.
-                                - core/trace/reflection.py capture +
-                                  recall + retention.
-                                - Each persona's _compute_offline()
-                                  against canonical input fixtures.
-                                - The 4 seed_events scenarios as
-                                  canonical end-to-end regressions.
-                                - api/ via fastapi.testclient on every
-                                  route, including the override flow.
-                                - ui/views.py view-models as pure
-                                  functions of Platform state.
-                                Three bugs found in sessions 5 + 6
-                                (income hydrator double-write,
-                                _default_resolver shape, view-model
-                                async/sync mismatch) would have been
-                                single failing tests instead of full
-                                DAG / full UI runs to debug.
+                                exists. Bug-catchers first:
+                                - tests/core/policy_engine/test_loader.py
+                                - tests/core/trace/test_reflection.py
+                                - tests/domains/lending/test_seed_scenarios.py
+                                Then expand to api/, ui/views.py,
+                                personas, replayer.
 
-  AFTER UI HANDS-ON      Real Anthropic calls. Personas have the path
-                         (use_anthropic=True, cache_control on the
-                         system block) but it's unproven. Boot the UI
-                         with one persona on the LLM path, see the
-                         work journal side-by-side with the offline
-                         baseline. Surfaces:
-                           - prompt-cache hit rate
-                           - JSON-parse robustness on the journal
-                           - latency per persona
+  REAL-BACKEND VERIFICATION     Check status of routine
+                                trig_013QhFbYJaViJfNybCbr3KUX (May 3
+                                scheduled). If PR landed on
+                                session-4-real-backend-verification,
+                                review. If not, fire it manually:
+                                  docker compose up -d postgres redis
+                                  apply core/context_store/schema.sql
+                                  swap PostgresDurableStore +
+                                    RedisHotCache in api/deps.py
+                                  re-run all smokes against live DB.
 
-  STEP 12 core/trace/outcome_tracker.py
-                                Post-decision outcome scoring + live
-                                A/B comparisons. Needs a per-decision
-                                ground-truth feed.
+  ASYNC PASS on ui/views.py     Replace synchronous _records walks
+                                with async store calls — needed for
+                                Postgres swap. Same applies to
+                                api.deps._default_resolver and
+                                core.simulation._build_replay_resolver
+                                (both walk _records today).
 
-  STEP 13 core/simulation/replayer.py
-                                Replay traces at point-in-time for
-                                backtesting personas. Hook into
-                                InMemoryDurableStore.get_at_time
-                                (already supports it).
+After TIER 1, see PRD §19 for tiers 2-6:
+  TIER 2 — Real connectors (web form push + Experian pull + outbound
+           writeback skeleton)
+  TIER 3 — Operational hardening (auth + HumanQueue.resolve() +
+           multi-tenancy)
+  TIER 4 — Regulatory (HMDA + audit export + adverse action notice)
+  TIER 5 — Production deploy (observability + DR + real critic)
+  TIER 6 — Persona enrichment (real Anthropic + outcome_tracker +
+           send_back outcome + semantic_layer/flow.py)
 
-OPEN ARCHITECTURAL QUESTIONS:
-  - human_approval mode currently doesn't writeback (per PRD §13
-    "human's resolution drives the eventual writeback"). Downstream
-    decisions see missing upstream output for queued decisions and
-    recommend rather than approve. Decide: do tests need a
-    "simulate human approvals" mode, or do all tests use an explicit
-    POST /override step to mark the queued decisions resolved?
-  - HumanQueue has no "resolved/dismissed" state. After override, the
-    item stays in list_open(). UX-wise this is wrong; functionally
-    it's fine for v0. Add a resolve() method on the HumanQueue
-    Protocol when you wire the dequeue flow.
-  - ui/views.py reads the in-memory store synchronously. Needs an
-    async pass for the Postgres swap; flagged in Session 6 notes.
+OPEN ARCHITECTURAL QUESTIONS for path C:
+  - Tenant model: row-level (recommended) vs schema-per-tenant.
+    Decide before TIER 3.
+  - LOS integration order: Encompass (~50% US mortgage) vs Blend.
+    Driven by first design partner's stack.
+  - Critic model: Sonnet for persona / Opus for critic so
+    SelfReviewError can never fire.
+  - Borrower portal: separate frontend project, NOT in this repo.
+  - human_approval simulate-mode for tests: option (a) auto-approve
+    queued items mid-DAG for scenario regressions, plus option (b)
+    one dedicated override-flow test.
+  - HumanQueue.resolve(): add when wiring TIER 3 dequeue flow.
+  - Replayer downstream-cascade reach: persona swap on
+    credit_assessment didn't propagate to LTV / pricing / UW because
+    downstream personas re-derive inputs from entity reads, not
+    upstream output payloads. Either upstream personas write derived
+    signals into the entity store, or downstream personas read
+    upstream output payload directly.
+
+How to run the local UI:
+  uvicorn api.main:get_app --factory --reload --port 8000
+  → http://127.0.0.1:8000/ui/workbench  (primary entry)
+
+How to run smoke tests:
+  python -X utf8 scripts/smoke_replayer.py
+  python -X utf8 scripts/smoke_ui_all_panels.py
+  python -X utf8 scripts/smoke_workbench.py
 ```
 
 ---
@@ -1164,4 +1772,4 @@ OPEN ARCHITECTURAL QUESTIONS:
 
 ---
 
-*Decision OS · CONTEXT.md · Updated May 2 2026 (Session 6 — local UI live)*
+*Decision OS · CONTEXT.md · Updated May 2 2026 (Session 8 — workbench/persona UI live, PATH C locked)*

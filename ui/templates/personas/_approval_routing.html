@@ -1,0 +1,41 @@
+{# Approval routing persona panel: routing target + channel + timeline. #}
+{% set pv = persona_view %}
+
+<section class="bg-white border border-slate-200 rounded-lg p-5">
+  <div class="flex items-baseline justify-between mb-4">
+    <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider">
+      Approval routing · persona view
+    </h2>
+    <span class="text-xs text-slate-400">workflow_routing_agent</span>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+    {% set t = pv.routing_target %}
+    {% set t_tone = ({'approval_letter':'emerald','counter_offer':'amber','decline_notice':'rose'})[t] | default('slate') %}
+    <div class="border border-{{ t_tone }}-300 bg-{{ t_tone }}-50 rounded p-4">
+      <div class="text-xs text-slate-500">Routing target</div>
+      <div class="text-lg mono font-semibold text-{{ t_tone }}-800 mt-1">
+        {{ t | default('—') }}
+      </div>
+      <div class="text-[11px] mono text-slate-500 mt-2">
+        from underwriting = {{ pv.underwriting | default('—') }}
+      </div>
+    </div>
+
+    <div class="border border-slate-200 rounded p-4">
+      <div class="text-xs text-slate-500">Communication channel</div>
+      <div class="text-lg mono mt-1">{{ pv.channel | default('—') }}</div>
+    </div>
+
+    <div class="border border-slate-200 rounded p-4">
+      <div class="text-xs text-slate-500">Timeline</div>
+      <div class="text-lg mono mt-1">{{ pv.timeline | default('—') }}</div>
+    </div>
+  </div>
+
+  {% if pv.applicant_dispute %}
+    <div class="text-xs text-orange-700 mono">
+      ⚠ applicant_dispute_flag · escalate
+    </div>
+  {% endif %}
+</section>

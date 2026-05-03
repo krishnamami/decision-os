@@ -1,5 +1,9 @@
 # DECISION OS — PRODUCT REQUIREMENTS DOCUMENT
-# Version: 0.5 | Updated: May 2026 | Source of truth for Claude Code every session
+# Version: 0.8 | Updated: May 2026 | Source of truth for Claude Code every session
+#
+# Strategic note (Session 8): the user committed to PATH C — full
+# DecisionOS as system of record (12-18 month roadmap). See §19 for
+# the tier breakdown that drives every following session.
 
 ---
 
@@ -685,7 +689,18 @@ decision-os/
 │   │   │                                       capture(trace, review) → recall by
 │   │   │                                       similarity tags. 365-day retention.
 │   │   └── outcome_tracker.py     ⬜ TODO
-│   └── simulation/                ⬜ TODO
+│   └── simulation/                ✅ STEP 13 DONE
+│       ├── __init__.py            ✅ EXISTS — re-exports Replayer +
+│       │                                       Replay/DecisionComparison
+│       └── replayer.py            ✅ EXISTS — point-in-time replay over
+│                                              live durable store via
+│                                              _ReadOnlyAtTimeShim +
+│                                              _ShadowModeRouter; never
+│                                              writes to live state.
+│                                              replay_application +
+│                                              replay_decision; persona
+│                                              swap surface; structured
+│                                              ReplayResult / Comparison.
 │
 ├── api/                           ✅ STEP 7 DONE
 │   ├── __init__.py                ✅ EXISTS
@@ -735,26 +750,59 @@ decision-os/
 ├── docs/
 │   └── PRD.md                     ✅ EXISTS — this file
 │
-├── ui/                            ✅ STEP 11 DONE — local UI mounted in api/main.py
+├── ui/                            ✅ STEP 11 + Session 8 expansion
 │   ├── __init__.py                ✅ EXISTS — exports router + templates
 │   ├── views.py                   ✅ EXISTS — view-model helpers +
 │   │                                          OUTCOME_STYLES palette +
 │   │                                          Jinja filters (currency, pct,
-│   │                                          confidence, dt)
-│   ├── routes.py                  ✅ EXISTS — 5 GET routes + override POST
-│   │                                          with HTMX swap
+│   │                                          confidence, dt) +
+│   │                                          12 _persona_view builders +
+│   │                                          workbench rollups (KPIs,
+│   │                                          queue, focused-app split)
+│   ├── routes.py                  ✅ EXISTS — 7 GET routes + override POST
+│   │                                          with HTMX swap. Workbench
+│   │                                          index + per-team workbench.
 │   └── templates/
-│       ├── base.html              ✅ Tailwind + HTMX via CDN, nav
+│       ├── base.html              ✅ Tailwind + HTMX via CDN, nav with
+│       │                            "Workbench" as primary entry
 │       ├── index.html             ✅ application list with outcome counts
 │       ├── application.html       ✅ DAG visualization by execution wave
-│       ├── decision.html          ✅ bundle + journal + policy + critic +
-│       │                            output + override + recalled lessons
+│       ├── decision.html          ✅ cross-cutting strips (routing pill,
+│       │                            read-perm chips, atomic-tool pipeline,
+│       │                            upstream status, boundary lit) +
+│       │                            persona panel dispatcher + journal +
+│       │                            policy + critic + output + override
 │       ├── _override_card.html    ✅ form / attached-review / auto-execute states
 │       ├── _override_result.html  ✅ HTMX swap target post-override
-│       └── queue.html             ✅ cross-application human queue table
+│       ├── queue.html             ✅ cross-application human queue table
+│       ├── workbench_index.html   ✅ Session 8 — 9 owner-team cards with
+│       │                            KPI snapshots
+│       ├── workbench.html         ✅ Session 8 — per-team workbench: KPI
+│       │                            strip + app picker + queue table OR
+│       │                            focused-app view (finished / pending /
+│       │                            waiting / downstream)
+│       └── personas/              ✅ Session 8 — 12 partials, one per decision
+│           ├── _lead_scoring.html         ✅ intent meter + channel pills
+│           ├── _income_verification.html  ✅ stated vs verified + confidence ring
+│           ├── _credit_assessment.html    ✅ score gauge with band thresholds
+│           ├── _fraud_screening.html      ✅ traffic-light + halt warning
+│           ├── _compliance_check.html     ✅ HMDA checklist + halts_closing
+│           ├── _dti_calculation.html      ✅ DTI bar + contamination guard row
+│           ├── _ltv_assessment.html       ✅ appraised vs loan stack + LTV bar
+│           ├── _product_eligibility.html  ✅ eligible + exception product lists
+│           ├── _rate_pricing.html         ✅ base + LLPA waterfall vs usury
+│           ├── _underwriting_decision.html ✅ 6-input synthesis + risk gauge
+│           ├── _approval_routing.html     ✅ target + channel + timeline cards
+│           └── _closing_readiness.html    ✅ closing checklist + flags
 │
 ├── tests/                         ⬜ partial — only context_store has tests
 │   └── core/context_store/test_in_memory.py
+│
+├── scripts/                       ✅ Session 7+8 — local smoke runners
+│   ├── smoke_replayer.py          ✅ STEP 13 end-to-end smoke
+│   ├── smoke_ui_credit.py         ✅ credit_assessment panel + cross-cutting
+│   ├── smoke_ui_all_panels.py     ✅ all 12 persona panels x 3 scenarios
+│   └── smoke_workbench.py         ✅ 9 workbenches x 4 scenarios
 │
 ├── CONTEXT.md                     ✅ EXISTS — session history
 ├── docker-compose.yml             ✅ EXISTS — Postgres 16 + Redis 7 services
@@ -830,17 +878,165 @@ decision-os/
                                             port to Next.js when there's a polished
                                             demo audience.
 
-  NEXT
-  14 tests/                       Persistent test suite — currently only context_store
-                                  has scaffolding; expand to api/, personas/,
-                                  seed_events, ui/ view-models. Three bugs in the
-                                  last two sessions would have been single failing
-                                  tests.
-  -- Real Anthropic calls         Personas have the path; unproven. Boot the UI
-                                  with one persona on the LLM path, see the work
-                                  journal side-by-side with the offline baseline.
-  12 core/trace/outcome_tracker   Live A/B + post-decision outcome scoring
-  13 core/simulation/replayer     Replay traces at point-in-time for backtesting
+     STEP 13 core/simulation/replayer     — Replayer + ReplayResult /
+                                            ReplayComparison / DecisionComparison.
+                                            _ReadOnlyAtTimeShim wraps the live
+                                            durable so reads pin to replay_at and
+                                            writes raise. _ShadowModeRouter blocks
+                                            writeback (auto + BLOCK both go to
+                                            SHADOW_RECORD). Two entry points:
+                                            replay_application(persona_overrides)
+                                            for full-DAG backtests,
+                                            replay_decision(persona_override) for
+                                            single-decision swap.
+                                            core/context_store/lending.py snapshot
+                                            now passes `at` through to upstream
+                                            decision reads (was get_latest);
+                                            replay correctness depends on it.
+                                            Verified end-to-end via
+                                            scripts/smoke_replayer.py — 4 phases:
+                                            as-is parity (12/12 agree), persona
+                                            swap surfaces credit_band downgrade,
+                                            validation raises on persona/decision_id
+                                            mismatch, live state byte-identical
+                                            before & after every replay.
+
+     SESSION 8 (UI iteration on STEP 11)
+        ui/templates/personas/*.html   — 12 per-persona panels (gauge,
+                                          waterfall, checklist, traffic-light,
+                                          synthesis grid, etc.)
+        ui/templates/decision.html     — cross-cutting strips: routing pill,
+                                          read-permission chips, atomic-tool
+                                          7-step pipeline, upstream status,
+                                          live boundary evaluation, persona
+                                          panel dispatcher
+        ui/templates/workbench*.html   — 9 owner-team workbenches with KPI
+                                          strip + app picker + queue / focused
+                                          (finished / pending / waiting /
+                                          downstream-impact)
+
+  ─────────────────────────────────────────────────────────────────
+  STRATEGIC DIRECTION (locked in Session 8)
+
+    PATH C — Full DecisionOS as system of record (12-18 months).
+    The architecture is production-grade; what's missing is real
+    integrations and operational hardening, not core design.
+
+    The build sequence below is broken into TIERS. Each tier is
+    ~4-6 weeks of work; complete a tier before opening the next.
+  ─────────────────────────────────────────────────────────────────
+
+  TIER 1 — FOUNDATION (next 4-6 weeks; nothing else proceeds without these)
+    14  tests/                       pytest sweep covering loader,
+                                     reflection, personas, seed_events,
+                                     api/, ui/views.py, replayer.
+                                     Bug-catchers first:
+                                       tests/core/policy_engine/test_loader.py
+                                       tests/core/trace/test_reflection.py
+                                       tests/domains/lending/test_seed_scenarios.py
+                                     then expand to api/, ui/, personas/.
+        Real-backend verification    Check status of routine
+                                     trig_013QhFbYJaViJfNybCbr3KUX (May 3
+                                     scheduled run). If the PR landed,
+                                     review; if not, do it manually:
+                                     apply schema.sql, swap
+                                     PostgresDurableStore + RedisHotCache,
+                                     re-run all smokes against live DB.
+        Async pass on ui/views.py    Replace synchronous _records walks
+                                     with async store calls; needed for
+                                     Postgres swap.
+        Postgres-aware resolver      Replace api/deps._default_resolver's
+                                     in-memory _records walk with SQL.
+                                     core/simulation/_build_replay_resolver
+                                     needs the same swap.
+
+  TIER 2 — REAL CONNECTORS (4-6 weeks; first proof the integration pattern works)
+        One real PushConnector       Borrower portal webhook (web form
+                                     submit). Validates push pattern
+                                     end-to-end through normalize → hydrate.
+        One real PullConnector       Experian (or TU/Equifax) credit pull
+                                     with RecordedResponse fixtures so
+                                     replay stays deterministic.
+        Extend EntityHydrator        New event types: kyc_completed,
+                                     document_uploaded, e-sign_callback,
+                                     payroll_event_received.
+        Outbound writeback skeleton  Encompass or Blend connector
+                                     (depending on first design partner's
+                                     LOS). The missing return path —
+                                     decisions today don't flow back to
+                                     the LOS.
+
+  TIER 3 — OPERATIONAL HARDENING (4-6 weeks)
+        API auth                     OIDC / OAuth2 / API key + per-user
+                                     scoping. Today the API has no auth
+                                     at all.
+        HumanQueue.resolve()         Add resolve() to HumanQueue Protocol
+                                     so override actually dequeues. Add
+                                     role / permission system + dual-
+                                     control for high-risk overrides.
+        Multi-tenancy                tenant_id through Lineage + every
+                                     read scoped by tenant. Schema
+                                     migration to add tenant_id column.
+                                     Decision: row-level (recommended) vs
+                                     schema-per-tenant (cleaner but more
+                                     ops overhead).
+
+  TIER 4 — REGULATORY (4-6 weeks)
+        HMDA reporting               domains/lending/regulatory/hmda.py.
+                                     Quarterly submission to FFIEC.
+        Audit log export             CSV / JSON export for examiners.
+                                     Already have append-only traces; just
+                                     need the export view.
+        Adverse action notice        Auto-generate from decline traces.
+                                     ECOA requires a notice within 30
+                                     days of adverse action.
+
+  TIER 5 — PRODUCTION DEPLOY (4-6 weeks)
+        Observability                structlog → OTLP. Prometheus
+                                     per-decision metrics. Grafana
+                                     dashboards. PagerDuty wiring on
+                                     SLA breaches.
+        Backup / DR                  Postgres logical replication + S3
+                                     snapshot of context_records.
+        Real critic agent            Currently a stub in
+                                     core/trace/critic_agent.py. Needs
+                                     Anthropic-backed implementation
+                                     with structured rubric and (per
+                                     PRD §8) a separate model from the
+                                     persona to keep SelfReviewError
+                                     unfireable.
+
+  TIER 6 — PERSONA ENRICHMENT (parallel with Tier 5)
+        Real Anthropic calls         Personas have the path
+                                     (use_anthropic=True, cache_control on
+                                     system block) but unproven. Measure
+                                     prompt-cache hit rate, JSON parsing
+                                     robustness on the journal, latency
+                                     per persona.
+    12  core/trace/outcome_tracker   Post-decision outcome scoring + live
+                                     A/B comparisons. DecisionComparison
+                                     from STEP 13 is most of the shape
+                                     this needs; outcome_tracker adds
+                                     the per-decision ground-truth feed.
+        send_back outcome            PRD §13 marks it "planned" — used
+                                     when downstream needs more evidence
+                                     and routes back to the upstream
+                                     persona.
+        core/semantic_layer/flow.py  Event → entity → metric → signal
+                                     mapper. EntityHydrator covers
+                                     event → entity today; flow.py
+                                     adds the entity → metric → signal
+                                     layer.
+
+  OPEN ARCHITECTURAL DECISIONS for path C (decide as we go):
+    - Tenant model: row-level vs schema-per-tenant (recommend row-level
+      for first 10 tenants, schema-per-tenant when scale demands it)
+    - LOS integration order: Encompass (~50% US mortgage) vs Blend
+      (newer, growing) — driven by design partner
+    - Critic mode: Sonnet for persona / Opus for critic so a
+      SelfReviewError can never fire
+    - Borrower portal: separate frontend project consuming the API,
+      not in this repo
 ```
 
 ---
@@ -966,4 +1162,4 @@ Build next, in this order:
 
 ---
 
-*Decision OS · docs/PRD.md · v0.5 · Read at the start of every Claude Code session*
+*Decision OS · docs/PRD.md · v0.8 · Read at the start of every Claude Code session*
