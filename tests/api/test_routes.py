@@ -345,6 +345,55 @@ class AuditRouteTests(_SeededAppMixin, unittest.TestCase):
         )
         self.assertEqual(r.status_code, 404)
 
+    def test_export_csv_streams_header_and_rows(self):
+        r = self.client.get("/audit/export.csv")
+        self.assertEqual(r.status_code, 200, r.text[:200])
+        self.assertEqual(r.headers["content-type"].split(";")[0], "text/csv")
+        body = r.text
+        # Header is the first line; check for known columns.
+        first_line = body.splitlines()[0]
+        for col in ("audit_id", "decision_type", "overall_status", "regulation_tags"):
+            self.assertIn(col, first_line)
+        # Total = 1 header + N records. fraud_block / compliance_block
+        # halt the DAG before all 12 decisions run, so the exact count
+        # depends on halt behaviour. Lower bound: at least 7 (one per
+        # scenario's lead_scoring) + much more.
+        rows = body.splitlines()[1:]
+        self.assertGreaterEqual(len(rows), 50)
+
+    def test_export_csv_decision_type_filter(self):
+        r = self.client.get(
+            "/audit/export.csv?decision_type=credit_assessment"
+        )
+        self.assertEqual(r.status_code, 200)
+        rows = r.text.splitlines()[1:]  # drop header
+        # credit_assessment runs on every seed (no upstream blocks);
+        # 7 applications → 7 records.
+        self.assertEqual(len(rows), 7)
+        for row in rows:
+            self.assertIn("credit_assessment", row)
+
+    def test_export_csv_only_filter_rejects_bogus_status(self):
+        r = self.client.get("/audit/export.csv?only=glorp")
+        self.assertEqual(r.status_code, 400)
+
+    def test_export_csv_after_filter_rejects_bogus_iso(self):
+        r = self.client.get("/audit/export.csv?after=not-a-date")
+        self.assertEqual(r.status_code, 400)
+
+    def test_export_jsonl_yields_one_record_per_line(self):
+        import json
+
+        # credit_assessment runs on every scenario — guaranteed 7.
+        r = self.client.get("/audit/export.jsonl?decision_type=credit_assessment")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("ndjson", r.headers["content-type"])
+        lines = [ln for ln in r.text.splitlines() if ln.strip()]
+        self.assertEqual(len(lines), 7)
+        for ln in lines:
+            obj = json.loads(ln)
+            self.assertEqual(obj["decision_type"], "credit_assessment")
+
     def test_adverse_action_returns_notice_for_block_decision(self):
         # fraud_block scenario produces a fraud_screening BLOCK trace.
         # The audit record for that decision is the source of an

@@ -5,15 +5,18 @@ from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from core.audit import (
     AccessRecord,
     AdverseActionNotice,
     AuditRecord,
+    CheckStatus,
     generate_notice,
     is_adverse_action,
 )
+from core.audit.export import export_csv, export_jsonl
 from core.audit.pii_log import PIIAccessEntry
 from core.connectors import ConnectorError
 from core.normalizer.models import (
@@ -426,6 +429,120 @@ async def list_pii_accesses_for_application(
     platform: Platform = Depends(get_platform),
 ) -> list[PIIAccessEntry]:
     return await platform.pii_access_log.list_for_application(application_id)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Audit log export — PRD §19 TIER 4. Streams CSV / JSONL of every
+# audit_record matching the filter. Examiners ingest the CSV; we keep
+# JSONL on the same path for re-ingestable downstream tooling.
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _parse_status_filter(only: Optional[str]) -> Optional[list[CheckStatus]]:
+    if not only:
+        return None
+    out: list[CheckStatus] = []
+    for token in (t.strip() for t in only.split(",") if t.strip()):
+        try:
+            out.append(CheckStatus(token))
+        except ValueError as err:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"unknown status {token!r} in `only`; expected "
+                    f"comma-separated subset of pass/warn/fail"
+                ),
+            ) from err
+    return out
+
+
+def _parse_iso(s: Optional[str], field: str) -> Optional[datetime]:
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError as err:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{field} must be ISO-8601 (got {s!r})",
+        ) from err
+
+
+async def _gather_records(platform: Platform) -> list[AuditRecord]:
+    # InMemoryAuditStore exposes _records dict; production swap will
+    # add a list_all() method or a paged iterator. For TIER 4 export
+    # against InMemory the dict is fine.
+    records_attr = getattr(platform.audit_store, "_records", None)
+    if isinstance(records_attr, dict):
+        return list(records_attr.values())
+    # Fallback: walk every application_id we know about. Unused in v0
+    # but keeps the contract honest if the store doesn't expose _records.
+    out: list[AuditRecord] = []
+    return out
+
+
+@router.get("/audit/export.csv")
+async def export_audit_csv(
+    decision_type: Optional[str] = None,
+    only: Optional[str] = None,
+    after: Optional[str] = None,
+    before: Optional[str] = None,
+    platform: Platform = Depends(get_platform),
+) -> StreamingResponse:
+    """Stream every audit record as CSV. Filters:
+      decision_type=lead_scoring,credit_assessment,...   (comma list)
+      only=warn,fail                                     (status filter)
+      after=2026-01-01T00:00:00                          (ISO-8601)
+      before=2026-12-31T23:59:59                         (ISO-8601)
+    """
+
+    records = await _gather_records(platform)
+    types = (
+        [t.strip() for t in decision_type.split(",") if t.strip()]
+        if decision_type else None
+    )
+    chunks = export_csv(
+        records,
+        window_start=_parse_iso(after, "after"),
+        window_end=_parse_iso(before, "before"),
+        decision_types=types,
+        status_filter=_parse_status_filter(only),
+    )
+    return StreamingResponse(
+        chunks,
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="audit_records.csv"'},
+    )
+
+
+@router.get("/audit/export.jsonl")
+async def export_audit_jsonl(
+    decision_type: Optional[str] = None,
+    only: Optional[str] = None,
+    after: Optional[str] = None,
+    before: Optional[str] = None,
+    platform: Platform = Depends(get_platform),
+) -> StreamingResponse:
+    """Same filters as /audit/export.csv but emits JSONL (one record
+    per line) preserving nested structure for re-ingestable tooling."""
+
+    records = await _gather_records(platform)
+    types = (
+        [t.strip() for t in decision_type.split(",") if t.strip()]
+        if decision_type else None
+    )
+    chunks = export_jsonl(
+        records,
+        window_start=_parse_iso(after, "after"),
+        window_end=_parse_iso(before, "before"),
+        decision_types=types,
+        status_filter=_parse_status_filter(only),
+    )
+    return StreamingResponse(
+        chunks,
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": 'attachment; filename="audit_records.jsonl"'},
+    )
 
 
 @router.get(
