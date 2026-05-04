@@ -331,6 +331,39 @@ class AuditRouteTests(_SeededAppMixin, unittest.TestCase):
         )
         self.assertEqual(r.status_code, 404)
 
+    def test_adverse_action_returns_409_for_clean_decisions(self):
+        # happy_path applicant — every decision is allow / recommend.
+        # Adverse-action endpoint must refuse to generate a notice.
+        r = self.client.get("/audit/application/app_happy")
+        audit_id = r.json()[0]["audit_id"]
+        r2 = self.client.get(f"/audit/{audit_id}/adverse-action")
+        self.assertEqual(r2.status_code, 409, r2.text[:200])
+
+    def test_adverse_action_404_for_unknown_audit_id(self):
+        r = self.client.get(
+            "/audit/00000000-0000-0000-0000-000000000000/adverse-action"
+        )
+        self.assertEqual(r.status_code, 404)
+
+    def test_adverse_action_returns_notice_for_block_decision(self):
+        # fraud_block scenario produces a fraud_screening BLOCK trace.
+        # The audit record for that decision is the source of an
+        # ECOA-required notice.
+        r = self.client.get("/audit/application/app_fraud")
+        records = r.json()
+        block_audit = next(
+            (rec for rec in records if rec["decision_output"] == "block"),
+            None,
+        )
+        self.assertIsNotNone(block_audit, "fraud_block must produce a BLOCK")
+        r2 = self.client.get(f"/audit/{block_audit['audit_id']}/adverse-action")
+        self.assertEqual(r2.status_code, 200, r2.text[:200])
+        notice = r2.json()
+        self.assertEqual(notice["application_id"], "app_fraud")
+        self.assertIn("reasons", notice)
+        self.assertGreater(len(notice["reasons"]), 0)
+        self.assertIn("ecoa_statement", notice)
+
 
 class AuditUIRenderTests(unittest.TestCase):
     """Boot a separate app with mount_ui=True so the audit templates

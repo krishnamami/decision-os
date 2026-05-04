@@ -2892,6 +2892,9 @@ def audit_record_detail(
         "fairness":   FairnessChecker().check(record).findings,
     }
 
+    # Adverse-action signal — drives the "ECOA notice" link in the UI.
+    from core.audit.adverse_action import is_adverse_action
+
     overall = getattr(record.overall_status, "value", record.overall_status)
     return {
         "record":          record,
@@ -2901,6 +2904,7 @@ def audit_record_detail(
         "policy_applied":  [p.model_dump() for p in record.policy_applied],
         "fairness_flags":  [f.model_dump() for f in record.fairness_flags],
         "accessed_by":     [a.model_dump() for a in record.accessed_by],
+        "is_adverse_action": is_adverse_action(record),
     }
 
 

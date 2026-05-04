@@ -19,6 +19,13 @@ follows once the store is durable.
 """
 from __future__ import annotations
 
+from .adverse_action import (
+    ActionTaken,
+    AdverseActionNotice,
+    AdverseActionReason,
+    generate_notice,
+    is_adverse_action,
+)
 from .alerts import AlertSink, AuditAlert, InMemoryAlertSink, LoggingAlertSink
 from .compliance_checker import ComplianceChecker
 from .engine import AuditEngine
@@ -40,6 +47,9 @@ from .store import AuditStore, InMemoryAuditStore, PostgresAuditStore
 
 __all__ = [
     "AccessRecord",
+    "ActionTaken",
+    "AdverseActionNotice",
+    "AdverseActionReason",
     "AlertSink",
     "AuditAlert",
     "AuditEngine",
@@ -60,4 +70,6 @@ __all__ = [
     "PolicyApplied",
     "PostgresAuditStore",
     "SecurityChecker",
+    "generate_notice",
+    "is_adverse_action",
 ]

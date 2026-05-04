@@ -7,7 +7,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from pydantic import BaseModel, Field
 
-from core.audit import AccessRecord, AuditRecord
+from core.audit import (
+    AccessRecord,
+    AdverseActionNotice,
+    AuditRecord,
+    generate_notice,
+    is_adverse_action,
+)
 from core.audit.pii_log import PIIAccessEntry
 from core.connectors import ConnectorError
 from core.normalizer.models import (
@@ -449,6 +455,55 @@ async def get_audit_record(
         AccessRecord(user_id="system", role="system", action="read"),
     )
     return record
+
+
+@router.get(
+    "/audit/{audit_id}/adverse-action",
+    response_model=AdverseActionNotice,
+)
+async def get_adverse_action_notice(
+    audit_id: UUID,
+    platform: Platform = Depends(get_platform),
+) -> AdverseActionNotice:
+    """Generate the ECOA / FCRA §615 notice for a declined / failed
+    audit record. Returns 404 when the record doesn't exist; returns
+    409 when the underlying decision is not an adverse action (an
+    approved or recommended decision has nothing to send)."""
+
+    record = await platform.audit_store.get(audit_id)
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"audit record {audit_id} not found",
+        )
+    if not is_adverse_action(record):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"audit record {audit_id} is not an adverse action "
+                f"(decision_output={record.decision_output.value!r}, "
+                f"overall_status={record.overall_status.value!r}); "
+                f"no notice required"
+            ),
+        )
+    trace = await platform.trace_writer.get(record.decision_id)
+    if trace is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"trace {record.decision_id} not found for audit {audit_id}",
+        )
+    # Best-effort applicant lookup (system-wide) so the notice
+    # carries the applicant's name.
+    applicant_value = None
+    try:
+        ids = await platform.entity_resolver("Applicant", record.application_id)
+        if ids:
+            ar = await platform.store.get("Applicant", ids[0])
+            if ar is not None and isinstance(ar.value, dict):
+                applicant_value = ar.value
+    except Exception:
+        applicant_value = None
+    return generate_notice(record, trace, applicant_value=applicant_value)
 
 
 @router.post(
