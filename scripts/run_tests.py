@@ -33,6 +33,7 @@ TEST_MODULES: tuple[str, ...] = (
     "tests.core.simulation.test_replayer",
     "tests.core.audit.test_engine",
     "tests.core.audit.test_reports",
+    "tests.core.audit.test_pii_log",
     "tests.api.test_routes",
     "tests.ui.test_views",
     "tests.domains.lending.test_seed_scenarios",

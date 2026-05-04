@@ -149,6 +149,25 @@ async def main() -> int:
         print(f"  flags:    {len(report.flags)}")
         print(f"  summary:  {json.dumps(report.summary, indent=2, default=str)[:500]}")
 
+    # PRD §23.9 pii_access_always_logged — surface the size of the
+    # PII access log so we can eyeball that store-level logging fired.
+    pii_log = getattr(platform, "pii_access_log", None)
+    if pii_log is not None:
+        recent = await pii_log.list_recent(limit=10000)
+        print(f"\n=== pii_access_log ===")
+        print(f"  entries: {len(recent)}")
+        by_type: dict[str, int] = {}
+        for e in recent:
+            by_type[e.entity_type] = by_type.get(e.entity_type, 0) + 1
+        print(f"  by entity_type: {by_type}")
+
+    sink = getattr(platform, "audit_alert_sink", None)
+    if sink is not None and hasattr(sink, "alerts"):
+        print(f"\n=== audit alert sink ===")
+        print(f"  alerts fired: {len(sink.alerts)}")
+        for alert in sink.alerts[:5]:
+            print(f"    · {alert.summary}")
+
     print("\n=== done ===\n")
     return 0
 

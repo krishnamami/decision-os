@@ -83,11 +83,30 @@ class LendingContextStore(ContextStore):
 
     Composes a Redis-style hot cache with a Postgres-style durable store.
     TTLs are derived from each decision's risk_level. Provides
-    decision-scoped accessors via :meth:`for_decision`."""
+    decision-scoped accessors via :meth:`for_decision`.
 
-    def __init__(self, hot: _HotProtocol, durable: _DurableProtocol):
+    PRD §23.9 pii_access_always_logged: when a `pii_access_log` is
+    wired, every successful read whose returned record carries PII
+    fields produces an entry. Detection uses
+    `core.audit.pii_log.detect_pii_fields`. Logging is best-effort — a
+    failure inside the log MUST NOT break the read."""
+
+    def __init__(
+        self,
+        hot: _HotProtocol,
+        durable: _DurableProtocol,
+        *,
+        pii_access_log: Optional[Any] = None,
+    ):
         self._hot = hot
         self._durable = durable
+        self._pii_access_log = pii_access_log
+
+    def attach_pii_log(self, pii_access_log: Any) -> None:
+        """Late-binding hook so api/deps can install the log after the
+        store is constructed (the platform builder creates the log
+        alongside the audit_store, both downstream of this object)."""
+        self._pii_access_log = pii_access_log
 
     # ── TTL policy ────────────────────────────────────────────────────
 
@@ -110,11 +129,48 @@ class LendingContextStore(ContextStore):
     ) -> Optional[ContextRecord]:
         cached = await self._hot.get(entity_type, entity_id, decision_id)
         if cached is not None:
+            await self._log_pii_read_if_any(cached, decision_id)
             return cached
         record = await self._durable.get_latest(entity_type, entity_id, decision_id)
         if record is not None and record.superseded_at is None:
             await self._hot.set(record, self.ttl_for(decision_id))
+        if record is not None:
+            await self._log_pii_read_if_any(record, decision_id)
         return record
+
+    async def _log_pii_read_if_any(
+        self, record: ContextRecord, decision_id: Optional[str]
+    ) -> None:
+        """Best-effort PRD §23.9 pii_access_always_logged hook. Skips
+        silently when no log is wired or detection finds no PII fields.
+        Errors inside the log don't propagate — the audit/log path must
+        never break a context read."""
+
+        log = self._pii_access_log
+        if log is None:
+            return
+        try:
+            from core.audit.pii_log import PIIAccessEntry, detect_pii_fields
+        except Exception:
+            return
+        try:
+            value = record.value if isinstance(record.value, dict) else None
+            fields = detect_pii_fields(value)
+            if not fields:
+                return
+            application_id = None
+            if isinstance(value, dict):
+                application_id = value.get("application_id")
+            entry = PIIAccessEntry(
+                entity_type=record.entity_type,
+                entity_id=record.entity_id,
+                application_id=application_id,
+                pii_fields=fields,
+                caller=decision_id or "system",
+            )
+            await log.record(entry)
+        except Exception:
+            return
 
     async def history(
         self,

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from pydantic import BaseModel, Field
 
 from core.audit import AccessRecord, AuditRecord
+from core.audit.pii_log import PIIAccessEntry
 from core.connectors import ConnectorError
 from core.normalizer.models import (
     BaseEvent,
@@ -400,6 +401,25 @@ async def list_audit_flags(
     platform: Platform = Depends(get_platform),
 ) -> list[AuditRecord]:
     return await platform.audit_store.list_flags()
+
+
+@router.get("/audit/pii-log/recent", response_model=list[PIIAccessEntry])
+async def list_recent_pii_accesses(
+    limit: int = 100,
+    platform: Platform = Depends(get_platform),
+) -> list[PIIAccessEntry]:
+    return await platform.pii_access_log.list_recent(limit=limit)
+
+
+@router.get(
+    "/audit/pii-log/application/{application_id}",
+    response_model=list[PIIAccessEntry],
+)
+async def list_pii_accesses_for_application(
+    application_id: str,
+    platform: Platform = Depends(get_platform),
+) -> list[PIIAccessEntry]:
+    return await platform.pii_access_log.list_for_application(application_id)
 
 
 @router.get(

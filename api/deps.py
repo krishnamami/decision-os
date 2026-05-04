@@ -10,6 +10,7 @@ from core.audit import (
     InMemoryAlertSink,
     InMemoryAuditStore,
 )
+from core.audit.pii_log import InMemoryPIIAccessLog, PIIAccessLog
 from core.connectors import BaseConnector, EventSink
 from core.context_store import (
     ContextBuilder,
@@ -95,6 +96,7 @@ class Platform:
         audit_engine: AuditEngine,
         audit_store: AuditStore,
         audit_alert_sink: AlertSink,
+        pii_access_log: PIIAccessLog,
     ):
         self.spec = spec
         self.store = store
@@ -117,6 +119,7 @@ class Platform:
         self.audit_engine = audit_engine
         self.audit_store = audit_store
         self.audit_alert_sink = audit_alert_sink
+        self.pii_access_log = pii_access_log
 
         self.agents: dict[str, DecisionAgent] = {}
         self.connectors: dict[str, BaseConnector] = {}
@@ -262,7 +265,8 @@ def build_default_platform(
 
     hot = InMemoryHotCache()
     durable = InMemoryDurableStore()
-    store = LendingContextStore(hot, durable)
+    pii_access_log: PIIAccessLog = InMemoryPIIAccessLog()
+    store = LendingContextStore(hot, durable, pii_access_log=pii_access_log)
 
     knowledge_store = KnowledgeStore(store)
     retriever = MetadataRetriever(knowledge_store)
@@ -324,6 +328,7 @@ def build_default_platform(
         audit_engine=audit_engine,
         audit_store=audit_store,
         audit_alert_sink=audit_alert_sink,
+        pii_access_log=pii_access_log,
     )
 
 
