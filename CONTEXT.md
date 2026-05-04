@@ -555,17 +555,50 @@ Deferred items closed in same session (slices 5–8):
     logged on the 24-applicant smoke). API surface:
     /audit/pii-log/recent + /audit/pii-log/application/{id}.
 
+Slices 9–11 (same session, after ✓ items above):
+  ✓ Persona-input completeness — synthetic factory now writes the
+    field names personas actually read (credit_score not score,
+    watchlist_match not watchlist_hit, income_confidence_score,
+    payroll_verified, employment_type, etc). Equity multiplier tuned
+    per credit band so LTV outcomes track real underwriting. Jumbo
+    loans only assigned to super_prime + reduced base from $1.2M →
+    $800k so DTI stays under 0.50 BLOCK. Income tier bumped for
+    super_prime/prime. fair_lending now treats both ALLOW + RECOMMEND
+    as approvals (matches real ECOA / FHA originations semantics).
+    Smoke output: underwriting 21 recommend / 3 block (was 4 / 20),
+    fair_lending 87.5% overall approval rate, EEOC 4/5 flag fires
+    on subprime as expected.
+  ✓ Adverse action notice generator — core/audit/adverse_action.py
+    with 13 canonical reason codes (FCRA §615), is_adverse_action()
+    gate (BLOCK / late-stage ESCALATE / compliance|fraud FAIL),
+    generate_notice(record, trace, applicant_value) walks
+    policy_reasons + check failures + decision-type defaults.
+    GET /audit/{audit_id}/adverse-action returns 200/409/404.
+    UI: rose alert + "generate notice →" link on /ui/audit/{id}
+    when is_adverse_action is true. PRD §19 TIER 4 ✓
+  ✓ Audit log export — core/audit/export.py streams CSV (34-column
+    header frozen for examiner ingestion) + JSONL (re-ingestable).
+    Filters: decision_type / status / after / before. Both stream
+    via FastAPI StreamingResponse. GET /audit/export.csv +
+    /audit/export.jsonl. PRD §19 TIER 4 ✓
+
 Still deferred:
-  - Persona-input completeness — synthetic underwriting decisions
-    still block more than they should because the synthetic factory
-    under-seeds for the personas' expected fields. Audit gate works;
-    agent outcomes are noisier than they need to be. Outside §23 scope.
-  - PostgresAuditStore + Postgres PII log + alert sink production
-    swap — code paths exist; tests stay on InMemory. Run via
-    docker-compose up postgres when ready to flip.
+  - PostgresAuditStore + Postgres PII log + alert sink + Postgres
+    audit export production swap — code paths exist; tests stay on
+    InMemory. Run via docker-compose up postgres when ready to flip.
   - Real critic agent (PRD TIER 5) — current critic is a heuristic
     stub; production needs Anthropic-backed implementation with
     rubric.
+  - Outcome tracker (PRD STEP 12) — post-decision ground-truth
+    scoring (funded / withdrawn / default). DecisionComparison from
+    STEP 13 is most of the shape; outcome_tracker adds the per-
+    decision feed.
+  - API auth (PRD TIER 3) — OIDC / OAuth2 / API key + per-user
+    scoping. Today the API has no auth.
+  - Multi-tenancy (PRD TIER 3) — tenant_id through Lineage + every
+    read scoped by tenant. Schema migration to add tenant_id column.
+  - Real EDMS connectors (PRD TIER 2.5) — Encompass / DocuTech +
+    OCR + claim extractor. Synthetic factory + smoke prove the shape.
 
 ### Session 9 — May 3 2026
 
