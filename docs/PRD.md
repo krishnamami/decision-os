@@ -1,9 +1,48 @@
 # DECISION OS — PRODUCT REQUIREMENTS DOCUMENT
-# Version: 0.10 | Updated: May 2026 | Source of truth for Claude Code every session
+# Version: 0.11 | Updated: May 2026 | Source of truth for Claude Code every session
 #
 # Strategic note (Session 8): the user committed to PATH C — full
 # DecisionOS as system of record (12-18 month roadmap). See §19 for
 # the tier breakdown that drives every following session.
+#
+# Session 10 deltas (v0.10 → v0.11) [22 commits, 350/350 tests]:
+#   - PRD §23 Audit Engine landed end-to-end:
+#     - core/audit/{schema,engine,store,alerts,pii_log}.py + 4 checkers
+#       (compliance, security, ethics, fairness)
+#     - schema.sql (audit_records / audit_access_log / audit_flags)
+#       + PostgresAuditStore class (tests stay on InMemory)
+#     - atomic_tool gate: AuditRecord written between trace_write and
+#       mode_route — PRD §23.9 audit_record_required_before_writeback
+#     - System-wide audit input reads (Applicant + ComplianceRecord
+#       fetched via resolver, not bundle, so consent + protected attrs
+#       are visible to every decision regardless of read perms)
+#     - Alert sink: AlertSink Protocol + InMemoryAlertSink +
+#       LoggingAlertSink. AuditEngine fires synchronously on FAIL.
+#       PRD §23.9 audit_fail_alerts_compliance_immediately ✓
+#     - Store-level PII logging: LendingContextStore.get() instrumented
+#       with PIIAccessLog. PRD §23.9 pii_access_always_logged ✓
+#   - core/audit/reports/ — six generators per PRD §23.7
+#     (hmda monthly, fair_lending quarterly with EEOC 4/5,
+#     ai_trail weekly, security daily, bias weekly, overrides weekly)
+#   - core/audit/adverse_action.py — ECOA / FCRA §615 notice generator
+#     with 13 canonical reason codes. GET /audit/{id}/adverse-action.
+#     PRD §19 TIER 4 ✓
+#   - core/audit/export.py — streaming CSV (34-col frozen header) +
+#     JSONL. GET /audit/export.csv + /audit/export.jsonl. PRD §19 TIER 4 ✓
+#   - core/trace/outcome_tracker.py — STEP 12 closed. OutcomeType (7
+#     canonical), OutcomeRecord append-only, DecisionOutcomeCorrelation
+#     + correlate(). POST /outcomes + GET .../correlate API.
+#   - UI: /ui/audit/flags index + /ui/audit/{id} detail with rose
+#     adverse-action alert. Embedded audit panel on decision detail
+#     and persona workbench focused-app right column.
+#   - domains/lending/synthetic/ — deterministic factory generating
+#     diverse applicants (4 segments, 7 states, 4 loan types) with
+#     audit-violation overlays (consent_missing / protected_attr_leak /
+#     no_disclosure). Field names aligned with personas' bundle reads.
+#     Smoke (scripts/smoke_audit_reports.py) shows realistic outcome
+#     distribution across 24 synthetic applicants.
+#   - Tests: 350/350 (~9s) covering audit engine, store, alerts, PII
+#     log, reports, adverse action, export, outcome tracker, UI panels.
 #
 # Session 9 deltas (v0.8 → v0.10):
 #   - STREAM C phase 1+2+3 — Policy / PolicyVersion Type-2 ObjectTypes,
@@ -840,7 +879,14 @@ decision-os/
 │   │   │                                       LearningStore + ReflectionService.
 │   │   │                                       capture(trace, review) → recall by
 │   │   │                                       similarity tags. 365-day retention.
-│   │   └── outcome_tracker.py     ⬜ TODO
+│   │   └── outcome_tracker.py     ✅ STEP 12 DONE Session 10 —
+│   │                                       OutcomeType (7 canonical
+│   │                                       lending outcomes),
+│   │                                       OutcomeRecord append-only,
+│   │                                       OutcomeTracker Protocol +
+│   │                                       InMemoryOutcomeTracker,
+│   │                                       DecisionOutcomeCorrelation
+│   │                                       + correlate() pure helper.
 │   └── simulation/                ✅ STEP 13 DONE
 │       ├── __init__.py            ✅ EXISTS — re-exports Replayer +
 │       │                                       Replay/DecisionComparison
@@ -1325,15 +1371,36 @@ decision-os/
                                      schema-per-tenant (cleaner but more
                                      ops overhead).
 
-  TIER 4 — REGULATORY (4-6 weeks)
-        HMDA reporting               domains/lending/regulatory/hmda.py.
-                                     Quarterly submission to FFIEC.
-        Audit log export             CSV / JSON export for examiners.
-                                     Already have append-only traces; just
-                                     need the export view.
-        Adverse action notice        Auto-generate from decline traces.
-                                     ECOA requires a notice within 30
-                                     days of adverse action.
+  TIER 4 — REGULATORY (substantially closed Session 10)
+        HMDA reporting          ✅ DONE  core/audit/reports/hmda.py
+                                     monthly generator. By outcome /
+                                     decision_type / state. Quarterly
+                                     FFIEC submission scheduling
+                                     (cron + S3 archive on top of
+                                     /audit/export.csv) is the ⬜ open
+                                     remainder.
+        Audit log export        ✅ DONE  core/audit/export.py with
+                                     streaming CSV (34-col frozen
+                                     header) + JSONL. Filters:
+                                     decision_type / status / after /
+                                     before. GET /audit/export.csv +
+                                     /audit/export.jsonl.
+        Adverse action notice   ✅ DONE  core/audit/adverse_action.py
+                                     with 13 canonical FCRA §615
+                                     reason codes,
+                                     is_adverse_action() gate,
+                                     generate_notice(record, trace,
+                                     applicant_value) walking
+                                     policy_reasons + check failures
+                                     + decision-type defaults. GET
+                                     /audit/{id}/adverse-action +
+                                     UI link on /ui/audit/{id}.
+        Fair lending analysis   ✅ DONE  core/audit/reports/fair_
+                                     lending.py with EEOC 4/5 ratio
+                                     for disparate-impact flags.
+                                     Treats both ALLOW + RECOMMEND
+                                     as approvals (real ECOA / FHA
+                                     originations semantics).
 
   TIER 5 — PRODUCTION DEPLOY (4-6 weeks)
         Observability                structlog → OTLP. Prometheus
@@ -1357,11 +1424,18 @@ decision-os/
                                      prompt-cache hit rate, JSON parsing
                                      robustness on the journal, latency
                                      per persona.
-    12  core/trace/outcome_tracker   Post-decision outcome scoring + live
-                                     A/B comparisons. DecisionComparison
-                                     from STEP 13 is most of the shape
-                                     this needs; outcome_tracker adds
-                                     the per-decision ground-truth feed.
+    12  core/trace/outcome_tracker   ✅ DONE Session 10. OutcomeType
+                                     (7 canonical), OutcomeRecord
+                                     append-only with recorded_at vs
+                                     occurred_at, OutcomeTracker
+                                     Protocol + InMemoryOutcomeTracker,
+                                     DecisionOutcomeCorrelation +
+                                     correlate() pure helper. POST
+                                     /outcomes + GET .../correlate
+                                     API. Reflection ↔ outcomes wiring
+                                     (score AgentLearning quality from
+                                     latest_for_application) is a small
+                                     follow-up.
         send_back outcome            PRD §13 marks it "planned" — used
                                      when downstream needs more evidence
                                      and routes back to the upstream
@@ -1672,4 +1746,4 @@ protected_attributes_excluded_by_default
 
 ---
 
-*Decision OS · docs/PRD.md · v0.8 · Read at the start of every Claude Code session*
+*Decision OS · docs/PRD.md · v0.11 · Read at the start of every Claude Code session*

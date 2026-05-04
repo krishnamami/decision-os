@@ -582,23 +582,48 @@ Slices 9–11 (same session, after ✓ items above):
     via FastAPI StreamingResponse. GET /audit/export.csv +
     /audit/export.jsonl. PRD §19 TIER 4 ✓
 
+Slice 12 (same session — closes PRD STEP 12):
+  ✓ Outcome tracker — core/trace/outcome_tracker.py with OutcomeType
+    enum (funded / withdrawn / declined_by_borrower / default /
+    charged_off / paid_in_full / modified). OutcomeRecord append-only
+    with both recorded_at AND occurred_at so late-arriving signals
+    (default 6mo after funding) become first-class. OutcomeTracker
+    Protocol + InMemoryOutcomeTracker (raises on duplicate id).
+    DecisionOutcomeCorrelation + correlate() pure helper joins a
+    decision trace with outcome trajectory — picks final outcome,
+    computes days_to_first_outcome (occurred_at if present, else
+    recorded_at). API: POST /outcomes, GET /outcomes/application/{id},
+    GET /outcomes/application/{id}/correlate?decision_id=…
+    9 unittests + 4 API integration tests. PRD STEP 12 ✓
+
 Still deferred:
   - PostgresAuditStore + Postgres PII log + alert sink + Postgres
     audit export production swap — code paths exist; tests stay on
     InMemory. Run via docker-compose up postgres when ready to flip.
   - Real critic agent (PRD TIER 5) — current critic is a heuristic
-    stub; production needs Anthropic-backed implementation with
-    rubric.
-  - Outcome tracker (PRD STEP 12) — post-decision ground-truth
-    scoring (funded / withdrawn / default). DecisionComparison from
-    STEP 13 is most of the shape; outcome_tracker adds the per-
-    decision feed.
+    stub; production needs Anthropic-backed implementation with rubric.
+  - Reflection ↔ outcomes integration — outcome_tracker shape is in
+    place but ReflectionService.capture() doesn't yet read latest_for_
+    application to score AgentLearning quality. Small follow-up.
+  - Quarterly FFIEC submission scheduling (PRD TIER 4 last item) —
+    cron + S3 archive on top of /audit/export.csv.
   - API auth (PRD TIER 3) — OIDC / OAuth2 / API key + per-user
     scoping. Today the API has no auth.
   - Multi-tenancy (PRD TIER 3) — tenant_id through Lineage + every
     read scoped by tenant. Schema migration to add tenant_id column.
   - Real EDMS connectors (PRD TIER 2.5) — Encompass / DocuTech +
     OCR + claim extractor. Synthetic factory + smoke prove the shape.
+
+Session 10 final tally:
+  19 commits. 350/350 tests green (~9s).
+  Audit Engine end-to-end (PRD §23): atomic_tool gate + alert sink +
+  property_state plumbing + store-level PII logging + embedded UI
+  panels + six §23.7 reports + ECOA/FCRA §615 adverse action notices +
+  CSV/JSONL export + outcome tracker (STEP 12). PRD §19 TIER 4
+  substantially closed (HMDA + fair_lending + adverse_action +
+  audit_log_export all done). Synthetic factory tuned to produce
+  realistic outcome distributions (87.5% fair_lending approval rate
+  with EEOC 4/5 disparate-impact flag firing on subprime).
 
 ### Session 9 — May 3 2026
 
