@@ -426,6 +426,72 @@
       </section>
 
       {# Critic review #}
+      {% if audit_panel %}
+        <section class="bg-white border border-slate-200 rounded-lg p-5">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider">
+              Audit
+            </h2>
+            <a href="/ui/audit/{{ audit_panel.audit_id }}"
+               class="text-xs text-blue-600 hover:underline">
+              full record →
+            </a>
+          </div>
+          <div class="flex items-center gap-3 mb-3">
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium
+                         bg-{{ audit_panel.overall_tone }}-50 text-{{ audit_panel.overall_tone }}-700
+                         ring-1 ring-{{ audit_panel.overall_tone }}-200">
+              {{ audit_panel.overall_status }}
+            </span>
+            {% if audit_panel.human_reviewed %}
+              <span class="text-xs text-slate-500">human reviewed</span>
+            {% endif %}
+            {% if audit_panel.applicant_segment %}
+              <span class="ml-auto text-xs text-slate-500">
+                segment: <span class="mono">{{ audit_panel.applicant_segment }}</span>
+              </span>
+            {% endif %}
+          </div>
+          <div class="grid grid-cols-4 gap-2 text-xs">
+            {% for label, status in [
+                 ('Compliance', audit_panel.compliance_status),
+                 ('Security',   audit_panel.security_status),
+                 ('Ethics',     audit_panel.ethics_status),
+                 ('Fairness',   audit_panel.fairness_status),
+               ] %}
+              <div class="border border-slate-200 rounded px-2 py-1.5">
+                <div class="text-[10px] uppercase text-slate-400 tracking-wider">{{ label }}</div>
+                <div class="mt-0.5
+                            {% if status == 'pass' %}text-emerald-700
+                            {% elif status == 'warn' %}text-amber-700
+                            {% else %}text-rose-700{% endif %} font-medium">
+                  {{ status }}
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+          <div class="mt-3 text-xs text-slate-500 space-y-1">
+            <div>
+              <span class="text-slate-400">tags:</span>
+              <span class="mono">{{ audit_panel.regulation_tags | join(', ') or '—' }}</span>
+            </div>
+            <div>
+              <span class="text-slate-400">consent:</span>
+              <span class="mono">{{ audit_panel.consent_status }}</span>
+              {% if audit_panel.protected_attrs_used %}
+                · <span class="text-slate-400">protected attrs in context:</span>
+                <span class="mono text-rose-700">{{ audit_panel.protected_attrs_used | join(', ') }}</span>
+              {% endif %}
+            </div>
+            {% if audit_panel.fairness_flag_count %}
+              <div>
+                <span class="text-rose-500 font-medium">{{ audit_panel.fairness_flag_count }} fairness flag{{ '' if audit_panel.fairness_flag_count == 1 else 's' }}</span>
+              </div>
+            {% endif %}
+          </div>
+        </section>
+      {% endif %}
+
       {% if trace.critic_review %}
         <section class="bg-white border border-slate-200 rounded-lg p-5">
           <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">

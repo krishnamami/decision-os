@@ -102,6 +102,66 @@
   </div>
   {% endif %}
 
+  {# ── Audit ───────────────────────────────────────────────────────── #}
+  {% if f.audit_panel %}
+  <div class="mt-5">
+    <div class="flex items-center justify-between mb-2">
+      <div class="text-[11px] font-medium text-slate-500 uppercase tracking-wider">
+        Audit
+      </div>
+      <a href="/ui/audit/{{ f.audit_panel.audit_id }}"
+         class="text-[11px] text-blue-600 hover:underline">
+        full record →
+      </a>
+    </div>
+    <div class="bg-{{ f.audit_panel.overall_tone }}-50/40 border border-{{ f.audit_panel.overall_tone }}-200 rounded-lg p-3 text-xs text-slate-700">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium
+                     bg-{{ f.audit_panel.overall_tone }}-100 text-{{ f.audit_panel.overall_tone }}-800">
+          {{ f.audit_panel.overall_status }}
+        </span>
+        {% if f.audit_panel.applicant_segment %}
+          <span class="text-slate-500">segment: <span class="mono">{{ f.audit_panel.applicant_segment }}</span></span>
+        {% endif %}
+      </div>
+      <div class="grid grid-cols-4 gap-1.5">
+        {% for label, status in [
+             ('compl', f.audit_panel.compliance_status),
+             ('sec',   f.audit_panel.security_status),
+             ('eth',   f.audit_panel.ethics_status),
+             ('fair',  f.audit_panel.fairness_status),
+           ] %}
+          <div class="bg-white border border-slate-200 rounded px-1.5 py-1 text-center">
+            <div class="text-[9px] uppercase text-slate-400 tracking-wider">{{ label }}</div>
+            <div class="text-[11px] font-medium
+                        {% if status == 'pass' %}text-emerald-700
+                        {% elif status == 'warn' %}text-amber-700
+                        {% else %}text-rose-700{% endif %}">
+              {{ status }}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+      {% if f.audit_panel.protected_attrs_used %}
+        <div class="mt-2 text-rose-700 text-[11px]">
+          ⚠ protected attrs in context:
+          <span class="mono">{{ f.audit_panel.protected_attrs_used | join(', ') }}</span>
+        </div>
+      {% endif %}
+      {% if f.audit_panel.consent_status != 'obtained' %}
+        <div class="mt-2 text-rose-700 text-[11px]">
+          ⚠ consent: <span class="mono">{{ f.audit_panel.consent_status }}</span>
+        </div>
+      {% endif %}
+      {% if f.audit_panel.regulation_tags %}
+        <div class="mt-2 text-slate-500 text-[11px]">
+          tags: <span class="mono">{{ f.audit_panel.regulation_tags | join(', ') }}</span>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
   {# ── Policy applied ────────────────────────────────────────────── #}
   {% if f.policy_panel %}
   <div class="mt-5">

@@ -478,6 +478,22 @@ class AuditViewTests(unittest.TestCase):
         for key in ("flags", "total", "warn_count", "fail_count"):
             self.assertIn(key, view)
 
+    def test_decision_detail_embeds_audit_panel(self):
+        # decision_detail must surface audit_panel for any decision
+        # that produced a trace; the panel includes the four check
+        # statuses and a link target audit_id.
+        detail = decision_detail(self.platform, "app_happy", "credit_assessment")
+        self.assertIsNotNone(detail)
+        self.assertIn("audit_panel", detail)
+        panel = detail["audit_panel"]
+        self.assertIsNotNone(panel)
+        for key in (
+            "audit_id", "overall_status",
+            "compliance_status", "security_status",
+            "ethics_status", "fairness_status",
+        ):
+            self.assertIn(key, panel)
+
 
 if __name__ == "__main__":
     unittest.main()

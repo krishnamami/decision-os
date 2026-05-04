@@ -279,6 +279,7 @@ def decision_detail(
 
     policy_panel = _policy_panel(platform, trace)
     evidence_panel = _evidence_panel(platform, app_id, decision_id, trace=trace)
+    audit_panel = _audit_panel_for_trace(platform, trace)
 
     return {
         "application_id": app_id,
@@ -299,6 +300,7 @@ def decision_detail(
         "persona_view":   persona_view,
         "policy_panel":   policy_panel,
         "evidence_panel": evidence_panel,
+        "audit_panel":    audit_panel,
         "contamination_guard": contamination_guard,
         "learnings":      learnings,
         "outcome_style":  OUTCOME_STYLES.get(
@@ -1795,6 +1797,7 @@ def _persona_focused_app(
     signals_evaluated = _persona_signals(trace)
     ai_reasoning = _persona_ai_reasoning(trace)
     policy_panel = _policy_panel(platform, trace)
+    audit_panel = _audit_panel_for_trace(platform, trace)
     # Prefer the trace's frozen claim_provenance over live retrieval
     # — the trace is the audit-correct view of what evidence drove
     # this specific outcome. Live KnowledgeStore reads can drift if a
@@ -1836,6 +1839,7 @@ def _persona_focused_app(
         "signals_evaluated":   signals_evaluated,
         "ai_reasoning":        ai_reasoning,
         "policy_panel":        policy_panel,
+        "audit_panel":         audit_panel,
         "evidence_panel":      evidence_panel,
         "has_human_review":    has_human_review,
         "human_review":        trace.human_review if has_human_review else None,
@@ -1849,6 +1853,49 @@ def _persona_focused_app(
 # Policy + Evidence panels — surface STREAM C / STREAM E in the UI.
 # Used by both persona workbench detail and decision detail.
 # ─────────────────────────────────────────────────────────────────────
+
+
+def _audit_panel_for_trace(
+    platform: Platform, trace: Optional[DecisionTrace]
+) -> Optional[dict[str, Any]]:
+    """Look up the AuditRecord whose decision_id matches this trace's
+    trace_id and return a panel-shaped dict (4-check status pills +
+    flags + an `audit_id` link target). Returns None when audit isn't
+    wired or the record isn't present."""
+
+    if trace is None:
+        return None
+    audit_store = getattr(platform, "audit_store", None)
+    if audit_store is None:
+        return None
+
+    records = getattr(audit_store, "_records", None)
+    if not isinstance(records, dict):
+        return None
+
+    record = next(
+        (r for r in records.values() if r.decision_id == trace.trace_id),
+        None,
+    )
+    if record is None:
+        return None
+
+    overall = record.overall_status.value
+    return {
+        "audit_id":           str(record.audit_id),
+        "overall_status":     overall,
+        "overall_tone":       AUDIT_STATUS_TONES.get(overall, "slate"),
+        "compliance_status":  record.compliance_status.value,
+        "security_status":    record.security_status.value,
+        "ethics_status":      record.ethics_status.value,
+        "fairness_status":    record.fairness_status.value,
+        "regulation_tags":    list(record.regulation_tags or []),
+        "consent_status":     record.consent_status.value,
+        "fairness_flag_count": len(record.fairness_flags or []),
+        "protected_attrs_used": list(record.protected_attrs_used or []),
+        "applicant_segment":  record.applicant_segment,
+        "human_reviewed":     record.human_reviewed,
+    }
 
 
 def _policy_panel(
