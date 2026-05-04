@@ -39,6 +39,9 @@ APPLICATION_IDS: dict[str, str] = {
     "fraud_block":     "app_fraud",
     "contamination":   "app_contam",
     "compliance_block": "app_comp",
+    "fha":             "app_fha",
+    "jumbo":           "app_jumbo",
+    "va":              "app_va",
 }
 
 

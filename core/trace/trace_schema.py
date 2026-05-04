@@ -90,6 +90,32 @@ class HumanReview(BaseModel):
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Claim provenance — the frozen list of evidence that drove a decision
+# ─────────────────────────────────────────────────────────────────────
+
+
+class ClaimProvenance(BaseModel):
+    """Frozen reference to a Claim that drove this decision's outcome.
+
+    Captures the claim's value AS SEEN at decision time. Decoupled
+    from the live KnowledgeStore so a re-extraction or re-verification
+    of the source claim can't retroactively change what the trace says.
+    Regulators reconstruct a decision by reading these alongside the
+    work journal — this is the audit chain from outcome back to
+    source document and verifier."""
+
+    claim_id: str
+    field_name: str
+    field_value: Any = None
+    document_id: str
+    source_page: Optional[int] = None
+    status: str = "verified"
+    verified_at: Optional[datetime] = None
+    verified_by: Optional[str] = None
+    extraction_confidence: Optional[float] = None
+
+
+# ─────────────────────────────────────────────────────────────────────
 # DecisionTrace — full execution record, satisfies the
 # "no_execution_without_trace" hard rule.
 # ─────────────────────────────────────────────────────────────────────
@@ -125,6 +151,21 @@ class DecisionTrace(BaseModel):
     policy_matched_clause: Optional[str] = None
     policy_reasons: list[str] = Field(default_factory=list)
     contamination: bool = False
+
+    # Type-2 policy versioning. policy_version_id pinpoints the exact
+    # PolicyVersion that produced the outcome — required for replay
+    # correctness and regulator audit. policy_chain lists every agency's
+    # version consulted (in overlay-first order); for v1 with only the
+    # lender_overlay seeded it carries one entry.
+    policy_version_id: Optional[str] = None
+    policy_chain: list[str] = Field(default_factory=list)
+
+    # Frozen list of Claims (evidence) consumed at decision time.
+    # See ClaimProvenance — regulators trace outcome → claim → document
+    # → verifier through this field. Empty when the decision didn't
+    # consume any verified claims (e.g. lead_scoring runs before any
+    # docs are uploaded).
+    claim_provenance: list[ClaimProvenance] = Field(default_factory=list)
 
     critic_review: Optional[CriticReview] = None
     human_review: Optional[HumanReview] = None

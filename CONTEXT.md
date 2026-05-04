@@ -417,6 +417,450 @@ Connector layering — push vs pull (STEP 4 design)
 
 ## Session history
 
+### Session 9 — May 3 2026
+
+**What was built (5 streams + 1 fixture set; all smokes green):**
+
+STREAM C — Policies as Type-2 versioned shared object (3 phases)
+  Phase 1: Policy + PolicyVersion ObjectTypes; PolicyStore facade over
+    LendingContextStore (`core/policy_engine/store.py`); decisions.yaml
+    seeder writes one Policy + one PolicyVersion per decision under
+    agency=lender_overlay (`core/policy_engine/seeder.py`).
+    Idempotent (preserves created_at/ingested_at on re-runs).
+  Phase 2: PolicyEvaluator.evaluate became async; takes
+    policy_store / at / agency_chain / product / state. Resolves
+    active PolicyVersion FIRST so every return path (including
+    fraud_block_stops_pipeline / contamination_guard / boundary
+    matches) carries the version stamp. DecisionTrace +
+    PolicyDecision gained policy_version_id + policy_chain.
+    AtomicTool wired (both pre and post policy_check); DAGExecutor
+    + Replayer thread evaluation_at = replay_at end-to-end.
+  Phase 3: _AGENCY_CHAIN_BY_LOAN_TYPE in atomic_tool —
+    conforming → [lender_overlay, freddie]; fha → [lender_overlay,
+    fha]; va/usda likewise; jumbo/non_qm → [lender_overlay].
+    AtomicTool.run derives chain from loan_type unless caller
+    supplied one. _policy_scope_hints pulls loan_type from the
+    Loan in the bundle.
+
+STREAM E v0 — Knowledge Context Layer
+  Document + Claim ObjectTypes (`core/ontology/object_types.py`).
+  KnowledgeStore facade (`core/knowledge/store.py`) — DocumentRecord +
+    ClaimRecord typed via Pydantic. put_document / put_claim /
+    verify_claim / reject_claim / list_*. Type-2 supersession +
+    lineage from the underlying durable.
+  Retriever Protocol + MetadataRetriever (`core/knowledge/retriever.py`)
+    — filters claims by the doc_type → decisions matrix in
+    knowledge_base.json#document_types (14 doc types with
+    feeds_decisions + claim field names). verified_only=True default.
+    PgVectorRetriever / QdrantRetriever / HybridRetriever stubbed as
+    comments — STREAM E2.
+  ContextBundle gains claims (simple field→value), claim_records (full
+    provenance), documents. ContextBuilder.build() fans out to the
+    Retriever in addition to the resolver path; Document/Claim/Policy/
+    PolicyVersion ObjectTypes are excluded from bundle.objects (own
+    lanes).
+  AtomicTool._policy_context layers claims between bundle objects
+    (lower) and output_payload (highest). Boundary clauses can read
+    claim values directly.
+  Seed scenarios got mock Documents + Claims:
+    happy_path: 2 verified Documents (W-2, appraisal) + 3 verified
+      Claims (verified_income, employer, appraised_value).
+    contamination: 1 Document with low ocr_confidence + 1 pending
+      Claim (exercises verified_only filter).
+  Pre-existing bug surfaced: api/deps._default_resolver returns ALL
+    FraudProfile/CreditProfile/IncomeProfile records when entities
+    have application_id=None (cross-contaminates when scenarios
+    share a platform). Fix tracked under TIER 1 in PRD §19; not
+    blocking.
+
+STREAM A — Per-persona workbench (12 routes)
+  /ui/personas index page — 12 persona cards grouped by owner_team.
+  /ui/personas/{decision_id} workbench — header tabs (siblings within
+    owner_team) + agent identity + time-range selector + 4-KPI strip
+    (Decisions completed · Pending review · Auto-decided % · Avg time
+    to decide on human reviews) + Workbench/History/Analytics tabs +
+    two-column layout (queue OR recently-completed for auto personas
+    on the left, focused-app detail on the right).
+  POST .../ack — positive ack (HumanReview overridden=False).
+  POST .../decline — overrides outcome to BLOCK + captures
+    AgentLearning via existing reflection.capture path.
+  POST .../send_back — stub for the planned send_back outcome
+    (PRD §13). Returns a flash; no backend yet.
+  Designed against user-supplied screenshot (Encompass-class layout).
+
+UI surfacing — Policy + Evidence panels on persona detail AND original
+  decision detail pages. _policy_panel resolves PolicyVersion + Policy
+  by id; renders agency, source_revision, valid_from/valid_to,
+  multi-version chain. _evidence_panel walks KnowledgeStore for
+  verified Claims with provenance (source doc + page + verifier +
+  extraction confidence) gated by the doc_type matrix.
+
+STREAM B — FHA scenario added (5th scenario)
+  domains/lending/seed_events/fha/ — FTHB profile, $289.5k FHA loan
+    on $300k purchase in TX, 96.5% LTV, 665 credit, salaried $72k.
+  seed_fha_demo_policies — hand-crafted FHA agency PolicyVersion for
+    ltv_assessment with FHA-specific block_if (ltv > 0.965 vs the
+    overlay's 0.97). Wired into `_bootstrap_demo` so the UI starts
+    with both seeders run + 5 scenarios.
+  First end-to-end proof of multi-agency policy chain:
+    ltv_assessment trace.policy_chain = [
+      "lender_overlay::ltv_assessment::v1",
+      "fha::ltv_assessment::v1"
+    ]
+    Chosen policy_version_id = lender_overlay (overlay-first).
+  Verified the FHA seed didn't pollute non-FHA scenarios — happy_path
+    ltv_assessment still has 1-entry chain.
+
+PRD update (docs/PRD.md → v0.9)
+  §1 header: Session 9 deltas summary.
+  §4 pipeline diagram: added Knowledge Context Layer as a sibling
+    input to the Context Agent.
+  §5 hard rules: added no_unverified_claim_without_explicit_optin
+    and doc_type_permission_via_matrix.
+  §9.2 ObjectTypes: added Document, Claim, Policy, PolicyVersion.
+  §10 storage: added rows for the new types; reframed decisions.yaml
+    as the lender_overlay seed.
+  §17 file structure: added core/policy_engine/store.py +
+    seeder.py, core/knowledge/, all new smoke scripts.
+  §19 build sequence: STREAMs A/B(partial)/C/E v0 logged as complete;
+    new TIER 2.5 — STREAM E2 block (EDMS adapter, OCR pipeline,
+    claim extractor, document upload UI, vector retriever, hybrid
+    retriever).
+
+**Smoke suites verified end-to-end (all green):**
+  smoke_replayer        STEP 13 + replay parity through STREAM C+E
+  smoke_policies        STREAM C phase 1 (5 phases — seed +
+                        idempotency + point-in-time + supersession)
+  smoke_policy_evaluator STREAM C phase 2 (5 phases — outcome
+                        parity, version stamping, replay)
+  smoke_knowledge       STREAM E v0 (6 phases — doc-type matrix,
+                        verified-only default, verify_claim flips)
+  smoke_persona_workbench STREAM A (12 phases — index, all 12
+                        personas, drill-down, ack/decline/send-back,
+                        Policy + Evidence panels, agency_chain)
+  smoke_fha_scenario    STREAM B FHA (5 phases — multi-agency chain
+                        on ltv_assessment; FHA didn't leak into
+                        non-FHA scenarios)
+  smoke_workbench       9 owner-team workbenches × 4 scenarios
+  smoke_ui_all_panels   12 persona panels × 3 scenarios
+
+**Architectural state at end of Session 9:**
+
+The Knowledge Context Layer wiring is in place end-to-end:
+  Mini Context Stores ──┐
+                        ├──► Context Agent ──► Atomic Tool ──► Trace
+  Knowledge Context ────┘
+    EDMS adapter (stub) · Claim store · MetadataRetriever ·
+    permission filter via doc_type matrix
+
+Decision agents read `bundle.claims["verified_income"]` directly. The
+trace stamps `policy_version_id`, `policy_chain`, and (when
+applicable) human_review. Replay correctness is point-in-time across
+both axes (durable shim pins `at`; PolicyStore.active_version filters
+by valid_from / valid_to; KnowledgeStore reads via the same shim).
+
+Same code ships at credit-union scale and Rocket-class scale — the
+Retriever Protocol abstracts metadata vs vector retrieval; only the
+implementation behind it changes.
+
+**Still pending (from PRD §19 TIER 1 + 2.5):**
+  - More seed scenarios (jumbo, VA, USDA, cash-out, investment, etc.)
+  - tests/ pytest suite (foundational — replaces smokes for CI)
+  - Real-backend verification (Postgres + Redis swap)
+  - Async pass on ui/views.py (currently sync _records walks)
+  - Postgres-aware resolver
+  - Pre-existing FraudProfile cross-contamination resolver fix
+  - DecisionTrace.claim_provenance field (which claim_ids drove
+    the outcome — closes the audit loop)
+  - UI: full /ui/policies route to inspect a PolicyVersion's clauses
+  - UI: claim verification queue (pending claims → underwriter
+    review → verify/reject)
+  - STREAM D: real agency-guideline connectors
+  - STREAM E2: real OCR + extraction + EDMS adapters + pgvector
+
+**Session 9 — additional work landed late session (all 210 tests green):**
+
+  STREAM B continued — 2 more seed scenarios:
+    domains/lending/seed_events/jumbo/ — $1.2M, loan_type=jumbo,
+      agency_chain=[lender_overlay] only.
+    domains/lending/seed_events/va/ — $425k, loan_type=va,
+      agency_chain=[lender_overlay, va] (no VA overlay seeded yet).
+    Bootstrap seeds 7 scenarios total now.
+
+  Pre-existing FraudProfile cross-contamination bug FIXED:
+    api/deps._default_resolver now looks up the Application's
+    applicant_id and filters Applicant-bound entities (Applicant,
+    FraudProfile, CreditProfile, IncomeProfile) by matching applicant_id.
+    Previously matched on application_id=None as a wildcard, leaking
+    cross-application data.
+
+  UI polish round (cosmetic only, no schema impact):
+    - Loan-type capitalization: VA / FHA / Conforming / Jumbo / Non-QM
+      via LOAN_TYPE_LABELS map.
+    - Deterministic friendly-name generation from applicant_id
+      (_friendly_name_from_id helper).
+    - Backdated scenario timestamps in _bootstrap_demo so persona
+      workbench rows show "14m / 31m / 1h 3m ago" instead of all "0m".
+    - Per-persona risk pill (_risk_pill_for_persona): credit_band
+      for credit_assessment, fraud_score for fraud_screening, ltv for
+      ltv_assessment, dti for dti_calculation, etc.
+    - Auto-decided KPI fix: counts only mode=auto_execute AND
+      outcome=allow AND human_review=None — reconciles with Pending
+      review (1 + 6 = 7).
+    - Outcome pill + amber "Pending review" badge + sort-queued-to-top
+      on persona-workbench rows.
+
+  TIER 1 — pytest test suite (210 tests / 9 modules):
+    tests/core/context_store/test_in_memory.py        9 (existing)
+    tests/core/policy_engine/test_loader.py          15
+    tests/core/policy_engine/test_store.py           19
+    tests/core/policy_engine/test_seeder.py          10
+    tests/core/policy_engine/test_evaluator.py       17
+    tests/core/decision_agents/test_atomic_tool.py   15
+    tests/core/trace/test_reflection.py              14
+    tests/core/knowledge/test_store.py               16
+    tests/core/knowledge/test_retriever.py           10
+    tests/core/simulation/test_replayer.py           17
+    tests/api/test_routes.py                         13
+    tests/ui/test_views.py                           40
+    tests/domains/lending/test_seed_scenarios.py     15
+    Pattern: stdlib-only unittest.IsolatedAsyncioTestCase, explicit
+    sys.path injection per file. No pytest dependency. Discovered via
+    scripts/run_tests.py which enumerates TEST_MODULES. ~3 sec total.
+
+  Bug fixes surfaced by tests:
+    PolicyEvaluator._check_hard_rules ordering: generic
+      upstream_block_propagates_to_dependents check was firing BEFORE
+      specific fraud_block_stops_pipeline / compliance_block_stops_closing,
+      so traces stamped the generic reason. Reordered: specific rules
+      check first. PRD §5 hard rules are now distinct in trace.policy_reasons.
+
+  STREAM E2 starter — claim_provenance:
+    ClaimProvenance Pydantic model in core/trace/trace_schema.py.
+    DecisionTrace.claim_provenance: list[ClaimProvenance] — frozen
+      list of evidence consumed at decision time.
+    AtomicTool._freeze_claim_provenance(bundle) snapshots
+      bundle.claim_records into the typed model. Decoupled from live
+      KnowledgeStore so a later re-extraction can't retroactively
+      change what the trace said.
+    UI: _evidence_panel(platform, app_id, decision_id, trace=trace)
+      prefers trace.claim_provenance over live retrieval; renders a
+      "frozen at decision time" indigo badge so the operator sees
+      the difference. Both persona detail and decision detail pages.
+
+**Session 9 file inventory:**
+
+  Added:
+    core/policy_engine/store.py
+    core/policy_engine/seeder.py
+    core/knowledge/__init__.py
+    core/knowledge/store.py
+    core/knowledge/retriever.py
+    domains/lending/seed_events/fha/{events.csv, bureau_responses.json,
+                                     entities.json}
+    domains/lending/seed_events/jumbo/{events.csv, bureau_responses.json,
+                                       entities.json}
+    domains/lending/seed_events/va/{events.csv, bureau_responses.json,
+                                    entities.json}
+    ui/templates/persona_index.html
+    ui/templates/persona_workbench.html
+    ui/templates/_persona_detail.html
+    scripts/smoke_policies.py
+    scripts/smoke_policy_evaluator.py
+    scripts/smoke_knowledge.py
+    scripts/smoke_persona_workbench.py
+    scripts/smoke_fha_scenario.py
+    scripts/run_tests.py
+    tests/core/policy_engine/test_loader.py
+    tests/core/policy_engine/test_store.py
+    tests/core/policy_engine/test_seeder.py
+    tests/core/policy_engine/test_evaluator.py
+    tests/core/decision_agents/test_atomic_tool.py
+    tests/core/trace/test_reflection.py
+    tests/core/knowledge/test_store.py
+    tests/core/knowledge/test_retriever.py
+    tests/core/simulation/test_replayer.py
+    tests/api/test_routes.py
+    tests/ui/test_views.py
+    tests/domains/lending/test_seed_scenarios.py
+
+  Modified:
+    core/ontology/object_types.py (added Document, Claim, Policy,
+                                   PolicyVersion ObjectTypes)
+    core/ontology/__init__.py (exports)
+    core/policy_engine/__init__.py (re-exports)
+    core/policy_engine/evaluator.py (async + policy_store + chain)
+    core/context_store/context_builder.py (retriever wiring +
+                                           knowledge/policy exclusions)
+    core/decision_agents/atomic_tool.py (policy_store + agency_chain
+                                         + claim layering)
+    core/execution/dag_executor.py (evaluation_at parameter)
+    core/simulation/replayer.py (policy_store + retriever_factory +
+                                 evaluation_at)
+    core/trace/trace_schema.py (policy_version_id + policy_chain
+                                fields on DecisionTrace)
+    api/deps.py (Platform gains policy_store + knowledge_store +
+                 retriever; default builder constructs all)
+    api/main.py (lifespan seeds policies + FHA overlays + 5 scenarios)
+    api/routes.py (no changes)
+    ui/views.py (persona workbench view-models + _policy_panel +
+                 _evidence_panel + cross-page surfacing)
+    ui/routes.py (persona workbench routes + ack/decline/send_back)
+    ui/templates/base.html (Personas nav link)
+    ui/templates/decision.html (Policy + Evidence sections)
+    domains/lending/knowledge_base.json (document_types matrix —
+                                         14 doc types)
+    domains/lending/seed_events/__init__.py (FHA in SCENARIOS)
+    domains/lending/seed_events/runner.py (FHA in APPLICATION_IDS)
+    domains/lending/seed_events/happy_path/entities.json (W-2 +
+                                                          appraisal docs)
+    domains/lending/seed_events/contamination/entities.json (pending
+                                                             W-2)
+    docs/PRD.md (v0.8 → v0.9)
+
+**Late-session slices (single autonomous run after "yes and don't wait
+for my approval" — the user explicitly delegated continuous shipping):**
+
+  TIER 1 expanded to 213 tests (was 154 mid-session):
+    + tests/api/test_routes.py (13)        — POST /events, /trace/{id}, GET
+                                             /decisions, POST /override,
+                                             POST /applications/{id}/run via
+                                             FastAPI TestClient
+    + tests/ui/test_views.py (40)          — pure-fn helpers (loan-type label,
+                                             friendly name, initials, risk pill,
+                                             minutes-ago) + Platform-driven
+                                             view-models
+    + claim_provenance tests (3 added to test_seed_scenarios.py)
+    + queue resolve tests (3 added to test_atomic_tool.py)
+
+  STREAM E2 starter — DecisionTrace.claim_provenance:
+    ClaimProvenance Pydantic model in core/trace/trace_schema.py.
+    DecisionTrace.claim_provenance: list[ClaimProvenance] — frozen
+      list of evidence consumed at decision time.
+    AtomicTool._freeze_claim_provenance(bundle) snapshots
+      bundle.claim_records into the typed model. Decoupled from live
+      KnowledgeStore so a later re-extraction can't retroactively
+      change what the trace said.
+    UI: _evidence_panel(... trace=trace) prefers trace.claim_provenance
+      over live retrieval and renders a "frozen at decision time"
+      indigo badge so the operator sees the difference.
+
+  PolicyVersion inspection UI:
+    /ui/policies — agency-grouped index of all active Policy +
+      PolicyVersion records.
+    /ui/policies/{policy_version_id} — boundary clauses per clause
+      type (block/escalate/recommend/automate), contamination_guard,
+      hard_rules_subscribed, supersession chain (version history).
+    Clickable policy_version_id in persona_detail + decision detail
+      panels. Top nav adds "Policies".
+
+  HumanQueue.resolve() + HumanQueueResolution:
+    Protocol + InMemoryHumanQueue gain resolve(item_id, *, resolution,
+      reviewer_id, reviewer_role, notes), find_open(*, application_id,
+      decision_id), list_resolved().
+    Persona workbench Approve/Decline endpoints now call resolve()
+      after attach_human_review — items move from open → resolved
+      with an audit receipt.
+    queue_view returns dict with both open + resolved sections.
+    queue.html shows "X open / Y resolved this session" with reviewer
+      trail. PRD §19 TIER 3 HumanQueue.resolve() item resolved.
+
+  Document inspection UI:
+    /ui/applications/{id}/documents — all docs uploaded for an app
+      with status pills, claim counts, OCR confidence, verifier.
+    /ui/documents/{doc_id} — single doc detail: metadata + all
+      extracted claims with full provenance (claim_id, source_page,
+      extraction_method, extraction_confidence, verifier, extracted_at).
+    Clickable source_doc_id in claim rows on persona_detail +
+      decision detail templates.
+    Application detail page gets "Documents →" link in header.
+
+  Pending-claim verification UI:
+    /ui/claims/pending — cross-app pending claim queue with verify
+      and reject buttons. POST /ui/claims/{id}/verify and reject
+      hit KnowledgeStore.verify_claim/reject_claim. Closes the
+      contamination-scenario verification loop end-to-end:
+      pending W-2 claim → operator clicks Verify → next
+      income_verification run sees the claim in bundle.claims.
+
+  Bug fix: PolicyEvaluator._check_hard_rules ordering. Generic
+  upstream_block_propagates_to_dependents was firing BEFORE specific
+  fraud_block_stops_pipeline / compliance_block_stops_closing, so
+  traces stamped the generic reason. Reordered: specific rules check
+  first. PRD §5 hard rules now distinct in trace.policy_reasons.
+  Surfaced by tests/core/policy_engine/test_evaluator.py.
+
+  Memory hygiene: feedback_collaboration_style.md updated with the
+  user's stronger autonomy directive ("yes and don't wait for my
+  approval"). Future sessions: ship continuously, don't re-ask after
+  ack tokens, propose 2-3 next moves and pick one without permission.
+
+**Final session 9 totals:**
+  - 213 tests across 13 test modules; all green; ~2.5s total.
+  - 8 smoke scripts; all green.
+  - 7 seed scenarios (4 hard-rule + 3 loan-type).
+  - PRD v0.9 reflects architecture; CONTEXT.md (this) reflects
+    full session deltas including UI surfacing + tests.
+  - UI fully navigable end-to-end:
+      / → app list
+      /ui/personas → persona index → workbench (per-persona)
+      /ui/workbench → 9 team workbenches
+      /ui/policies → policy index → version detail
+      /ui/applications/{id}/documents → docs list → doc detail
+      /ui/claims/pending → verify/reject queue
+      /ui/queue → open + resolved
+      /ui/applications/{id}/decisions/{decision_id} → original
+        decision detail (now with policy + evidence panels)
+
+**Tomorrow's concrete starting point:**
+
+  Read CONTEXT.md (this file) + docs/PRD.md (v0.9). Then verify what
+  exists:
+    find . -name "*.py" -o -name "*.yaml" -o -name "*.json" -o -name "*.sql" \
+      | grep -v .git | grep -v __pycache__ | sort
+
+  Run test suite to confirm ground truth:
+    python -X utf8 scripts/run_tests.py
+
+  Boot UI:
+    uvicorn api.main:get_app --factory --port 8000
+
+  Outstanding work, ranked by leverage:
+
+    Real Anthropic personas — personas have use_anthropic=True path
+      but unproven. Single smoke that runs ONE persona on the LLM
+      path with prompt caching, journal side-by-side with offline.
+      Requires ANTHROPIC_API_KEY. ~30 min.
+
+    STREAM D — first real agency connector. Freddie Mac selling-guide
+      RSS pull → PolicyVersionIngestedEvent → EntityHydrator writes a
+      new PolicyVersion. Replaces the seeded lender_overlay for
+      conforming loans. ~2 hours.
+
+    STREAM E2 real OCR + extraction — Claude Vision against synthetic
+      W-2 image, structured-extract claims, lands them in
+      KnowledgeStore with status=pending → operator verifies via
+      /ui/claims/pending → claim becomes consumable. ~2-4 hours.
+
+    Real-backend verification — Postgres + Redis swap. Apply
+      schema.sql, swap PostgresDurableStore + RedisHotCache in
+      api/deps.py, re-run all smokes against live DB. Routine
+      trig_013QhFbYJaViJfNybCbr3KUX may have already done this on
+      May 3 — check first.
+
+    Persona offline reasoning tests — tests/core/decision_agents/
+      test_personas/ for each of 12 personas' _compute_offline()
+      against canonical fixtures. ~50 tests. Bug-catcher value
+      vs. medium effort.
+
+    UI: live-refresh of decision detail post-override (currently
+      requires manual reload).
+
+    UI: persona workbench History + Analytics tabs (currently
+      stubbed).
+
+---
+
 ### Session 1 — April 30 2026
 
 **What was designed and built:**

@@ -1,0 +1,30 @@
+[
+  {
+    "key": "credit",
+    "payload": {
+      "event_type": "credit_pulled",
+      "customer_id": "cust_va",
+      "application_id": "app_va",
+      "bureau": "experian",
+      "credit_score": 720,
+      "open_tradelines": 5,
+      "derogatory_marks": 0,
+      "credit_utilization": 0.18,
+      "thin_file": false,
+      "active_bankruptcy": false
+    }
+  },
+  {
+    "key": "fraud",
+    "payload": {
+      "event_type": "fraud_signal",
+      "customer_id": "cust_va",
+      "application_id": "app_va",
+      "signal_type": "baseline",
+      "fraud_score": 0.02,
+      "velocity_signal": "normal",
+      "watchlist_match": false,
+      "synthetic_identity_flag": false
+    }
+  }
+]

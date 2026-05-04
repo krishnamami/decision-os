@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 from uuid import UUID
@@ -276,6 +277,9 @@ def decision_detail(
     persona_view = _persona_view(decision_id, trace, decision_spec)
     contamination_guard = decision_spec.get("contamination_guard") or {}
 
+    policy_panel = _policy_panel(platform, trace)
+    evidence_panel = _evidence_panel(platform, app_id, decision_id, trace=trace)
+
     return {
         "application_id": app_id,
         "decision_id":    decision_id,
@@ -293,6 +297,8 @@ def decision_detail(
         "atomic_steps":   atomic_steps,
         "persona_panel":  persona_panel,
         "persona_view":   persona_view,
+        "policy_panel":   policy_panel,
+        "evidence_panel": evidence_panel,
         "contamination_guard": contamination_guard,
         "learnings":      learnings,
         "outcome_style":  OUTCOME_STYLES.get(
@@ -925,18 +931,26 @@ def _sync_recall(platform: Platform, agent_id: str, decision_id: str) -> list[An
 # ─────────────────────────────────────────────────────────────────────
 
 
-def queue_view(platform: Platform) -> list[dict[str, Any]]:
+def queue_view(platform: Platform) -> dict[str, Any]:
+    """Cross-application queue view.
+
+    Returns both open items (waiting for review) and recently-resolved
+    receipts (already acted on this session). The persona workbench's
+    Approve/Decline endpoints call HumanQueue.resolve() which moves
+    items from open → resolved; this view shows both sides of that
+    transition."""
+
     items = list(getattr(platform.human_queue, "_items", {}).values())
     items.sort(key=lambda i: i.enqueued_at, reverse=True)
 
-    rows: list[dict[str, Any]] = []
+    open_rows: list[dict[str, Any]] = []
     for item in items:
         # Find the trace so the queue can link straight into decision detail.
         traces = _all_traces_sync(platform, item.application_id)
         trace = next(
             (t for t in traces if t.decision_id == item.decision_id), None
         )
-        rows.append({
+        open_rows.append({
             "queue_id":         str(item.id),
             "application_id":   item.application_id,
             "decision_id":      item.decision_id,
@@ -950,7 +964,33 @@ def queue_view(platform: Platform) -> list[dict[str, Any]]:
             "enqueued_at":      item.enqueued_at,
             "trace_id":         str(trace.trace_id) if trace else None,
         })
-    return rows
+
+    resolved = list(getattr(platform.human_queue, "_resolved", []))
+    resolved.sort(key=lambda r: r.resolved_at, reverse=True)
+    resolved_rows: list[dict[str, Any]] = []
+    for r in resolved:
+        resolution_tone = "emerald" if r.resolution == "approve" else (
+            "rose" if r.resolution == "decline" else "slate"
+        )
+        resolved_rows.append({
+            "item_id":        str(r.item_id),
+            "application_id": r.application_id,
+            "decision_id":    r.decision_id,
+            "decision_label": PERSONA_LABELS.get(r.decision_id, r.decision_id),
+            "resolution":     r.resolution,
+            "resolution_tone": resolution_tone,
+            "reviewer_id":    r.reviewer_id,
+            "reviewer_role":  r.reviewer_role,
+            "resolved_at":    r.resolved_at,
+            "notes":          r.notes,
+        })
+
+    return {
+        "items":         open_rows,
+        "resolved":      resolved_rows,
+        "open_count":    len(open_rows),
+        "resolved_count": len(resolved_rows),
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1393,13 +1433,1304 @@ def _focused_app_for_team(
     }
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Per-persona workbench — the AI-agent's day.
+#
+# 12 personas; one workbench each. Different shape from the per-team
+# workbench above:
+#   - Team workbench is *operator-centric* — the team has work across
+#     many decisions; the view rolls up.
+#   - Persona workbench is *agent-centric* — one AI persona, one
+#     decision_id. Operators handling that decision see the queue and
+#     drill in; persona maintainers see KPIs / accuracy / latency for
+#     their specific agent.
+#
+# Layout matches the user-supplied design (screenshot 2026-05-03):
+#   header tabs (siblings within owner_team)
+#     · agent identity (decision_id · persona)
+#     · time-range selector
+#   KPI strip (4): Decisions completed · Pending review ·
+#                  Auto-decided % · Avg time to decide (human reviews)
+#   View tabs: Workbench · History · Analytics
+#   Two columns:
+#     left  = queue or recently-completed (depending on persona mode)
+#     right = focused application detail (Application Context, Signals,
+#             AI Reasoning, Approve / Decline / Request evidence)
+#
+# Auto-execute personas (lead_scoring, dti_calculation, ltv_assessment,
+# approval_routing) almost never queue. Their left column shows
+# "Recently completed" instead — same row shape, just no Approve action
+# (the AI already wrote back).
+# ─────────────────────────────────────────────────────────────────────
+
+
+PERSONA_LABELS: dict[str, str] = {
+    "lead_scoring":          "Lead qualifier",
+    "income_verification":   "Income underwriter",
+    "credit_assessment":     "Credit underwriter",
+    "fraud_screening":       "Fraud officer",
+    "compliance_check":      "Compliance officer",
+    "dti_calculation":       "DTI calculator",
+    "ltv_assessment":        "LTV calculator",
+    "product_eligibility":   "Product specialist",
+    "rate_pricing":          "Pricing officer",
+    "underwriting_decision": "Senior underwriter",
+    "approval_routing":      "Workflow router",
+    "closing_readiness":     "Closing officer",
+}
+
+
+# Visual-only "avatar" tones — deterministic from applicant_id so the
+# same applicant always paints the same colour. List kept short to ease
+# legibility; modulo over the list keeps it bounded.
+_AVATAR_TONES: list[str] = [
+    "indigo", "emerald", "amber", "rose", "sky", "violet", "teal", "orange",
+]
+
+
+TIME_RANGES: dict[str, dict[str, Any]] = {
+    "quarter":  {"label": "This quarter",  "days": 91},
+    "month":    {"label": "This month",    "days": 30},
+    "week":     {"label": "This week",     "days": 7},
+    "all_time": {"label": "All time",      "days": None},
+}
+
+
+def list_persona_workbenches(platform: Platform) -> list[dict[str, Any]]:
+    """One card per persona — for the /ui/personas index."""
+
+    spec = platform.spec
+    rows: list[dict[str, Any]] = []
+    for d in spec.decisions:
+        decision_id = d["id"]
+        kpis = _persona_kpis(platform, decision_id, range_key="quarter")
+        rows.append({
+            "decision_id":    decision_id,
+            "persona":        d.get("persona"),
+            "label":          PERSONA_LABELS.get(decision_id, decision_id),
+            "owner_team":     d.get("owner_team"),
+            "owner_team_label": OWNER_TEAM_LABELS.get(d.get("owner_team", ""), d.get("owner_team", "")),
+            "mode":           d.get("mode"),
+            "risk_level":     d.get("risk_level"),
+            "is_auto":        d.get("mode") == "auto_execute",
+            **kpis,
+        })
+    return rows
+
+
+def persona_workbench_view(
+    platform: Platform,
+    decision_id: str,
+    *,
+    application_id: Optional[str] = None,
+    time_range: str = "quarter",
+    tab: str = "workbench",
+) -> Optional[dict[str, Any]]:
+    spec = platform.spec
+    decision_spec = spec.decision_index.get(decision_id)
+    if decision_spec is None:
+        return None
+    if time_range not in TIME_RANGES:
+        time_range = "quarter"
+    if tab not in ("workbench", "history", "analytics"):
+        tab = "workbench"
+
+    persona_label = PERSONA_LABELS.get(decision_id, decision_id)
+    owner_team = decision_spec.get("owner_team", "")
+    is_auto = decision_spec.get("mode") == "auto_execute"
+
+    # Sibling personas in the same owner_team — top-tab navigation.
+    siblings: list[dict[str, Any]] = []
+    for d in spec.decisions:
+        if d.get("owner_team") != owner_team:
+            continue
+        sib_id = d["id"]
+        siblings.append({
+            "decision_id": sib_id,
+            "label":       PERSONA_LABELS.get(sib_id, sib_id),
+            "active":      sib_id == decision_id,
+        })
+
+    kpis = _persona_kpis(platform, decision_id, range_key=time_range)
+
+    # Left column rows — different shape per persona-mode.
+    if is_auto:
+        left_label = "Recently completed"
+        left_rows = _persona_recent_traces(
+            platform, decision_id, selected_app=application_id, limit=10
+        )
+    else:
+        left_label = f"{persona_label.lower().replace(' ', '_')} queue"
+        left_rows = _persona_queue_rows(
+            platform, decision_id, selected_app=application_id
+        )
+
+    focused = None
+    if application_id is not None:
+        focused = _persona_focused_app(
+            platform, decision_id, application_id
+        )
+
+    return {
+        "decision_id":     decision_id,
+        "persona":         decision_spec.get("persona"),
+        "persona_label":   persona_label,
+        "decision_name":   decision_spec.get("name"),
+        "owner_team":      owner_team,
+        "owner_team_label": OWNER_TEAM_LABELS.get(owner_team, owner_team),
+        "mode":            decision_spec.get("mode"),
+        "risk_level":      decision_spec.get("risk_level"),
+        "is_auto":         is_auto,
+        "siblings":        siblings,
+        "selected_application_id": application_id,
+        "time_range":      time_range,
+        "time_range_label": TIME_RANGES[time_range]["label"],
+        "time_ranges":     [
+            {"key": k, "label": v["label"], "selected": k == time_range}
+            for k, v in TIME_RANGES.items()
+        ],
+        "tab":             tab,
+        "kpis":            kpis,
+        "left_label":      left_label,
+        "left_rows":       left_rows,
+        "focused":         focused,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Persona KPIs
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _persona_kpis(
+    platform: Platform, decision_id: str, *, range_key: str
+) -> dict[str, Any]:
+    """4 KPIs: Decisions completed · Pending review · Auto-decided % ·
+    Avg time to decide (human reviews)."""
+
+    writer = platform.trace_writer
+    all_traces = list(getattr(writer, "_traces", {}).values())
+    persona_traces = [t for t in all_traces if t.decision_id == decision_id]
+
+    days = TIME_RANGES.get(range_key, TIME_RANGES["quarter"])["days"]
+    if days is not None:
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        persona_traces = [t for t in persona_traces if t.started_at >= cutoff]
+
+    decisions_completed = len(persona_traces)
+    pending_review = sum(
+        1 for i in getattr(platform.human_queue, "_items", {}).values()
+        if i.decision_id == decision_id
+    )
+    # Auto-decided = AI made the call AND no human had to act:
+    # mode is auto_execute AND outcome is ALLOW (so it didn't queue
+    # via recommend/escalate) AND no human review is attached.
+    # Reconciles with Pending review — a queued recommend doesn't
+    # count as auto-decided.
+    auto_count = sum(
+        1 for t in persona_traces
+        if t.human_review is None
+        and t.mode.value == "auto_execute"
+        and t.outcome.value == "allow"
+    )
+    auto_decided_pct = (
+        auto_count / decisions_completed if decisions_completed else None
+    )
+
+    # Human-review avg latency: time from trace.ended_at → review.reviewed_at
+    review_latencies_ms: list[float] = []
+    for t in persona_traces:
+        if t.human_review is None or t.ended_at is None:
+            continue
+        delta = (t.human_review.reviewed_at - t.ended_at).total_seconds() * 1000.0
+        if delta >= 0:
+            review_latencies_ms.append(delta)
+    avg_review_ms = (
+        sum(review_latencies_ms) / len(review_latencies_ms)
+        if review_latencies_ms else None
+    )
+
+    return {
+        "decisions_completed": decisions_completed,
+        "pending_review":      pending_review,
+        "auto_decided_pct":    auto_decided_pct,
+        "avg_review_ms":       avg_review_ms,
+        "human_reviewed_count": len(review_latencies_ms),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Left column — queue (human modes) or recently-completed (auto modes)
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _persona_queue_rows(
+    platform: Platform, decision_id: str, *, selected_app: Optional[str]
+) -> list[dict[str, Any]]:
+    items = [
+        i for i in getattr(platform.human_queue, "_items", {}).values()
+        if i.decision_id == decision_id
+    ]
+    # Oldest first — urgency rises with wait time, matches screenshot order.
+    items.sort(key=lambda i: i.enqueued_at)
+    out: list[dict[str, Any]] = []
+    for item in items:
+        out.append(
+            _persona_row_from_queue(platform, item, selected_app)
+        )
+    return out
+
+
+def _persona_recent_traces(
+    platform: Platform,
+    decision_id: str,
+    *,
+    selected_app: Optional[str],
+    limit: int,
+) -> list[dict[str, Any]]:
+    writer = platform.trace_writer
+    traces = [
+        t for t in getattr(writer, "_traces", {}).values()
+        if t.decision_id == decision_id
+    ]
+    traces.sort(key=lambda t: t.started_at, reverse=True)
+    rows: list[dict[str, Any]] = [
+        _persona_row_from_trace(platform, trace, selected_app)
+        for trace in traces[:limit]
+    ]
+    # Operator priority: pending-review rows first (urgent action),
+    # then everything else by recency. Stable sort preserves the
+    # started_at ordering within each group.
+    rows.sort(key=lambda r: (0 if r.get("is_queued") else 1))
+    return rows
+
+
+def _persona_row_from_queue(
+    platform: Platform, item: Any, selected_app: Optional[str]
+) -> dict[str, Any]:
+    app_value = _application_value(platform, item.application_id)
+    loan_value = _loan_value(platform, item.application_id)
+    return {
+        "application_id":   item.application_id,
+        "is_selected":      item.application_id == selected_app,
+        "is_queued":        True,    # by definition — these are queue items
+        "applicant_id":     app_value.get("applicant_id"),
+        "display_name":     _display_name(app_value, item.application_id),
+        "initials":         _initials(app_value, item.application_id),
+        "avatar_tone":      _avatar_tone(item.application_id),
+        "loan_summary":     _loan_summary(app_value, loan_value),
+        "amount":           app_value.get("requested_amount"),
+        "ago_minutes":      _minutes_ago(item.enqueued_at),
+        "risk_pill":        _risk_pill_for_persona(item.decision_id, item),
+        "proposed_outcome": item.proposed_outcome.value,
+        "outcome":          item.proposed_outcome.value,
+        "outcome_style":    OUTCOME_STYLES.get(
+            item.proposed_outcome.value, OUTCOME_STYLES["pending"]
+        ),
+        "confidence":       item.confidence,
+        "kind":             "queued",
+    }
+
+
+def _persona_row_from_trace(
+    platform: Platform, trace: Any, selected_app: Optional[str]
+) -> dict[str, Any]:
+    app_value = _application_value(platform, trace.application_id)
+    loan_value = _loan_value(platform, trace.application_id)
+    # A trace is "queued" when its outcome routed to QUEUE_HUMAN — i.e.
+    # there's a corresponding queue item for the same (decision, app).
+    is_queued = any(
+        i.application_id == trace.application_id
+        and i.decision_id == trace.decision_id
+        for i in getattr(platform.human_queue, "_items", {}).values()
+    )
+    return {
+        "application_id":   trace.application_id,
+        "is_selected":      trace.application_id == selected_app,
+        "is_queued":        is_queued,
+        "applicant_id":     app_value.get("applicant_id"),
+        "display_name":     _display_name(app_value, trace.application_id),
+        "initials":         _initials(app_value, trace.application_id),
+        "avatar_tone":      _avatar_tone(trace.application_id),
+        "loan_summary":     _loan_summary(app_value, loan_value),
+        "amount":           app_value.get("requested_amount"),
+        "ago_minutes":      _minutes_ago(trace.started_at),
+        "risk_pill":        _risk_pill_for_persona(trace.decision_id, trace),
+        "proposed_outcome": trace.outcome.value,
+        "outcome":          trace.outcome.value,
+        "outcome_style":    OUTCOME_STYLES.get(
+            trace.outcome.value, OUTCOME_STYLES["pending"]
+        ),
+        "confidence":       trace.confidence,
+        "kind":             "completed",
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Right column — focused application detail
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _persona_focused_app(
+    platform: Platform, decision_id: str, application_id: str
+) -> Optional[dict[str, Any]]:
+    spec = platform.spec
+    decision_spec = spec.decision_index.get(decision_id, {})
+
+    app_value = _application_value(platform, application_id)
+    loan_value = _loan_value(platform, application_id)
+
+    traces = _all_traces_sync(platform, application_id)
+    trace = next((t for t in traces if t.decision_id == decision_id), None)
+
+    queue_item = next(
+        (i for i in getattr(platform.human_queue, "_items", {}).values()
+         if i.application_id == application_id and i.decision_id == decision_id),
+        None,
+    )
+
+    application_context = _persona_application_context(
+        decision_id, app_value, loan_value, traces
+    )
+    signals_evaluated = _persona_signals(trace)
+    ai_reasoning = _persona_ai_reasoning(trace)
+    policy_panel = _policy_panel(platform, trace)
+    # Prefer the trace's frozen claim_provenance over live retrieval
+    # — the trace is the audit-correct view of what evidence drove
+    # this specific outcome. Live KnowledgeStore reads can drift if a
+    # claim is re-verified or re-extracted later.
+    evidence_panel = _evidence_panel(
+        platform, application_id, decision_id, trace=trace
+    )
+
+    has_human_review = trace is not None and trace.human_review is not None
+    can_act = queue_item is not None and not has_human_review
+    can_send_back = (
+        decision_spec.get("type") == "dependent" and queue_item is not None
+    )
+
+    return {
+        "application_id":      application_id,
+        "applicant_id":        app_value.get("applicant_id"),
+        "display_name":        _display_name(app_value, application_id),
+        "initials":            _initials(app_value, application_id),
+        "avatar_tone":         _avatar_tone(application_id),
+        "loan_summary":        _loan_summary(app_value, loan_value),
+        "amount":              app_value.get("requested_amount"),
+        "risk_pill":           (
+            _risk_pill_for_persona(decision_id, trace)
+            if trace is not None
+            else _risk_pill_for_confidence(None)
+        ),
+        "trace":               trace,
+        "trace_id":            str(trace.trace_id) if trace else None,
+        "queue_item_id":       str(queue_item.id) if queue_item else None,
+        "outcome":             trace.outcome.value if trace else None,
+        "outcome_style":       OUTCOME_STYLES.get(
+            trace.outcome.value if trace else "pending",
+            OUTCOME_STYLES["pending"],
+        ),
+        "confidence":          trace.confidence if trace else None,
+        "matched_clause":      trace.matched_clause if trace else None,
+        "application_context": application_context,
+        "signals_evaluated":   signals_evaluated,
+        "ai_reasoning":        ai_reasoning,
+        "policy_panel":        policy_panel,
+        "evidence_panel":      evidence_panel,
+        "has_human_review":    has_human_review,
+        "human_review":        trace.human_review if has_human_review else None,
+        "can_act":             can_act,
+        "can_send_back":       can_send_back,
+        "decision_outcomes":   [o.value for o in DecisionOutcome],
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Policy + Evidence panels — surface STREAM C / STREAM E in the UI.
+# Used by both persona workbench detail and decision detail.
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _policy_panel(
+    platform: Platform, trace: Optional[DecisionTrace]
+) -> Optional[dict[str, Any]]:
+    """Resolve the PolicyVersion that fired on this trace + extract
+    display fields. Returns None when policy_version_id wasn't stamped
+    (legacy traces from before STREAM C phase 2)."""
+
+    if trace is None or not trace.policy_version_id:
+        return None
+
+    policy_store = getattr(platform, "policy_store", None)
+    if policy_store is None:
+        return None
+
+    versions = getattr(policy_store, "_iter_active_values", lambda _t: [])(
+        "PolicyVersion"
+    )
+    version = next(
+        (v for v in versions if v.get("policy_version_id") == trace.policy_version_id),
+        None,
+    )
+    policies = getattr(policy_store, "_iter_active_values", lambda _t: [])("Policy")
+    policy = None
+    if version is not None:
+        policy = next(
+            (p for p in policies if p.get("policy_id") == version.get("policy_id")),
+            None,
+        )
+
+    chain_ids = list(trace.policy_chain or [])
+    return {
+        "policy_version_id": trace.policy_version_id,
+        "policy_id":         version.get("policy_id") if version else None,
+        "version_number":    version.get("version_number") if version else None,
+        "valid_from":        version.get("valid_from") if version else None,
+        "valid_to":          version.get("valid_to") if version else None,
+        "source_revision":   version.get("source_revision") if version else None,
+        "source_url":        version.get("source_url") if version else None,
+        "agency":            policy.get("agency") if policy else None,
+        "owner_team":        policy.get("owner_team") if policy else None,
+        "policy_name":       policy.get("name") if policy else None,
+        "policy_chain":      chain_ids,
+        "chain_size":        len(chain_ids),
+    }
+
+
+def _evidence_panel(
+    platform: Platform,
+    application_id: str,
+    decision_id: str,
+    *,
+    trace: Optional[DecisionTrace] = None,
+) -> dict[str, Any]:
+    """List the verified Claims that drove this decision + their source
+    Documents. Reads via Retriever so the doc_type matrix gating is
+    honoured — only claims this decision is allowed to see appear.
+
+    When a ``trace`` is supplied AND it carries claim_provenance, that
+    frozen list wins over live retrieval — the trace is the audit-
+    correct view of what drove THIS specific outcome. Live retrieval
+    stays as fallback (no trace yet, or trace pre-dates the
+    claim_provenance feature)."""
+
+    # Frozen-trace path: the audit-correct answer.
+    if (
+        trace is not None
+        and getattr(trace, "claim_provenance", None)
+    ):
+        return _evidence_panel_from_provenance(
+            platform, application_id, decision_id, trace
+        )
+
+    retriever = getattr(platform, "retriever", None)
+    knowledge_store = getattr(platform, "knowledge_store", None)
+    if retriever is None:
+        return {
+            "claims": [],
+            "documents": [],
+            "doc_types_consulted": 0,
+        }
+
+    # `retrieve` is async — render-time path is sync. Walk the
+    # KnowledgeStore directly for v0; same in-memory walk Retriever
+    # uses, but synchronous. Postgres swap will need to flip the views
+    # to async, which is already on the TIER 1 list.
+    docs_by_id: dict[str, Any] = {}
+    if knowledge_store is not None:
+        for d in _ks_list_sync(knowledge_store, "Document"):
+            if d.get("application_id") != application_id:
+                continue
+            docs_by_id[d.get("document_id")] = d
+
+    matrix = _doc_type_matrix(platform)
+    relevant_doc_types = {
+        dt for dt, entry in matrix.items()
+        if isinstance(entry, dict)
+        and decision_id in (entry.get("feeds_decisions") or [])
+    }
+
+    rows: list[dict[str, Any]] = []
+    referenced_doc_ids: set[str] = set()
+    if knowledge_store is not None:
+        for c in _ks_list_sync(knowledge_store, "Claim"):
+            if c.get("application_id") != application_id:
+                continue
+            if c.get("status") != "verified":
+                continue
+            doc_id = c.get("document_id")
+            doc = docs_by_id.get(doc_id) or {}
+            if doc.get("doc_type") not in relevant_doc_types:
+                continue
+            referenced_doc_ids.add(doc_id)
+            rows.append({
+                "field_name":    c.get("field_name"),
+                "value":         c.get("field_value"),
+                "source_doc_id": doc_id,
+                "source_page":   c.get("source_page"),
+                "verified_by":   c.get("verified_by"),
+                "verified_at":   c.get("verified_at"),
+                "extraction_method": c.get("extraction_method"),
+                "extraction_confidence": c.get("extraction_confidence"),
+                "doc_type":      doc.get("doc_type"),
+            })
+
+    referenced_docs = [
+        {
+            "document_id": did,
+            "doc_type":    docs_by_id[did].get("doc_type"),
+            "status":      docs_by_id[did].get("status"),
+            "source_url":  docs_by_id[did].get("source_url"),
+            "source_system": docs_by_id[did].get("source_system"),
+            "page_count":  docs_by_id[did].get("page_count"),
+            "verified_by": docs_by_id[did].get("verified_by"),
+        }
+        for did in referenced_doc_ids if did in docs_by_id
+    ]
+
+    return {
+        "claims": rows,
+        "documents": referenced_docs,
+        "doc_types_consulted": len(relevant_doc_types),
+        "doc_types_in_scope": sorted(relevant_doc_types),
+    }
+
+
+def _evidence_panel_from_provenance(
+    platform: Platform,
+    application_id: str,
+    decision_id: str,
+    trace: DecisionTrace,
+) -> dict[str, Any]:
+    """Build the evidence panel from the trace's frozen claim_provenance.
+
+    Each entry is the audit-correct view of what evidence the decision
+    consumed. We still cross-reference live Documents for `doc_type` /
+    `source_url` (which aren't on the frozen ClaimProvenance — those
+    are stable Document metadata, not claim-time-frozen)."""
+
+    knowledge_store = getattr(platform, "knowledge_store", None)
+    docs_by_id: dict[str, dict[str, Any]] = {}
+    if knowledge_store is not None:
+        for d in _ks_list_sync(knowledge_store, "Document"):
+            doc_id = d.get("document_id")
+            if doc_id:
+                docs_by_id[doc_id] = d
+
+    rows: list[dict[str, Any]] = []
+    referenced_doc_ids: set[str] = set()
+    for c in trace.claim_provenance:
+        doc = docs_by_id.get(c.document_id) or {}
+        referenced_doc_ids.add(c.document_id)
+        rows.append({
+            "field_name":    c.field_name,
+            "value":         c.field_value,
+            "source_doc_id": c.document_id,
+            "source_page":   c.source_page,
+            "verified_by":   c.verified_by,
+            "verified_at":   c.verified_at,
+            "extraction_method": None,  # not frozen on ClaimProvenance
+            "extraction_confidence": c.extraction_confidence,
+            "doc_type":      doc.get("doc_type"),
+            "frozen":        True,
+        })
+
+    referenced_docs = [
+        {
+            "document_id": did,
+            "doc_type":    docs_by_id[did].get("doc_type") if did in docs_by_id else None,
+            "status":      docs_by_id[did].get("status") if did in docs_by_id else None,
+            "source_url":  docs_by_id[did].get("source_url") if did in docs_by_id else None,
+            "source_system": docs_by_id[did].get("source_system") if did in docs_by_id else None,
+            "page_count":  docs_by_id[did].get("page_count") if did in docs_by_id else None,
+            "verified_by": docs_by_id[did].get("verified_by") if did in docs_by_id else None,
+        }
+        for did in referenced_doc_ids
+    ]
+
+    return {
+        "claims": rows,
+        "documents": referenced_docs,
+        "doc_types_consulted": len(set(r.get("doc_type") for r in rows if r.get("doc_type"))),
+        "doc_types_in_scope": sorted(
+            set(r.get("doc_type") for r in rows if r.get("doc_type"))
+        ),
+        "frozen": True,
+    }
+
+
+def _ks_list_sync(knowledge_store: Any, entity_type: str) -> list[dict[str, Any]]:
+    """Sync list-active over the in-memory knowledge store. Wraps the
+    private `_iter_active_values` so the view layer doesn't need an
+    event loop. Postgres swap uses a SELECT instead."""
+    try:
+        return knowledge_store._iter_active_values(entity_type)  # type: ignore[attr-defined]
+    except Exception:
+        return []
+
+
+def _doc_type_matrix(platform: Platform) -> dict[str, Any]:
+    """Cached doc_type matrix from knowledge_base.json. Cheap walk; not
+    worth memoizing across requests for v0."""
+    try:
+        from core.knowledge.retriever import _load_doc_type_matrix
+        return _load_doc_type_matrix()
+    except Exception:
+        return {}
+
+
+def _persona_application_context(
+    decision_id: str,
+    app_value: dict[str, Any],
+    loan_value: dict[str, Any],
+    traces: list[DecisionTrace],
+) -> list[dict[str, Any]]:
+    """Right-aligned label/value rows. Source priority:
+       1. fields the decision is supposed to read (per knowledge_base)
+       2. always include core loan fields if present"""
+
+    pairs: list[tuple[str, Any, Optional[str]]] = []
+    upstream_payloads = {t.decision_id: (t.output_payload or {}) for t in traces}
+
+    # Pull commonly relevant fields from upstream output_payload.
+    credit = upstream_payloads.get("credit_assessment", {})
+    income = upstream_payloads.get("income_verification", {})
+    dti = upstream_payloads.get("dti_calculation", {})
+    ltv = upstream_payloads.get("ltv_assessment", {})
+
+    # Loan / application headline fields.
+    if loan_value.get("loan_type"):
+        pairs.append(("Loan type", loan_value.get("loan_type"), None))
+    if loan_value.get("term_months"):
+        pairs.append(("Term", f"{loan_value['term_months']} mo", None))
+    if app_value.get("loan_purpose"):
+        pairs.append(("Loan purpose", app_value.get("loan_purpose"), None))
+    if app_value.get("property_state"):
+        pairs.append(("Property state", app_value.get("property_state"), None))
+
+    # Per-decision interesting context — same key fields the screenshot shows.
+    if decision_id in (
+        "credit_assessment", "rate_pricing", "ltv_assessment",
+        "product_eligibility", "underwriting_decision",
+    ):
+        if credit.get("credit_band"):
+            pairs.append(("Credit band", credit["credit_band"], None))
+        if credit.get("credit_score") is not None:
+            pairs.append(("Credit score", credit["credit_score"], None))
+    if decision_id in (
+        "credit_assessment", "rate_pricing", "underwriting_decision",
+        "product_eligibility",
+    ):
+        if dti.get("dti_ratio") is not None:
+            pairs.append(("DTI ratio", dti["dti_ratio"], "pct"))
+    if decision_id in (
+        "credit_assessment", "ltv_assessment", "rate_pricing",
+        "underwriting_decision", "product_eligibility",
+    ):
+        if ltv.get("ltv_ratio") is not None:
+            pairs.append(("LTV ratio", ltv["ltv_ratio"], "pct"))
+    if decision_id in (
+        "income_verification", "dti_calculation", "underwriting_decision",
+    ):
+        if income.get("verified_income") is not None:
+            pairs.append(("Verified income", income["verified_income"], "currency"))
+        if income.get("employment_type"):
+            pairs.append(("Employment", income["employment_type"], None))
+
+    return [
+        {"label": lbl, "value": val, "fmt": fmt}
+        for (lbl, val, fmt) in pairs
+    ]
+
+
+def _persona_signals(trace: Optional[DecisionTrace]) -> list[dict[str, Any]]:
+    if trace is None or trace.reasoning is None:
+        return []
+    rows: list[dict[str, Any]] = []
+    for sig in trace.reasoning.signals_evaluated:
+        rows.append({
+            "name":      sig.name,
+            "value":     sig.value,
+            "direction": sig.direction.value if sig.direction else "neutral",
+            "notes":     sig.notes,
+        })
+    return rows
+
+
+def _persona_ai_reasoning(trace: Optional[DecisionTrace]) -> Optional[dict[str, Any]]:
+    if trace is None or trace.reasoning is None:
+        return None
+    r = trace.reasoning
+    return {
+        "hypothesis":     r.hypothesis_tested,
+        "summary":        r.human_readable_summary,
+        "conclusion":     r.conclusion,
+        "confidence_basis": r.confidence_basis,
+        "contradiction_count": len(r.contradictions_found or []),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Persona helpers (cosmetic / display)
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _application_value(platform: Platform, app_id: str) -> dict[str, Any]:
+    durable = platform.store._durable  # type: ignore[attr-defined]
+    records = getattr(durable, "_records", None) or []
+    rec = next(
+        (r for r in records
+         if r.entity_type == "Application" and r.entity_id == app_id
+         and r.superseded_at is None),
+        None,
+    )
+    return rec.value if rec else {}
+
+
+def _loan_value(platform: Platform, app_id: str) -> dict[str, Any]:
+    durable = platform.store._durable  # type: ignore[attr-defined]
+    records = getattr(durable, "_records", None) or []
+    rec = next(
+        (r for r in records
+         if r.entity_type == "Loan"
+         and isinstance(r.value, dict)
+         and r.value.get("application_id") == app_id
+         and r.superseded_at is None),
+        None,
+    )
+    return rec.value if rec else {}
+
+
+# Demo-only deterministic name generation. Real applicant names flow
+# in via real connectors (LeadReceived event payload) — for now we
+# derive a stable "First Last" from applicant_id so screenshots and
+# demos read like a real loan file. The same applicant_id always
+# produces the same name across runs.
+#
+# Two small lists (12 first names × 12 last names = 144 combos). For
+# 7 seed applicants the collision probability is low enough that the
+# demo reads naturally. Real PII never flows through here — the seed
+# applicant_ids are fake to begin with.
+_DEMO_FIRST_NAMES: tuple[str, ...] = (
+    "Priya", "James", "Marcus", "Elena", "Hailey", "Jordan",
+    "Aisha", "Raj", "Sofia", "Kenji", "Amara", "Diego",
+)
+_DEMO_LAST_NAMES: tuple[str, ...] = (
+    "Patel", "Okafor", "Chen", "Rodriguez", "Mendez", "Kim",
+    "Nguyen", "Williams", "Garcia", "Singh", "Johnson", "Park",
+)
+
+
+def _friendly_name_from_id(applicant_id: Optional[str]) -> Optional[str]:
+    """Deterministic First Last from applicant_id. Returns None if id
+    is empty/None — caller falls back to the raw id."""
+    if not isinstance(applicant_id, str) or not applicant_id:
+        return None
+    h = sum(ord(c) * (i + 1) for i, c in enumerate(applicant_id))
+    first = _DEMO_FIRST_NAMES[h % len(_DEMO_FIRST_NAMES)]
+    last = _DEMO_LAST_NAMES[(h // 7) % len(_DEMO_LAST_NAMES)]
+    return f"{first} {last}"
+
+
+def _display_name(app_value: dict[str, Any], application_id: str) -> str:
+    """Applicant display name. Real path: full_name on the Application
+    (flows from real connectors). Demo path: deterministic name from
+    applicant_id so demos read like a real loan file. Last-resort
+    fallback: applicant_id verbatim, then application_id."""
+
+    return (
+        app_value.get("full_name")
+        or _friendly_name_from_id(app_value.get("applicant_id"))
+        or app_value.get("applicant_id")
+        or application_id
+    )
+
+
+def _initials(app_value: dict[str, Any], application_id: str) -> str:
+    name = _display_name(app_value, application_id)
+    if not isinstance(name, str) or not name:
+        return "—"
+    parts = [p for p in name.replace("_", " ").split(" ") if p]
+    if not parts:
+        return name[:2].upper()
+    if len(parts) >= 2:
+        return (parts[0][0] + parts[1][0]).upper()
+    return parts[0][:2].upper()
+
+
+def _avatar_tone(seed: str) -> str:
+    if not seed:
+        return "slate"
+    idx = sum(ord(c) for c in seed) % len(_AVATAR_TONES)
+    return _AVATAR_TONES[idx]
+
+
+# Loan-type display labels. Domain abbreviations (FHA, VA, USDA) need
+# uppercase; non_qm is conventionally written "Non-QM". Falls back to
+# .title() for unknown types so a future loan_type still renders.
+LOAN_TYPE_LABELS: dict[str, str] = {
+    "conforming": "Conforming",
+    "jumbo":      "Jumbo",
+    "fha":        "FHA",
+    "va":         "VA",
+    "usda":       "USDA",
+    "non_qm":     "Non-QM",
+}
+
+
+def _loan_type_label(loan_type: Optional[str]) -> str:
+    if not loan_type:
+        return ""
+    raw = loan_type.strip().lower()
+    return LOAN_TYPE_LABELS.get(raw, raw.replace("_", " ").title())
+
+
+def _loan_summary(
+    app_value: dict[str, Any], loan_value: dict[str, Any]
+) -> str:
+    type_label = _loan_type_label(loan_value.get("loan_type"))
+    term_months = loan_value.get("term_months")
+    term_years = (
+        f"{int(term_months / 12)}yr"
+        if isinstance(term_months, (int, float)) and term_months
+        else ""
+    )
+    application_id = app_value.get("application_id") or ""
+    parts: list[str] = []
+    if application_id:
+        parts.append(application_id)
+    if type_label and term_years:
+        parts.append(f"{type_label} {term_years}")
+    elif type_label:
+        parts.append(type_label)
+    elif term_years:
+        parts.append(term_years)
+    return " · ".join(parts) if parts else "—"
+
+
+def _minutes_ago(when: Optional[datetime]) -> Optional[int]:
+    if when is None:
+        return None
+    delta = datetime.utcnow() - when
+    minutes = int(delta.total_seconds() / 60)
+    return max(0, minutes)
+
+
+def _risk_pill_for_confidence(confidence: Optional[float]) -> str:
+    """Per-app risk pill for the queue rows. Mirrors the screenshot:
+    high confidence → low risk; lower confidence → higher risk. Drives
+    UI tone, not policy."""
+
+    if confidence is None:
+        return "medium"
+    try:
+        c = float(confidence)
+    except (TypeError, ValueError):
+        return "medium"
+    if c >= 0.85:
+        return "low"
+    if c >= 0.65:
+        return "medium"
+    return "high"
+
+
+# Per-persona risk-pill mappings. These pills drive UI tone, not
+# policy — they're a quick visual signal in the queue/recently-completed
+# rows so the operator can spot high-touch loans without opening each.
+# Confidence-only ("how sure was the AI") rolled into one bucket because
+# offline reasoners produce ≥0.85 on most happy-path scenarios.
+_CREDIT_BAND_RISK: dict[str, str] = {
+    "super_prime":   "low",
+    "prime":         "low",
+    "near_prime":    "medium",
+    "subprime":      "high",
+    "deep_subprime": "high",
+    "thin_file":     "medium",
+}
+
+
+def _risk_pill_for_persona(decision_id: str, payload_or_item: Any) -> str:
+    """Decision-aware risk pill. Falls back to confidence when the
+    decision-specific signal isn't present.
+
+    Argument is either a trace (uses .output_payload) or a HumanQueueItem
+    (uses .payload). Both expose the relevant signal under the same
+    field names."""
+
+    payload = getattr(payload_or_item, "output_payload", None)
+    if payload is None:
+        payload = getattr(payload_or_item, "payload", None)
+    if not isinstance(payload, dict):
+        payload = {}
+
+    if decision_id == "credit_assessment":
+        band = payload.get("credit_band")
+        if isinstance(band, str) and band in _CREDIT_BAND_RISK:
+            return _CREDIT_BAND_RISK[band]
+
+    if decision_id == "fraud_screening":
+        score = payload.get("fraud_score")
+        if isinstance(score, (int, float)):
+            if score < 0.2:
+                return "low"
+            if score < 0.5:
+                return "medium"
+            return "high"
+
+    if decision_id == "ltv_assessment":
+        ltv = payload.get("ltv_ratio") or payload.get("ltv")
+        if isinstance(ltv, (int, float)):
+            if ltv <= 0.80:
+                return "low"
+            if ltv <= 0.95:
+                return "medium"
+            return "high"
+
+    if decision_id == "dti_calculation":
+        dti = payload.get("dti_ratio") or payload.get("dti")
+        if isinstance(dti, (int, float)):
+            if dti <= 0.36:
+                return "low"
+            if dti <= 0.43:
+                return "medium"
+            return "high"
+
+    if decision_id == "income_verification":
+        emp = payload.get("employment_type")
+        verified = payload.get("payroll_verified")
+        if emp == "salaried" and verified:
+            return "low"
+        if emp in ("self_employed", "contractor"):
+            return "medium"
+        # Falls through to confidence below.
+
+    if decision_id == "underwriting_decision":
+        risk = payload.get("risk_score")
+        if isinstance(risk, (int, float)):
+            if risk <= 0.25:
+                return "low"
+            if risk <= 0.60:
+                return "medium"
+            return "high"
+
+    # Last resort — confidence on the trace / queue item.
+    confidence = getattr(payload_or_item, "confidence", None)
+    return _risk_pill_for_confidence(confidence)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Policy inspection — list + detail
+# ─────────────────────────────────────────────────────────────────────
+
+
+# Display-friendly agency labels.
+AGENCY_LABELS: dict[str, str] = {
+    "lender_overlay": "Lender Overlay",
+    "freddie":        "Freddie Mac",
+    "fannie":         "Fannie Mae",
+    "fha":            "FHA",
+    "va":             "VA",
+    "usda":           "USDA",
+    "cfpb":           "CFPB",
+    "state":          "State",
+}
+
+
+def list_policies(platform: Platform) -> dict[str, Any]:
+    """Index of all active Policy + their PolicyVersions, grouped by
+    agency for navigation."""
+
+    policy_store = getattr(platform, "policy_store", None)
+    if policy_store is None:
+        return {"agencies": [], "total_policies": 0, "total_versions": 0}
+
+    policies = policy_store._iter_active_values("Policy")  # type: ignore[attr-defined]
+    versions = policy_store._iter_active_values("PolicyVersion")  # type: ignore[attr-defined]
+
+    # Group versions by policy_id.
+    versions_by_policy: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for v in versions:
+        versions_by_policy[v.get("policy_id", "")].append(v)
+    for pid in versions_by_policy:
+        versions_by_policy[pid].sort(
+            key=lambda v: v.get("version_number", 0), reverse=True
+        )
+
+    # Group policies by agency.
+    by_agency: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for p in policies:
+        agency = p.get("agency", "unknown")
+        decision_id = p.get("decision_id")
+        policy_versions = versions_by_policy.get(p.get("policy_id", ""), [])
+        latest = policy_versions[0] if policy_versions else None
+        by_agency[agency].append({
+            "policy_id": p.get("policy_id"),
+            "name":      p.get("name"),
+            "decision_id": decision_id,
+            "decision_label": PERSONA_LABELS.get(
+                decision_id, decision_id or "—"
+            ) if decision_id else "—",
+            "owner_team": p.get("owner_team"),
+            "product_scope": p.get("product_scope") or [],
+            "state_scope":   p.get("state_scope") or [],
+            "version_count": len(policy_versions),
+            "latest_version_id":     latest.get("policy_version_id") if latest else None,
+            "latest_version_number": latest.get("version_number") if latest else None,
+            "latest_valid_from":     latest.get("valid_from") if latest else None,
+            "latest_source_revision": latest.get("source_revision") if latest else None,
+        })
+
+    agencies = []
+    for agency in sorted(by_agency.keys()):
+        items = by_agency[agency]
+        items.sort(key=lambda i: (i.get("decision_id") or "", i.get("policy_id") or ""))
+        agencies.append({
+            "agency":       agency,
+            "label":        AGENCY_LABELS.get(agency, agency),
+            "policy_count": len(items),
+            "policies":     items,
+        })
+
+    return {
+        "agencies": agencies,
+        "total_policies": len(policies),
+        "total_versions": len(versions),
+    }
+
+
+def policy_version_detail(
+    platform: Platform, policy_version_id: str
+) -> Optional[dict[str, Any]]:
+    """Detail view for a single PolicyVersion."""
+
+    policy_store = getattr(platform, "policy_store", None)
+    if policy_store is None:
+        return None
+
+    versions = policy_store._iter_active_values("PolicyVersion")  # type: ignore[attr-defined]
+    version = next(
+        (v for v in versions if v.get("policy_version_id") == policy_version_id),
+        None,
+    )
+    if version is None:
+        return None
+
+    policies = policy_store._iter_active_values("Policy")  # type: ignore[attr-defined]
+    policy = next(
+        (p for p in policies if p.get("policy_id") == version.get("policy_id")),
+        None,
+    )
+
+    # All versions for this policy — supersession chain view.
+    siblings = sorted(
+        [v for v in versions if v.get("policy_id") == version.get("policy_id")],
+        key=lambda v: v.get("version_number", 0),
+        reverse=True,
+    )
+
+    boundary = version.get("boundary") or {}
+    boundary_clauses = []
+    for clause in ("block_if", "escalate_if", "recommend_if", "automate_if"):
+        rules = boundary.get(clause) or []
+        boundary_clauses.append({
+            "clause":     clause,
+            "rule_count": len(rules),
+            "rules":      list(rules),
+            "tone":       _clause_tone(clause),
+        })
+
+    return {
+        "policy_version_id": policy_version_id,
+        "version":           version,
+        "policy":            policy,
+        "agency":            policy.get("agency") if policy else None,
+        "agency_label":      AGENCY_LABELS.get(
+            policy.get("agency", "") if policy else "", "—"
+        ),
+        "decision_id":       policy.get("decision_id") if policy else None,
+        "decision_label":    PERSONA_LABELS.get(
+            policy.get("decision_id", "") if policy else "",
+            policy.get("decision_id", "") if policy else "—",
+        ),
+        "boundary_clauses":  boundary_clauses,
+        "siblings":          siblings,
+    }
+
+
+def _clause_tone(clause: str) -> str:
+    return {
+        "block_if":     "rose",
+        "escalate_if":  "orange",
+        "recommend_if": "amber",
+        "automate_if":  "emerald",
+    }.get(clause, "slate")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Document inspection — list per application + single doc detail
+# ─────────────────────────────────────────────────────────────────────
+
+
+# Display-friendly status pill tones for Document.status.
+DOC_STATUS_TONES: dict[str, str] = {
+    "verified":         "emerald",
+    "human_corrected":  "amber",
+    "ocr_extracted":    "amber",
+    "unverified":       "slate",
+    "rejected":         "rose",
+}
+
+
+def list_documents_for_application(
+    platform: Platform, application_id: str
+) -> dict[str, Any]:
+    """All Documents uploaded for an application + claim counts."""
+
+    knowledge_store = getattr(platform, "knowledge_store", None)
+    if knowledge_store is None:
+        return {
+            "application_id": application_id,
+            "documents": [],
+            "total_documents": 0,
+            "total_claims": 0,
+        }
+
+    docs_raw = _ks_list_sync(knowledge_store, "Document")
+    claims_raw = _ks_list_sync(knowledge_store, "Claim")
+
+    docs_for_app = [d for d in docs_raw if d.get("application_id") == application_id]
+    claims_for_app = [
+        c for c in claims_raw if c.get("application_id") == application_id
+    ]
+
+    claims_by_doc: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for c in claims_for_app:
+        doc_id = c.get("document_id")
+        if doc_id:
+            claims_by_doc[doc_id].append(c)
+
+    rows: list[dict[str, Any]] = []
+    for d in docs_for_app:
+        doc_id = d.get("document_id", "")
+        doc_claims = claims_by_doc.get(doc_id, [])
+        verified_claim_count = sum(1 for c in doc_claims if c.get("status") == "verified")
+        rows.append({
+            "document_id":  doc_id,
+            "doc_type":     d.get("doc_type"),
+            "status":       d.get("status"),
+            "status_tone":  DOC_STATUS_TONES.get(d.get("status", ""), "slate"),
+            "source_system": d.get("source_system"),
+            "source_url":   d.get("source_url"),
+            "uploaded_at":  d.get("uploaded_at"),
+            "uploaded_by":  d.get("uploaded_by"),
+            "verified_at":  d.get("verified_at"),
+            "verified_by":  d.get("verified_by"),
+            "ocr_confidence": d.get("ocr_confidence"),
+            "page_count":   d.get("page_count"),
+            "claim_count":  len(doc_claims),
+            "verified_claim_count": verified_claim_count,
+        })
+
+    rows.sort(key=lambda r: (r.get("doc_type") or "", r.get("uploaded_at") or ""))
+
+    return {
+        "application_id":   application_id,
+        "documents":        rows,
+        "total_documents":  len(rows),
+        "total_claims":     sum(r["claim_count"] for r in rows),
+    }
+
+
+def list_pending_claims(platform: Platform) -> dict[str, Any]:
+    """Cross-application pending-claim queue. Fed by KnowledgeStore;
+    each row links to the source document + has verify/reject actions."""
+
+    knowledge_store = getattr(platform, "knowledge_store", None)
+    if knowledge_store is None:
+        return {"claims": [], "total": 0}
+
+    claims_raw = _ks_list_sync(knowledge_store, "Claim")
+    docs_raw = _ks_list_sync(knowledge_store, "Document")
+    docs_by_id = {d.get("document_id"): d for d in docs_raw}
+
+    pending = [c for c in claims_raw if c.get("status") == "pending"]
+    pending.sort(key=lambda c: c.get("extracted_at") or "", reverse=True)
+
+    rows: list[dict[str, Any]] = []
+    for c in pending:
+        doc = docs_by_id.get(c.get("document_id"), {})
+        rows.append({
+            "claim_id":         c.get("claim_id"),
+            "document_id":      c.get("document_id"),
+            "doc_type":         doc.get("doc_type"),
+            "application_id":   c.get("application_id"),
+            "applicant_id":     c.get("applicant_id"),
+            "field_name":       c.get("field_name"),
+            "field_value":      c.get("field_value"),
+            "source_page":      c.get("source_page"),
+            "extraction_method": c.get("extraction_method"),
+            "extraction_confidence": c.get("extraction_confidence"),
+            "extracted_at":     c.get("extracted_at"),
+            "extracted_by":     c.get("extracted_by"),
+            "doc_status":       doc.get("status"),
+            "doc_ocr_confidence": doc.get("ocr_confidence"),
+        })
+
+    return {"claims": rows, "total": len(rows)}
+
+
+def document_detail_view(
+    platform: Platform, document_id: str
+) -> Optional[dict[str, Any]]:
+    """Single Document detail + all its Claims."""
+
+    knowledge_store = getattr(platform, "knowledge_store", None)
+    if knowledge_store is None:
+        return None
+
+    docs_raw = _ks_list_sync(knowledge_store, "Document")
+    doc = next(
+        (d for d in docs_raw if d.get("document_id") == document_id), None
+    )
+    if doc is None:
+        return None
+
+    claims_raw = _ks_list_sync(knowledge_store, "Claim")
+    claims_for_doc = [
+        c for c in claims_raw if c.get("document_id") == document_id
+    ]
+    claims_for_doc.sort(key=lambda c: c.get("field_name") or "")
+
+    return {
+        "document":   doc,
+        "doc_type":   doc.get("doc_type"),
+        "status":     doc.get("status"),
+        "status_tone": DOC_STATUS_TONES.get(doc.get("status", ""), "slate"),
+        "claims":     claims_for_doc,
+        "claim_count": len(claims_for_doc),
+        "verified_count": sum(1 for c in claims_for_doc if c.get("status") == "verified"),
+        "pending_count":  sum(1 for c in claims_for_doc if c.get("status") == "pending"),
+    }
+
+
 __all__ = [
+    "AGENCY_LABELS",
+    "DOC_STATUS_TONES",
     "application_detail",
     "decision_detail",
+    "document_detail_view",
     "list_applications",
+    "list_documents_for_application",
+    "list_pending_claims",
+    "list_persona_workbenches",
+    "list_policies",
     "list_workbenches",
+    "persona_workbench_view",
+    "policy_version_detail",
     "queue_view",
     "templates",
     "workbench_view",
     "OUTCOME_STYLES",
+    "PERSONA_LABELS",
+    "TIME_RANGES",
 ]

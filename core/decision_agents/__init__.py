@@ -3,6 +3,7 @@ from .base import AgentReasoning, DecisionAgent, DecisionAgentError
 from .mode_router import (
     HumanQueue,
     HumanQueueItem,
+    HumanQueueResolution,
     InMemoryHumanQueue,
     ModeRouter,
     RouteAction,
@@ -18,6 +19,7 @@ __all__ = [
     "DecisionAgentError",
     "HumanQueue",
     "HumanQueueItem",
+    "HumanQueueResolution",
     "InMemoryHumanQueue",
     "ModeRouter",
     "RouteAction",

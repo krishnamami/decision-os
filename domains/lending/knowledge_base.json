@@ -779,5 +779,80 @@
       ["approval_routing"],
       ["closing_readiness"]
     ]
+  },
+
+  "document_types": {
+    "_description": "Doc-type → decision permission matrix. The Knowledge Context Layer's Retriever uses this to filter which doc-derived Claims appear in each decision's bundle. ObjectType-level permission on Document/Claim is open to all 12 decisions; the FINE-grained gating lives here. Claims field_names listed are the canonical names extracted (manually for v1, LLM for STREAM E2).",
+
+    "w2": {
+      "label": "W-2 Wage and Tax Statement",
+      "feeds_decisions": ["income_verification", "dti_calculation", "underwriting_decision"],
+      "claims": ["verified_income", "employer", "employment_period_start", "employment_period_end"]
+    },
+    "pay_stub": {
+      "label": "Recent pay stub",
+      "feeds_decisions": ["income_verification", "dti_calculation", "underwriting_decision"],
+      "claims": ["verified_income", "payroll_verified", "employer", "pay_period"]
+    },
+    "tax_return_1040": {
+      "label": "IRS Form 1040 + schedules",
+      "feeds_decisions": ["income_verification", "dti_calculation", "underwriting_decision"],
+      "claims": ["verified_income", "self_employed_income", "business_name", "filing_year"]
+    },
+    "bank_statement": {
+      "label": "Bank statement (last 60 days)",
+      "feeds_decisions": ["income_verification", "fraud_screening", "underwriting_decision"],
+      "claims": ["verified_income", "average_balance", "large_deposits", "account_holder"]
+    },
+    "drivers_license": {
+      "label": "Driver's license (government photo ID)",
+      "feeds_decisions": ["fraud_screening", "compliance_check"],
+      "claims": ["full_name", "date_of_birth", "address", "id_expiration", "identity_match_confidence"]
+    },
+    "passport": {
+      "label": "Passport (government photo ID)",
+      "feeds_decisions": ["fraud_screening", "compliance_check"],
+      "claims": ["full_name", "date_of_birth", "passport_number", "identity_match_confidence"]
+    },
+    "ssn_card": {
+      "label": "Social Security card",
+      "feeds_decisions": ["fraud_screening", "compliance_check"],
+      "claims": ["ssn_hash", "full_name"]
+    },
+    "appraisal_report": {
+      "label": "Appraiser's URAR / 1004",
+      "feeds_decisions": ["ltv_assessment", "underwriting_decision", "closing_readiness"],
+      "claims": ["appraised_value", "property_type", "occupancy", "appraisal_date", "appraiser_license"]
+    },
+    "title_report": {
+      "label": "Title insurance commitment + search",
+      "feeds_decisions": ["closing_readiness"],
+      "claims": ["title_clear", "open_liens", "title_insurer", "title_effective_date"]
+    },
+    "insurance_binder": {
+      "label": "Hazard insurance binder",
+      "feeds_decisions": ["closing_readiness"],
+      "claims": ["insurance_carrier", "coverage_amount", "policy_effective_date"]
+    },
+    "closing_disclosure": {
+      "label": "TRID Closing Disclosure",
+      "feeds_decisions": ["closing_readiness", "compliance_check"],
+      "claims": ["cd_timing_compliant", "closing_disclosure_sent_at", "closing_costs_total", "loan_terms_match"]
+    },
+    "hmda_form": {
+      "label": "HMDA demographic information form",
+      "feeds_decisions": ["compliance_check"],
+      "claims": ["hmda_fields", "all_hmda_fields_complete"]
+    },
+    "employment_verification_letter": {
+      "label": "Verbal/written verification of employment (VOE)",
+      "feeds_decisions": ["income_verification", "underwriting_decision"],
+      "claims": ["employer", "employment_status", "start_date", "verified_by_hr"]
+    },
+    "purchase_contract": {
+      "label": "Purchase agreement",
+      "feeds_decisions": ["ltv_assessment", "underwriting_decision", "closing_readiness"],
+      "claims": ["purchase_price", "earnest_money", "closing_date_target", "seller_concessions"]
+    }
   }
 }

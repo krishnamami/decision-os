@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+{% block title %}{{ persona_label }}{% endblock %}
+{% block content %}
+
+<div class="mb-3">
+  <a href="/ui/personas" class="text-sm text-indigo-600 hover:text-indigo-800">
+    ← All personas
+  </a>
+</div>
+
+{# ── Header strip ────────────────────────────────────────────────── #}
+<div class="bg-white border border-slate-200 rounded-lg p-4 mb-4">
+  <div class="flex flex-wrap items-center gap-3">
+    <div class="flex items-center gap-2 overflow-x-auto whitespace-nowrap">
+      {% for sib in siblings %}
+        <a href="/ui/personas/{{ sib.decision_id }}"
+           class="text-sm font-medium px-3 py-1.5 rounded border
+                  {% if sib.active %}
+                    bg-slate-900 text-white border-slate-900
+                  {% else %}
+                    bg-white text-slate-700 border-slate-300 hover:border-slate-400
+                  {% endif %}">
+          {{ sib.label }}
+        </a>
+      {% endfor %}
+    </div>
+    <div class="text-xs text-slate-500 mono ml-3">
+      {{ decision_id }} · {{ persona }}
+    </div>
+    <form method="get" class="ml-auto">
+      <input type="hidden" name="application_id" value="{{ selected_application_id or '' }}">
+      <select name="time_range"
+              onchange="this.form.submit()"
+              class="border border-slate-300 rounded px-3 py-1.5 text-sm bg-white">
+        {% for r in time_ranges %}
+          <option value="{{ r.key }}" {% if r.selected %}selected{% endif %}>
+            {{ r.label }}
+          </option>
+        {% endfor %}
+      </select>
+    </form>
+  </div>
+</div>
+
+{# ── KPI strip ───────────────────────────────────────────────────── #}
+<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+  <div class="bg-white border border-slate-200 rounded-lg p-4">
+    <div class="text-xs text-slate-500">Decisions completed</div>
+    <div class="text-3xl font-semibold mono text-slate-800 mt-1">
+      {{ '{:,}'.format(kpis.decisions_completed) }}
+    </div>
+    <div class="text-[10px] text-slate-400 mt-0.5">{{ time_range_label }}</div>
+  </div>
+  <div class="bg-white border border-slate-200 rounded-lg p-4">
+    <div class="text-xs text-slate-500">Pending review
+      <span class="ml-2 text-[10px] px-1.5 py-0.5 rounded
+                   {% if kpis.pending_review > 0 %}bg-amber-50 text-amber-700{% else %}bg-slate-100 text-slate-500{% endif %}">
+        In queue now
+      </span>
+    </div>
+    <div class="text-3xl font-semibold mono mt-1
+                {% if kpis.pending_review > 0 %}text-amber-700{% else %}text-slate-700{% endif %}">
+      {{ kpis.pending_review }}
+    </div>
+  </div>
+  <div class="bg-white border border-slate-200 rounded-lg p-4">
+    <div class="text-xs text-slate-500">Auto-decided
+      <span class="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">
+        By AI agent
+      </span>
+    </div>
+    <div class="text-3xl font-semibold mono text-emerald-700 mt-1">
+      {% if kpis.auto_decided_pct is not none %}{{ '%.0f'|format(kpis.auto_decided_pct * 100) }}%{% else %}—{% endif %}
+    </div>
+  </div>
+  <div class="bg-white border border-slate-200 rounded-lg p-4">
+    <div class="text-xs text-slate-500">Avg time to decide
+      <span class="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700">
+        Human reviews
+      </span>
+    </div>
+    <div class="text-3xl font-semibold mono text-slate-800 mt-1">
+      {% if kpis.avg_review_ms is not none %}
+        {{ '%.0f'|format(kpis.avg_review_ms / 60000) }}min
+      {% else %}—{% endif %}
+    </div>
+    <div class="text-[10px] text-slate-400 mt-0.5">
+      {{ kpis.human_reviewed_count }} review{% if kpis.human_reviewed_count != 1 %}s{% endif %}
+    </div>
+  </div>
+</div>
+
+{# ── View tabs ───────────────────────────────────────────────────── #}
+<div class="flex items-center gap-1 mb-4 border-b border-slate-200">
+  {% for t in [('workbench','Workbench'),('history','History'),('analytics','Analytics')] %}
+    {% set key = t[0] %}{% set label = t[1] %}
+    <a href="?tab={{ key }}{% if selected_application_id %}&application_id={{ selected_application_id }}{% endif %}&time_range={{ time_range }}"
+       class="px-4 py-2 text-sm rounded-t border-x border-t -mb-px
+              {% if tab == key %}
+                bg-white border-slate-200 text-slate-900 font-medium
+              {% else %}
+                bg-transparent border-transparent text-slate-500 hover:text-slate-700
+              {% endif %}">
+      {{ label }}
+    </a>
+  {% endfor %}
+</div>
+
+{# ── Body ────────────────────────────────────────────────────────── #}
+
+{% if tab == 'workbench' %}
+<div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
+
+  {# Left column — queue OR recently completed #}
+  <section class="lg:col-span-2 bg-white border border-slate-200 rounded-lg p-4">
+    <div class="flex items-baseline justify-between mb-3">
+      <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider">
+        {% if is_auto %}Recently completed{% else %}{{ decision_name }} queue{% endif %}
+      </h2>
+      <span class="text-xs mono text-slate-400">
+        {{ left_rows | length }} {% if is_auto %}recent{% else %}pending{% endif %}
+      </span>
+    </div>
+
+    {% if left_rows %}
+      <ul class="space-y-2">
+        {% for row in left_rows %}
+          {% set tone = row.avatar_tone %}
+          <li class="border rounded-lg p-3 transition
+                     {% if row.is_selected %}
+                       border-indigo-300 bg-indigo-50/40
+                     {% elif row.is_queued %}
+                       border-amber-300 bg-amber-50/40 hover:border-amber-400
+                     {% else %}
+                       border-slate-200 hover:border-slate-300
+                     {% endif %}">
+            <a href="?application_id={{ row.application_id }}&tab={{ tab }}&time_range={{ time_range }}"
+               class="block">
+              <div class="flex items-start gap-3">
+                <div class="w-9 h-9 rounded-full flex items-center justify-center text-xs font-semibold
+                            bg-{{ tone }}-100 text-{{ tone }}-800 shrink-0">
+                  {{ row.initials }}
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2">
+                    <div class="text-sm font-medium text-slate-900 truncate">
+                      {{ row.display_name }}
+                    </div>
+                    {% if row.is_queued %}
+                      <span class="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded
+                                   bg-amber-200 text-amber-900 shrink-0">
+                        Pending review
+                      </span>
+                    {% endif %}
+                  </div>
+                  <div class="text-xs text-slate-500 mono truncate">
+                    {{ row.loan_summary }}
+                  </div>
+                </div>
+                <div class="flex flex-col items-end gap-1 shrink-0">
+                  <div class="text-sm font-semibold mono text-slate-800">
+                    {{ row.amount | currency }}
+                  </div>
+                  <div class="text-[11px] text-slate-400">
+                    {% if row.ago_minutes is not none %}
+                      {% if row.ago_minutes < 60 %}{{ row.ago_minutes }} min ago
+                      {% elif row.ago_minutes < 1440 %}{{ (row.ago_minutes // 60) }}h {{ (row.ago_minutes % 60) }}m ago
+                      {% else %}{{ (row.ago_minutes // 1440) }}d ago{% endif %}
+                    {% else %}—{% endif %}
+                  </div>
+                  <div class="flex items-center gap-1">
+                    {% if row.outcome %}
+                      <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded
+                                   {{ row.outcome_style.bg }} {{ row.outcome_style.text }}">
+                        {{ row.outcome }}
+                      </span>
+                    {% endif %}
+                    <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded
+                                 {% if row.risk_pill == 'low' %}bg-emerald-50 text-emerald-700
+                                 {% elif row.risk_pill == 'medium' %}bg-amber-50 text-amber-700
+                                 {% else %}bg-rose-50 text-rose-700{% endif %}">
+                      {{ row.risk_pill }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </a>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <div class="text-sm text-slate-400">
+        {% if is_auto %}
+          No traces yet for this persona — once events flow, recently-completed
+          decisions appear here.
+        {% else %}
+          Queue is empty. Either every applicant cleared the AI's auto threshold
+          or no events have been ingested yet.
+        {% endif %}
+      </div>
+    {% endif %}
+  </section>
+
+  {# Right column — focused application detail #}
+  <section class="lg:col-span-3">
+    {% if focused %}
+      {% include "_persona_detail.html" %}
+    {% else %}
+      <div class="bg-white border border-dashed border-slate-300 rounded-lg p-10 text-center text-sm text-slate-500">
+        Pick an application from the {% if is_auto %}list{% else %}queue{% endif %} to inspect the AI's reasoning and act on it.
+      </div>
+    {% endif %}
+  </section>
+
+</div>
+{% elif tab == 'history' %}
+  <div class="bg-white border border-slate-200 rounded-lg p-10 text-center">
+    <div class="text-sm text-slate-700 font-medium">History view</div>
+    <div class="text-xs text-slate-500 mt-2">
+      Past decisions for this persona, including overrides and learnings. Coming
+      soon — for now use Workbench tab and the
+      <a href="/ui/queue" class="text-indigo-600 hover:text-indigo-800">cross-persona queue</a>.
+    </div>
+  </div>
+{% else %}
+  <div class="bg-white border border-slate-200 rounded-lg p-10 text-center">
+    <div class="text-sm text-slate-700 font-medium">Analytics view</div>
+    <div class="text-xs text-slate-500 mt-2">
+      Accuracy vs human override, confidence distribution, SLA breach rate over
+      time. Coming soon.
+    </div>
+  </div>
+{% endif %}
+
+{% endblock %}

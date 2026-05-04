@@ -1,0 +1,7 @@
+event_type,customer_id,application_id,lead_source,channel,session_behavior,loan_purpose,requested_amount,property_state,kyc_status,identity_match_confidence,stated_income,employment_type,employer,gross_amount,period_start,period_end,verified,address,appraised_value,purchase_price
+lead_received,cust_jumbo,,referral,broker,"{""pages_viewed"": 6, ""time_on_site_seconds"": 180}",,,,,,,,,,,,,,,
+application_submitted,cust_jumbo,app_jumbo,,,,purchase,1200000,CA,,,,,,,,,,,,
+kyc_completed,cust_jumbo,app_jumbo,,,,,,,verified,0.98,,,,,,,,,,
+income_declared,cust_jumbo,app_jumbo,,,,,,,,,420000,salaried,,,,,,,,
+payroll_received,cust_jumbo,app_jumbo,,,,,,,,,,,Goldman Sachs,420000,2026-01-01T00:00:00,2026-04-30T00:00:00,true,,,
+property_appraised,cust_jumbo,app_jumbo,,,,,,,,,,,,,,,,"99 Pacific Heights, San Francisco, CA",1500000,1500000

@@ -17,7 +17,13 @@ from core.decision_agents import (
     ModeRouter,
 )
 from core.execution.dag_executor import DAGExecutor, InMemoryEventBus
-from core.policy_engine import DecisionsSpec, PolicyEvaluator, load_spec
+from core.knowledge import KnowledgeStore, MetadataRetriever, Retriever
+from core.policy_engine import (
+    DecisionsSpec,
+    PolicyEvaluator,
+    PolicyStore,
+    load_spec,
+)
 from core.trace import (
     CriticAgent,
     InMemoryLearningStore,
@@ -76,6 +82,9 @@ class Platform:
         mode_router: ModeRouter,
         human_queue: InMemoryHumanQueue,
         entity_resolver: EntityResolverFn,
+        policy_store: PolicyStore,
+        knowledge_store: KnowledgeStore,
+        retriever: Retriever,
     ):
         self.spec = spec
         self.store = store
@@ -92,6 +101,9 @@ class Platform:
         self.mode_router = mode_router
         self.human_queue = human_queue
         self.entity_resolver = entity_resolver
+        self.policy_store = policy_store
+        self.knowledge_store = knowledge_store
+        self.retriever = retriever
 
         self.agents: dict[str, DecisionAgent] = {}
         self.connectors: dict[str, BaseConnector] = {}
@@ -138,19 +150,57 @@ class Platform:
 def _default_resolver(store: LendingContextStore) -> EntityResolverFn:
     """Resolver used when a caller doesn't pass one in.
 
-    Walks the SHARED scope of the durable store and returns every active
-    entity_id whose object_type matches and whose record either is the
-    Application itself or carries a matching application_id. Cheap,
-    dependency-free, correct for the in-memory backend; the production
-    swap is a SQL ``SELECT entity_id ... WHERE entity_type = $1 AND
-    decision_id IS NULL`` plus the same filter."""
+    Walks the SHARED scope of the durable store and returns the
+    entity_ids that belong to ``application_id``. Two scoping rules:
+
+      Application-bound entities (Application, Property, Loan,
+        ComplianceRecord) — filter by ``value.application_id ==
+        application_id``.
+      Applicant-bound entities (Applicant, FraudProfile, CreditProfile,
+        IncomeProfile) — look up the Application's applicant_id, then
+        filter by ``value.applicant_id == applicant_id``.
+
+    Cheap, dependency-free, correct for the in-memory backend. The
+    production swap is two SQL SELECTs (one for the Application-row
+    join + one for the matching profiles).
+
+    Earlier versions had a bug here — Applicant-bound entities all have
+    ``application_id=None`` because they belong to the applicant, not
+    the application. The previous resolver matched on
+    ``value.application_id in (application_id, None)`` which let ALL
+    FraudProfile records (any applicant) into every application's
+    bundle. When scenarios shared a platform this produced
+    non-deterministic outcomes (latest_object picked one cross-tenant
+    profile over another based on sub-second timestamp ties).
+    Session 9 fix: filter by applicant_id explicitly."""
 
     durable = store._durable  # type: ignore[attr-defined]
+
+    APPLICANT_BOUND = {"Applicant", "FraudProfile", "CreditProfile", "IncomeProfile"}
 
     async def _resolve(object_type_id: str, application_id: str) -> list[str]:
         records = getattr(durable, "_records", None)
         if not isinstance(records, list):
             return []
+
+        # Find this Application's applicant_id. Applicant-bound entity
+        # filtering depends on it; if the Application doesn't carry one
+        # (legacy / partial-hydration cases) those entities can't be
+        # filtered safely, so return [] rather than leaking other
+        # applicants' data.
+        applicant_id: Optional[str] = None
+        for rec in records:
+            if (
+                rec.entity_type == "Application"
+                and rec.entity_id == application_id
+                and rec.decision_id is None
+                and rec.superseded_at is None
+            ):
+                value = rec.value if isinstance(rec.value, dict) else {}
+                applicant_id = value.get("applicant_id") or None
+                break
+
+        # Latest active record per entity_id for the requested type.
         latest_by_id: dict[str, Any] = {}
         for rec in records:
             if rec.entity_type != object_type_id:
@@ -166,17 +216,21 @@ def _default_resolver(store: LendingContextStore) -> EntityResolverFn:
         ids: list[str] = []
         for entity_id, rec in latest_by_id.items():
             value = rec.value if isinstance(rec.value, dict) else {}
+
             if object_type_id == "Application":
                 if entity_id == application_id:
                     ids.append(entity_id)
                 continue
-            # Applicant has no application_id field; keep all applicants
-            # the test fixture wrote — there's typically one per app in
-            # the seed scenarios.
-            if object_type_id == "Applicant":
-                ids.append(entity_id)
+
+            if object_type_id in APPLICANT_BOUND:
+                if applicant_id is None:
+                    continue  # safer to drop than to leak
+                if value.get("applicant_id") == applicant_id:
+                    ids.append(entity_id)
                 continue
-            if value.get("application_id") in (application_id, None):
+
+            # Application-bound default — Property / Loan / ComplianceRecord.
+            if value.get("application_id") == application_id:
                 ids.append(entity_id)
         return ids
 
@@ -197,7 +251,10 @@ def build_default_platform(
     durable = InMemoryDurableStore()
     store = LendingContextStore(hot, durable)
 
-    builder = ContextBuilder(store, spec.to_dict())
+    knowledge_store = KnowledgeStore(store)
+    retriever = MetadataRetriever(knowledge_store)
+
+    builder = ContextBuilder(store, spec.to_dict(), retriever=retriever)
     evaluator = PolicyEvaluator(spec.to_dict())
     trace_writer = InMemoryTraceWriter()
     learning_store = InMemoryLearningStore()
@@ -208,12 +265,16 @@ def build_default_platform(
 
     queue = InMemoryHumanQueue()
     mode_router = ModeRouter(store, queue)
+
+    policy_store = PolicyStore(store)
+
     atomic_tool = AtomicTool(
         builder=builder,
         evaluator=evaluator,
         critic=critic or CriticAgent(),
         trace_writer=trace_writer,
         router=mode_router,
+        policy_store=policy_store,
     )
 
     event_log = EventLog()
@@ -238,6 +299,9 @@ def build_default_platform(
         mode_router=mode_router,
         human_queue=queue,
         entity_resolver=resolver,
+        policy_store=policy_store,
+        knowledge_store=knowledge_store,
+        retriever=retriever,
     )
 
 

@@ -4,77 +4,148 @@
 
 <div class="flex items-baseline justify-between mb-6">
   <h1 class="text-2xl font-semibold tracking-tight">Human queue</h1>
-  <div class="text-sm text-slate-500">
-    {{ items | length }} item{{ '' if items | length == 1 else 's' }} pending review
+  <div class="text-sm text-slate-500 flex gap-4">
+    <span>
+      {{ open_count }} open
+    </span>
+    <span class="text-slate-400">·</span>
+    <span>
+      {{ resolved_count }} resolved this session
+    </span>
   </div>
 </div>
 
-{% if items %}
+{# ── Open queue ──────────────────────────────────────────────────── #}
+<section class="mb-6">
+  <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2">
+    Open · {{ open_count }} pending review
+  </h2>
+  {% if items %}
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="bg-slate-50 text-slate-500 text-left">
+          <tr>
+            <th class="px-4 py-3 font-medium">Application</th>
+            <th class="px-4 py-3 font-medium">Decision</th>
+            <th class="px-4 py-3 font-medium">Persona</th>
+            <th class="px-4 py-3 font-medium">Proposed</th>
+            <th class="px-4 py-3 font-medium">Confidence</th>
+            <th class="px-4 py-3 font-medium">Enqueued</th>
+            <th class="px-4 py-3 font-medium"></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for item in items %}
+            <tr class="hover:bg-slate-50">
+              <td class="px-4 py-3 mono">
+                <a href="/ui/applications/{{ item.application_id }}"
+                   class="text-indigo-700 hover:text-indigo-900">
+                  {{ item.application_id }}
+                </a>
+              </td>
+              <td class="px-4 py-3 mono">{{ item.decision_id }}</td>
+              <td class="px-4 py-3 mono text-slate-500 text-xs">{{ item.agent_id }}</td>
+              <td class="px-4 py-3">
+                <span class="px-2 py-0.5 rounded text-xs font-medium
+                             {{ item.outcome_style.bg }} {{ item.outcome_style.text }}">
+                  {{ item.proposed_outcome }}
+                </span>
+              </td>
+              <td class="px-4 py-3 mono text-slate-700">
+                {{ item.confidence | confidence }}
+              </td>
+              <td class="px-4 py-3 mono text-xs text-slate-500">
+                {{ item.enqueued_at | dt }}
+              </td>
+              <td class="px-4 py-3 text-right">
+                <a href="/ui/applications/{{ item.application_id }}/decisions/{{ item.decision_id }}"
+                   class="text-sm text-indigo-600 hover:text-indigo-800 font-medium">
+                  Review →
+                </a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="bg-white border border-slate-200 rounded-lg p-6 text-center text-sm text-slate-500">
+      Open queue is empty. Either every decision auto-cleared or every
+      queued item has been resolved this session.
+    </div>
+  {% endif %}
+</section>
+
+{# ── Resolved this session ─────────────────────────────────────── #}
+{% if resolved %}
+<section class="mb-6">
+  <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2">
+    Resolved this session · {{ resolved_count }}
+  </h2>
   <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
     <table class="w-full text-sm">
       <thead class="bg-slate-50 text-slate-500 text-left">
         <tr>
           <th class="px-4 py-3 font-medium">Application</th>
           <th class="px-4 py-3 font-medium">Decision</th>
-          <th class="px-4 py-3 font-medium">Persona</th>
-          <th class="px-4 py-3 font-medium">Proposed</th>
-          <th class="px-4 py-3 font-medium">Confidence</th>
-          <th class="px-4 py-3 font-medium">Enqueued</th>
+          <th class="px-4 py-3 font-medium">Resolution</th>
+          <th class="px-4 py-3 font-medium">Reviewer</th>
+          <th class="px-4 py-3 font-medium">Resolved at</th>
           <th class="px-4 py-3 font-medium"></th>
         </tr>
       </thead>
       <tbody class="divide-y divide-slate-100">
-        {% for item in items %}
+        {% for r in resolved %}
           <tr class="hover:bg-slate-50">
             <td class="px-4 py-3 mono">
-              <a href="/ui/applications/{{ item.application_id }}"
+              <a href="/ui/applications/{{ r.application_id }}"
                  class="text-indigo-700 hover:text-indigo-900">
-                {{ item.application_id }}
+                {{ r.application_id }}
               </a>
             </td>
-            <td class="px-4 py-3 mono">{{ item.decision_id }}</td>
-            <td class="px-4 py-3 mono text-slate-500 text-xs">{{ item.agent_id }}</td>
+            <td class="px-4 py-3">
+              <div class="text-sm text-slate-800">{{ r.decision_label }}</div>
+              <div class="text-[11px] mono text-slate-400">{{ r.decision_id }}</div>
+            </td>
             <td class="px-4 py-3">
               <span class="px-2 py-0.5 rounded text-xs font-medium
-                           {{ item.outcome_style.bg }} {{ item.outcome_style.text }}">
-                {{ item.proposed_outcome }}
+                           bg-{{ r.resolution_tone }}-50 text-{{ r.resolution_tone }}-700
+                           border border-{{ r.resolution_tone }}-200">
+                {{ r.resolution }}
               </span>
             </td>
-            <td class="px-4 py-3 mono text-slate-700">
-              {{ item.confidence | confidence }}
+            <td class="px-4 py-3 text-sm">
+              <div class="text-slate-800">{{ r.reviewer_role }}</div>
+              <div class="text-[11px] mono text-slate-400">{{ r.reviewer_id }}</div>
             </td>
             <td class="px-4 py-3 mono text-xs text-slate-500">
-              {{ item.enqueued_at | dt }}
+              {{ r.resolved_at | dt }}
             </td>
             <td class="px-4 py-3 text-right">
-              <a href="/ui/applications/{{ item.application_id }}/decisions/{{ item.decision_id }}"
-                 class="text-sm text-indigo-600 hover:text-indigo-800 font-medium">
-                Review →
-              </a>
+              <a href="/ui/applications/{{ r.application_id }}/decisions/{{ r.decision_id }}"
+                 class="text-sm text-indigo-600 hover:text-indigo-800">Trace →</a>
             </td>
           </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
-
-  <div class="mt-8 text-xs text-slate-500 leading-relaxed">
-    <strong class="text-slate-700">Queue mechanics:</strong>
-    Decisions land here when <span class="mono">mode</span> ∈
-    <span class="mono">{recommend, human_approval}</span> or outcome ∈
-    <span class="mono">{recommend, escalate}</span> — the
-    <span class="mono">ModeRouter</span> chose
-    <span class="mono">QUEUE_HUMAN</span> over auto-writeback. Reviewing
-    a decision attaches a <span class="mono">HumanReview</span> to the
-    trace. If the reviewer overrides the AI, the override is captured
-    as an <span class="mono">AgentLearning</span> and replayed to the
-    same agent on the next similar event (365-day retention).
-  </div>
-{% else %}
-  <div class="bg-white border border-slate-200 rounded-lg p-8 text-center text-slate-500">
-    Queue is empty. Run a scenario that has <span class="mono">human_approval</span>
-    decisions or RECOMMEND outcomes to populate this view.
-  </div>
+</section>
 {% endif %}
+
+<div class="mt-8 text-xs text-slate-500 leading-relaxed">
+  <strong class="text-slate-700">Queue mechanics:</strong>
+  Decisions land in <em>open</em> when <span class="mono">mode</span> ∈
+  <span class="mono">{recommend, human_approval}</span> or outcome ∈
+  <span class="mono">{recommend, escalate}</span> — the
+  <span class="mono">ModeRouter</span> chose
+  <span class="mono">QUEUE_HUMAN</span> over auto-writeback. Approve/Decline
+  on the persona workbench attaches a <span class="mono">HumanReview</span>
+  to the trace AND calls
+  <span class="mono">HumanQueue.resolve()</span>, which moves the item
+  to <em>resolved</em> with an audit receipt. Override-class declines
+  are captured as an <span class="mono">AgentLearning</span> and replayed
+  to the same agent on the next similar event (365-day retention).
+</div>
 
 {% endblock %}

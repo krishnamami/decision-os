@@ -183,8 +183,15 @@ class DAGExecutor:
         self,
         application_id: str,
         resolver: EntityResolver,
+        *,
+        evaluation_at: Optional[datetime] = None,
     ) -> ExecutionResult:
         started = datetime.utcnow()
+        # `evaluation_at` pins every decision in this DAG run to the
+        # same moment for policy-version lookup. Live path leaves it
+        # None; replay's full-DAG path passes replay_at so all decisions
+        # consult the rule version that was in force at that instant.
+        self._evaluation_at = evaluation_at
 
         upstream_summaries: dict[str, UpstreamSummary] = {}
         outcomes: dict[str, DecisionOutcome] = {}
@@ -417,6 +424,7 @@ class DAGExecutor:
             resolver=resolver,
             upstream=upstream,
             spec_version=self._spec_version,
+            evaluation_at=getattr(self, "_evaluation_at", None),
         )
 
     # ── Bus convenience ──────────────────────────────────────────────

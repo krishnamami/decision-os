@@ -61,6 +61,33 @@ SCENARIOS: dict[str, dict[str, Any]] = {
         ),
         "expected_halt": False,
     },
+    "fha": {
+        "description": (
+            "First-time homebuyer FHA loan with 96.5% LTV. Demonstrates "
+            "the multi-agency policy chain — atomic_tool consults BOTH "
+            "lender_overlay and FHA PolicyVersions for ltv_assessment, "
+            "and the trace.policy_chain captures both consulted ids."
+        ),
+        "expected_halt": False,
+    },
+    "jumbo": {
+        "description": (
+            "High-net-worth jumbo purchase ($1.2M loan, 80% LTV). "
+            "loan_type=jumbo → agency_chain=['lender_overlay'] only "
+            "(no agency conforming guideline applies). Demonstrates "
+            "the lender-only policy path."
+        ),
+        "expected_halt": False,
+    },
+    "va": {
+        "description": (
+            "VA loan — military applicant, 0% down (full VA "
+            "entitlement), VA. loan_type=va → agency_chain="
+            "['lender_overlay', 'va']. Until a VA PolicyVersion is "
+            "seeded (STREAM E2 / D), the chain stays single-entry."
+        ),
+        "expected_halt": False,
+    },
 }
 
 

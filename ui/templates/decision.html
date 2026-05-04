@@ -458,6 +458,98 @@
         </section>
       {% endif %}
 
+      {# Policy applied — STREAM C phase 2 surfacing #}
+      {% if policy_panel %}
+        <section class="bg-white border border-slate-200 rounded-lg p-5">
+          <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">
+            Policy applied
+          </h2>
+          <div class="bg-indigo-50/40 border border-indigo-200 rounded-lg p-3 text-sm space-y-1.5">
+            <div class="flex items-baseline justify-between">
+              <div class="font-medium text-slate-900">
+                {{ policy_panel.policy_name or policy_panel.policy_id or '—' }}
+              </div>
+              <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800">
+                {{ policy_panel.agency or 'lender_overlay' }}
+              </span>
+            </div>
+            <div class="text-xs">
+              <a href="/ui/policies/{{ policy_panel.policy_version_id }}"
+                 class="mono text-indigo-700 hover:text-indigo-900 hover:underline">
+                {{ policy_panel.policy_version_id }}
+              </a>
+            </div>
+            <div class="text-xs text-slate-500">
+              {% if policy_panel.source_revision %}
+                source: <span class="mono">{{ policy_panel.source_revision }}</span>
+              {% endif %}
+              {% if policy_panel.valid_from %}
+                · effective <span class="mono">{{ policy_panel.valid_from | dt }}</span>
+                {% if policy_panel.valid_to %}
+                  → <span class="mono">{{ policy_panel.valid_to | dt }}</span>
+                {% else %}
+                  → current
+                {% endif %}
+              {% endif %}
+            </div>
+            {% if policy_panel.chain_size > 1 %}
+              <div class="text-[11px] mono text-slate-500">
+                chain ({{ policy_panel.chain_size }}):
+                {% for v in policy_panel.policy_chain %}
+                  <a href="/ui/policies/{{ v }}"
+                     class="bg-white border border-slate-200 px-1.5 py-0.5 rounded mr-1 hover:border-indigo-400 hover:text-indigo-700">
+                    {{ v }}
+                  </a>
+                {% endfor %}
+              </div>
+            {% endif %}
+          </div>
+        </section>
+      {% endif %}
+
+      {# Evidence — STREAM E v0 surfacing #}
+      {% if evidence_panel and evidence_panel.claims %}
+        <section class="bg-white border border-slate-200 rounded-lg p-5">
+          <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+            <span>Evidence — {{ evidence_panel.claims | length }} verified claim{% if evidence_panel.claims | length != 1 %}s{% endif %}</span>
+            {% if evidence_panel.frozen %}
+              <span class="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 normal-case">
+                frozen at decision time
+              </span>
+            {% endif %}
+          </h2>
+          <ul class="space-y-2">
+            {% for c in evidence_panel.claims %}
+              <li class="border border-slate-200 rounded-lg p-3">
+                <div class="flex items-baseline justify-between">
+                  <div class="text-sm">
+                    <span class="text-slate-600 mono">{{ c.field_name }}</span>
+                    <span class="text-slate-400 mx-1">→</span>
+                    <span class="font-medium text-slate-900 mono">{{ c.value }}</span>
+                  </div>
+                  <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">
+                    verified
+                  </span>
+                </div>
+                <div class="text-[11px] text-slate-500 mt-1">
+                  <span class="mono">{{ c.doc_type }}</span>
+                  · doc
+                  <a href="/ui/documents/{{ c.source_doc_id }}"
+                     class="mono text-indigo-700 hover:text-indigo-900 hover:underline">
+                    {{ c.source_doc_id }}
+                  </a>
+                  {% if c.source_page %} · p.{{ c.source_page }}{% endif %}
+                  {% if c.verified_by %} · {{ c.verified_by }}{% endif %}
+                  {% if c.extraction_confidence %}
+                    · conf <span class="mono">{{ '%.2f'|format(c.extraction_confidence) }}</span>
+                  {% endif %}
+                </div>
+              </li>
+            {% endfor %}
+          </ul>
+        </section>
+      {% endif %}
+
       {# Output payload #}
       {% if trace.output_payload %}
         <section class="bg-white border border-slate-200 rounded-lg p-5">

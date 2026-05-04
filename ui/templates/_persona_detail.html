@@ -1,0 +1,345 @@
+{% set f = focused %}
+{% set tone = f.avatar_tone %}
+
+<div id="persona-detail" class="bg-white border border-slate-200 rounded-lg p-5">
+
+  {% if f.flash %}
+    <div class="mb-4 text-sm rounded-lg p-3 border
+                {% if f.flash.tone == 'error' %}bg-rose-50 border-rose-200 text-rose-900
+                {% elif f.flash.tone == 'success' %}bg-emerald-50 border-emerald-200 text-emerald-900
+                {% else %}bg-indigo-50 border-indigo-200 text-indigo-900{% endif %}">
+      {{ f.flash.message }}
+    </div>
+  {% endif %}
+
+  {# ── Detail header ─────────────────────────────────────────────── #}
+  <div class="flex items-start gap-3">
+    <div class="w-12 h-12 rounded-full flex items-center justify-center text-sm font-semibold
+                bg-{{ tone }}-100 text-{{ tone }}-800 shrink-0">
+      {{ f.initials }}
+    </div>
+    <div class="flex-1 min-w-0">
+      <div class="flex items-center gap-2">
+        <h3 class="text-base font-medium text-slate-900">{{ f.display_name }}</h3>
+        <a href="/ui/applications/{{ f.application_id }}/decisions/{{ decision_id }}"
+           class="text-xs text-indigo-600 hover:text-indigo-800">Full trace →</a>
+      </div>
+      <div class="text-xs text-slate-500 mono">
+        {{ f.loan_summary }} · {{ f.amount | currency }}
+      </div>
+    </div>
+    <div class="text-right shrink-0">
+      <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded
+                   {% if f.risk_pill == 'low' %}bg-emerald-50 text-emerald-700
+                   {% elif f.risk_pill == 'medium' %}bg-amber-50 text-amber-700
+                   {% else %}bg-rose-50 text-rose-700{% endif %}">
+        {{ f.risk_pill }} risk
+      </span>
+      {% if f.outcome %}
+        <div class="mt-1">
+          <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded
+                       {{ f.outcome_style.bg }} {{ f.outcome_style.text }}">
+            {{ f.outcome }}
+          </span>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ── Application Context ───────────────────────────────────────── #}
+  {% if f.application_context %}
+  <div class="mt-5">
+    <div class="text-[11px] font-medium text-slate-500 uppercase tracking-wider mb-2">
+      Application context
+    </div>
+    <dl class="divide-y divide-slate-100">
+      {% for row in f.application_context %}
+        <div class="flex items-center justify-between py-1.5">
+          <dt class="text-sm text-slate-600">{{ row.label }}</dt>
+          <dd class="text-sm font-medium mono text-slate-800">
+            {% if row.fmt == 'pct' %}
+              {{ row.value | pct }}
+            {% elif row.fmt == 'currency' %}
+              {{ row.value | currency }}
+            {% else %}
+              {{ row.value }}
+            {% endif %}
+          </dd>
+        </div>
+      {% endfor %}
+    </dl>
+  </div>
+  {% endif %}
+
+  {# ── Signals Evaluated ─────────────────────────────────────────── #}
+  {% if f.signals_evaluated %}
+  <div class="mt-5">
+    <div class="text-[11px] font-medium text-slate-500 uppercase tracking-wider mb-2">
+      Signals evaluated
+    </div>
+    <dl class="divide-y divide-slate-100">
+      {% for sig in f.signals_evaluated %}
+        <div class="flex items-center justify-between py-1.5">
+          <dt class="text-sm text-slate-600 flex items-center gap-2">
+            <span class="w-1.5 h-1.5 rounded-full
+                         {% if sig.direction == 'supports' %}bg-emerald-500
+                         {% elif sig.direction == 'contradicts' %}bg-rose-500
+                         {% else %}bg-slate-400{% endif %}"></span>
+            {{ sig.name }}
+          </dt>
+          <dd class="text-sm font-medium mono text-slate-800">
+            {% if sig.value is none %}—
+            {% elif sig.value is sameas true %}true
+            {% elif sig.value is sameas false %}false
+            {% else %}{{ sig.value }}{% endif %}
+            {% if sig.notes %}
+              <span class="ml-1 text-xs text-slate-500 font-normal">— {{ sig.notes }}</span>
+            {% endif %}
+          </dd>
+        </div>
+      {% endfor %}
+    </dl>
+  </div>
+  {% endif %}
+
+  {# ── Policy applied ────────────────────────────────────────────── #}
+  {% if f.policy_panel %}
+  <div class="mt-5">
+    <div class="text-[11px] font-medium text-slate-500 uppercase tracking-wider mb-2">
+      Policy applied
+    </div>
+    <div class="bg-indigo-50/40 border border-indigo-200 rounded-lg p-3 text-sm text-slate-700 space-y-1.5">
+      <div class="flex items-baseline justify-between">
+        <div class="font-medium text-slate-900">
+          {{ f.policy_panel.policy_name or f.policy_panel.policy_id or '—' }}
+        </div>
+        <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800">
+          {{ f.policy_panel.agency or 'lender_overlay' }}
+        </span>
+      </div>
+      <div class="text-xs">
+        <a href="/ui/policies/{{ f.policy_panel.policy_version_id }}"
+           class="mono text-indigo-700 hover:text-indigo-900 hover:underline">
+          {{ f.policy_panel.policy_version_id }}
+        </a>
+      </div>
+      <div class="text-xs text-slate-500">
+        {% if f.policy_panel.source_revision %}
+          source: <span class="mono">{{ f.policy_panel.source_revision }}</span>
+        {% endif %}
+        {% if f.policy_panel.valid_from %}
+          · effective <span class="mono">{{ f.policy_panel.valid_from | dt }}</span>
+          {% if f.policy_panel.valid_to %}
+            → <span class="mono">{{ f.policy_panel.valid_to | dt }}</span>
+          {% else %}
+            → current
+          {% endif %}
+        {% endif %}
+      </div>
+      {% if f.policy_panel.chain_size > 1 %}
+        <div class="text-[11px] mono text-slate-500">
+          chain ({{ f.policy_panel.chain_size }}):
+          {% for v in f.policy_panel.policy_chain %}
+            <a href="/ui/policies/{{ v }}"
+               class="bg-white border border-slate-200 px-1.5 py-0.5 rounded mr-1 hover:border-indigo-400 hover:text-indigo-700">
+              {{ v }}
+            </a>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Evidence (claims) ─────────────────────────────────────────── #}
+  {% if f.evidence_panel and f.evidence_panel.claims %}
+  <div class="mt-5">
+    <div class="text-[11px] font-medium text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
+      <span>Evidence — {{ f.evidence_panel.claims | length }} verified claim{% if f.evidence_panel.claims | length != 1 %}s{% endif %}</span>
+      {% if f.evidence_panel.frozen %}
+        <span class="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 normal-case">
+          frozen at decision time
+        </span>
+      {% endif %}
+    </div>
+    <ul class="space-y-2">
+      {% for c in f.evidence_panel.claims %}
+        <li class="border border-slate-200 rounded-lg p-3 bg-white">
+          <div class="flex items-baseline justify-between">
+            <div class="text-sm">
+              <span class="text-slate-600 mono">{{ c.field_name }}</span>
+              <span class="text-slate-400 mx-1">→</span>
+              <span class="font-medium text-slate-900 mono">{{ c.value }}</span>
+            </div>
+            <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">
+              verified
+            </span>
+          </div>
+          <div class="text-[11px] text-slate-500 mt-1">
+            <span class="mono">{{ c.doc_type }}</span>
+            · doc
+            <a href="/ui/documents/{{ c.source_doc_id }}"
+               class="mono text-indigo-700 hover:text-indigo-900 hover:underline">
+              {{ c.source_doc_id }}
+            </a>
+            {% if c.source_page %} · p.{{ c.source_page }}{% endif %}
+            {% if c.verified_by %} · {{ c.verified_by }}{% endif %}
+            {% if c.extraction_confidence %}
+              · conf <span class="mono">{{ '%.2f'|format(c.extraction_confidence) }}</span>
+            {% endif %}
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+    {% if f.evidence_panel.documents %}
+      <div class="text-[11px] text-slate-400 mt-2">
+        Sources:
+        {% for d in f.evidence_panel.documents %}
+          <span class="mono mr-2">{{ d.document_id }}</span>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+  {% elif f.evidence_panel and f.evidence_panel.doc_types_consulted > 0 %}
+  <div class="mt-5">
+    <div class="text-[11px] font-medium text-slate-500 uppercase tracking-wider mb-2">
+      Evidence
+    </div>
+    <div class="text-xs text-slate-500 italic">
+      No verified claims yet for this decision.
+      Doc types in scope:
+      {% for dt in f.evidence_panel.doc_types_in_scope %}
+        <span class="mono">{{ dt }}</span>{% if not loop.last %}, {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── AI Reasoning ──────────────────────────────────────────────── #}
+  {% if f.ai_reasoning %}
+  <div class="mt-5">
+    <div class="text-[11px] font-medium text-slate-500 uppercase tracking-wider mb-2">
+      AI reasoning — {{ decision_id }}
+    </div>
+    <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm text-slate-700 space-y-2">
+      <div>
+        <span class="font-semibold text-slate-800">Hypothesis:</span>
+        {{ f.ai_reasoning.hypothesis }}
+      </div>
+      <div>
+        {{ f.ai_reasoning.summary }}
+      </div>
+      <div>
+        <span class="font-semibold text-slate-800">Conclusion:</span>
+        {{ f.ai_reasoning.conclusion }}
+      </div>
+      {% if f.ai_reasoning.contradiction_count %}
+        <div class="text-xs text-amber-700 mt-1">
+          ⚠ {{ f.ai_reasoning.contradiction_count }} contradiction(s) flagged in
+          the journal — open the full trace to inspect.
+        </div>
+      {% endif %}
+    </div>
+    <div class="text-[11px] text-slate-400 mt-1">
+      Confidence:
+      <span class="mono text-slate-600">{{ f.confidence | confidence }}</span>
+      {% if f.matched_clause %}
+        · matched <span class="mono">{{ f.matched_clause }}</span>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Action row ────────────────────────────────────────────────── #}
+  <div class="mt-5 pt-4 border-t border-slate-200">
+    {% if f.has_human_review %}
+      <div class="text-sm bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-emerald-900">
+        <div class="font-medium">
+          Reviewed by {{ f.human_review.reviewer_role }} ·
+          {{ f.human_review.reviewed_at | dt }}
+        </div>
+        <div class="text-xs mt-1">
+          Final outcome:
+          <span class="mono">{{ f.human_review.final_outcome.value }}</span>
+          {% if f.human_review.overridden %}
+            (overrode AI's
+            <span class="mono">{{ f.human_review.original_ai_decision.value }}</span>)
+          {% else %}
+            (confirmed AI's decision)
+          {% endif %}
+        </div>
+        {% if f.human_review.override_reason %}
+          <div class="text-xs mt-1 italic">{{ f.human_review.override_reason }}</div>
+        {% endif %}
+      </div>
+    {% elif f.can_act %}
+      <div class="grid grid-cols-3 gap-3">
+        {# Approve = positive ack, no outcome change #}
+        <form method="post"
+              action="/ui/personas/{{ decision_id }}/applications/{{ f.application_id }}/ack"
+              hx-post="/ui/personas/{{ decision_id }}/applications/{{ f.application_id }}/ack"
+              hx-target="#persona-detail"
+              hx-swap="outerHTML">
+          <input type="hidden" name="trace_id" value="{{ f.trace_id }}">
+          <input type="hidden" name="reviewer_id" value="ui-user">
+          <input type="hidden" name="reviewer_role" value="{{ persona_label }}">
+          <button type="submit"
+                  class="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-lg
+                         border border-emerald-200 bg-emerald-50 text-emerald-800 text-sm font-medium
+                         hover:bg-emerald-100">
+            <span class="text-lg">✓</span> Approve
+          </button>
+        </form>
+        {# Decline = override AI's outcome to BLOCK; runs the same reflection
+           capture as the full override flow but returns the persona partial. #}
+        <form method="post"
+              action="/ui/personas/{{ decision_id }}/applications/{{ f.application_id }}/decline"
+              hx-post="/ui/personas/{{ decision_id }}/applications/{{ f.application_id }}/decline"
+              hx-target="#persona-detail"
+              hx-swap="outerHTML">
+          <input type="hidden" name="trace_id" value="{{ f.trace_id }}">
+          <input type="hidden" name="reviewer_id" value="ui-user">
+          <input type="hidden" name="reviewer_role" value="{{ persona_label }}">
+          <button type="submit"
+                  class="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-lg
+                         border border-rose-200 bg-white text-rose-800 text-sm font-medium
+                         hover:bg-rose-50">
+            Decline
+          </button>
+        </form>
+        {# Request evidence — stub until send_back lands #}
+        <form method="post"
+              action="/ui/personas/{{ decision_id }}/applications/{{ f.application_id }}/send_back"
+              hx-post="/ui/personas/{{ decision_id }}/applications/{{ f.application_id }}/send_back"
+              hx-target="#persona-detail"
+              hx-swap="outerHTML">
+          <input type="hidden" name="trace_id" value="{{ f.trace_id }}">
+          <button type="submit"
+                  class="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-lg
+                         border border-slate-200 bg-white text-slate-700 text-sm font-medium
+                         hover:bg-slate-50">
+            Request evidence
+          </button>
+        </form>
+      </div>
+      <div class="text-[11px] text-slate-400 mt-3">
+        Approve confirms the AI's
+        <span class="mono">{{ f.outcome }}</span> outcome.
+        Decline overrides to <span class="mono">block</span> and feeds an
+        AgentLearning into reflection. Request evidence sends back to upstream
+        (PRD §13 send_back — currently a stub).
+      </div>
+    {% else %}
+      <div class="text-sm bg-slate-50 border border-slate-200 rounded-lg p-3 text-slate-600">
+        {% if f.outcome == 'allow' and f.trace and f.trace.mode.value == 'auto_execute' %}
+          AI auto-executed this decision (no human review needed). To intervene
+          retroactively, open the full trace.
+        {% else %}
+          No pending action — this decision is either auto-executed, blocked, or
+          waiting upstream.
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+
+</div>

@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Documents · {{ application_id }}{% endblock %}
+{% block content %}
+
+<div class="mb-3">
+  <a href="/ui/applications/{{ application_id }}"
+     class="text-sm text-indigo-600 hover:text-indigo-800">
+    ← Application {{ application_id }}
+  </a>
+</div>
+
+<div class="flex items-baseline justify-between mb-4">
+  <h1 class="text-2xl font-semibold tracking-tight">
+    Documents · <span class="mono text-slate-500 text-base">{{ application_id }}</span>
+  </h1>
+  <div class="text-sm text-slate-500 flex gap-4">
+    <span>{{ total_documents }} doc{% if total_documents != 1 %}s{% endif %}</span>
+    <span class="text-slate-400">·</span>
+    <span>{{ total_claims }} claim{% if total_claims != 1 %}s{% endif %}</span>
+  </div>
+</div>
+
+{% if documents %}
+<div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="bg-slate-50">
+      <tr class="text-xs uppercase tracking-wider text-slate-400 border-b border-slate-200">
+        <th class="text-left px-4 py-2">Type</th>
+        <th class="text-left px-4 py-2">Document</th>
+        <th class="text-left px-4 py-2">Status</th>
+        <th class="text-left px-4 py-2">Claims</th>
+        <th class="text-left px-4 py-2">OCR conf.</th>
+        <th class="text-left px-4 py-2">Verifier</th>
+        <th class="text-left px-4 py-2">Source</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in documents %}
+      <tr class="border-b border-slate-100 hover:bg-slate-50">
+        <td class="px-4 py-3">
+          <span class="text-xs mono px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
+            {{ d.doc_type or '—' }}
+          </span>
+        </td>
+        <td class="px-4 py-3">
+          <div class="text-sm mono text-slate-700">{{ d.document_id }}</div>
+          {% if d.uploaded_by %}
+            <div class="text-[11px] text-slate-400">
+              uploaded by <span class="mono">{{ d.uploaded_by }}</span>
+              {% if d.uploaded_at %} · {{ d.uploaded_at | dt }}{% endif %}
+            </div>
+          {% endif %}
+        </td>
+        <td class="px-4 py-3">
+          <span class="text-[11px] uppercase tracking-wider px-2 py-0.5 rounded
+                       bg-{{ d.status_tone }}-50 text-{{ d.status_tone }}-700
+                       border border-{{ d.status_tone }}-200">
+            {{ d.status or '—' }}
+          </span>
+        </td>
+        <td class="px-4 py-3">
+          <div class="text-sm mono text-slate-700">{{ d.verified_claim_count }}/{{ d.claim_count }}</div>
+          <div class="text-[11px] text-slate-400">verified</div>
+        </td>
+        <td class="px-4 py-3 text-xs mono text-slate-500">
+          {% if d.ocr_confidence is not none %}{{ '%.2f'|format(d.ocr_confidence) }}{% else %}—{% endif %}
+        </td>
+        <td class="px-4 py-3 text-xs">
+          {% if d.verified_by %}
+            <div class="mono text-slate-700">{{ d.verified_by }}</div>
+            {% if d.verified_at %}
+              <div class="text-[11px] text-slate-400">{{ d.verified_at | dt }}</div>
+            {% endif %}
+          {% else %}
+            <span class="text-slate-400">—</span>
+          {% endif %}
+        </td>
+        <td class="px-4 py-3 text-xs">
+          {% if d.source_system %}
+            <span class="mono text-slate-600">{{ d.source_system }}</span>
+          {% else %}
+            <span class="text-slate-400">—</span>
+          {% endif %}
+        </td>
+        <td class="px-4 py-3 text-right">
+          <a href="/ui/documents/{{ d.document_id }}"
+             class="text-xs text-indigo-600 hover:text-indigo-800">Open →</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="bg-white border border-dashed border-slate-300 rounded-lg p-10 text-center text-sm text-slate-500">
+  No documents on file for this application yet. Real EDMS uploads
+  arrive via STREAM E2 connectors; for now you can seed Documents +
+  Claims directly into <span class="mono">domains/lending/seed_events/{scenario}/entities.json</span>.
+</div>
+{% endif %}
+
+{% endblock %}

@@ -1,9 +1,48 @@
 # DECISION OS — PRODUCT REQUIREMENTS DOCUMENT
-# Version: 0.8 | Updated: May 2026 | Source of truth for Claude Code every session
+# Version: 0.10 | Updated: May 2026 | Source of truth for Claude Code every session
 #
 # Strategic note (Session 8): the user committed to PATH C — full
 # DecisionOS as system of record (12-18 month roadmap). See §19 for
 # the tier breakdown that drives every following session.
+#
+# Session 9 deltas (v0.8 → v0.10):
+#   - STREAM C phase 1+2+3 — Policy / PolicyVersion Type-2 ObjectTypes,
+#     PolicyStore facade, decisions.yaml seeder, FHA demo overlay,
+#     async PolicyEvaluator with policy_version_id stamping,
+#     agency_chain derivation from loan_type. Every trace now stamps
+#     policy_version_id + policy_chain.
+#   - STREAM A — Per-persona workbench UI live (12 routes, KPI strip,
+#     queue/recently-completed split with outcome+queued+risk pills,
+#     Approve/Decline/Request-evidence with queue dequeue).
+#   - STREAM B — 7 seed scenarios (4 hard-rule + FHA + jumbo + VA;
+#     FHA produces 2-entry policy_chain end-to-end).
+#   - STREAM E v0 — Knowledge Context Layer landed: Document + Claim
+#     ObjectTypes, KnowledgeStore facade, Retriever Protocol +
+#     MetadataRetriever, doc_type matrix in knowledge_base.json,
+#     bundle.claims wired through ContextBuilder + AtomicTool,
+#     DecisionTrace.claim_provenance frozen evidence chain.
+#     Architecture rationale (locked): EDMS + claim extraction is
+#     enough at any scale for per-loan retrieval; vectors are STREAM E2
+#     for cross-corpus workloads only.
+#   - UI surfacing: /ui/policies (index + version detail with boundary
+#     clauses), /ui/applications/{id}/documents + /ui/documents/{id}
+#     (per-app + single-doc inspection), /ui/claims/pending (verify/
+#     reject queue), /ui/queue (open + resolved this session).
+#     Clickable policy_version_id and source_doc_id throughout.
+#   - HumanQueue.resolve() + HumanQueueResolution — Approve/Decline
+#     now dequeue with audit receipts. PRD §19 TIER 3 item complete.
+#   - TIER 1 tests/ — 227 stdlib-only tests across 13 modules:
+#     core (policy_engine + decision_agents + trace + knowledge +
+#     simulation + context_store), api/, ui/, domains/lending/.
+#     Run via scripts/run_tests.py (~2.6s).
+#   - Resolver bug fix — _default_resolver now filters Applicant-bound
+#     entities (FraudProfile/CreditProfile/IncomeProfile/Applicant)
+#     by applicant_id derived from the Application; previously leaked
+#     across applications when scenarios shared a Platform.
+#   - PolicyEvaluator hard-rule ordering fix — fraud_block_stops_pipeline
+#     and compliance_block_stops_closing now check before the generic
+#     upstream_block_propagates_to_dependents, so trace.policy_reasons
+#     names the specific PRD §5 rule.
 
 ---
 
@@ -107,11 +146,28 @@ SOURCE SYSTEMS
   └──────────────┬──────────────┘
                  │
                  ▼
-  ┌─────────────────────────────┐
-  │   CONTEXT AGENT             │  Assembles context bundle for decision
-  │   core/context_store/       │  Respects context_window_days
-  │   context_builder.py        │  Injects upstream decision outputs
-  └──────────────┬──────────────┘
+  ┌─────────────────────────────┐         ┌──────────────────────────────────┐
+  │   CONTEXT AGENT             │ ◄─────  │   KNOWLEDGE CONTEXT LAYER        │
+  │   core/context_store/       │         │   core/knowledge/                │
+  │   context_builder.py        │         │   ┌────────────────────────────┐ │
+  │                             │         │   │ EDMS adapter / Claim store │ │
+  │   Merges 3 sources into     │         │   │ Document + Claim records   │ │
+  │   one decision-scoped       │         │   │   (Type-2 supersession)    │ │
+  │   bundle:                   │         │   │ Retriever Protocol         │ │
+  │     objects (entity state)  │         │   │   MetadataRetriever (v1)   │ │
+  │     upstream_outputs        │         │   │   PgVector / Qdrant (E2)   │ │
+  │     claims (verified facts  │         │   │ Permission filter via      │ │
+  │       from EDMS docs)       │         │   │   doc_type → decisions     │ │
+  │                             │         │   │   matrix (knowledge_base)  │ │
+  │   Respects                  │         │   │ verified_only=True default │ │
+  │   context_window_days       │         │   └────────────────────────────┘ │
+  │   Injects upstream outputs  │         │                                  │
+  │                             │         │   v1: per-loan retrieval =       │
+  │                             │         │       metadata + claims, no      │
+  │                             │         │       vectors. Vectors are       │
+  │                             │         │       STREAM E2 for cross-       │
+  │                             │         │       corpus only.               │
+  └──────────────┬──────────────┘         └──────────────────────────────────┘
                  │
           ┌──────┴──────────────────────────────┐
           │         ATOMIC TOOL (per decision)  │
@@ -182,6 +238,9 @@ SOURCE SYSTEMS
 │ fraud_block_stops_pipeline                   │ fraud=BLOCK halts ALL downstream          │
 │ compliance_block_stops_closing               │ compliance=BLOCK halts closing_readiness  │
 │ upstream_block_propagates_to_dependents      │ contamination_guard in every dep decision │
+│ no_unverified_claim_without_explicit_optin   │ Retriever default verified_only=True      │
+│ doc_type_permission_via_matrix               │ Claims filtered by knowledge_base.json    │
+│                                              │ document_types.feeds_decisions            │
 └──────────────────────────────────────────────┴───────────────────────────────────────────┘
 ```
 
@@ -261,8 +320,15 @@ SOURCE SYSTEMS
 │ IncomeProfile    │ Business   │ Belongs to Applicant. verified_income authoritative. │
 │ FraudProfile     │ Business   │ Belongs to Applicant. Shared across Applications.    │
 │ ComplianceRecord │ Business   │ Belongs to Application. Regulatory artefact.         │
+│ Document         │ Knowledge  │ EDMS-sourced artifact. Type-2 status (unverified →   │
+│                  │            │ ocr_extracted → human_corrected → verified).         │
+│ Claim            │ Knowledge  │ Structured fact extracted from a Document with       │
+│                  │            │ provenance (source_page, verifier, status).          │
+│ Policy           │ Policy     │ Named rule that gates a decision (agency, scope).    │
+│ PolicyVersion    │ Policy     │ Type-2 versioned: valid_from / valid_to + boundary   │
+│                  │            │ clauses. Replay correctness depends on this.         │
 │ Decision         │ System     │ Runtime output per decision type per Application.    │
-│ DecisionTrace    │ System     │ Work journal. Append-only. Never deleted.            │
+│ DecisionTrace    │ System     │ Work journal. Append-only. policy_version_id stamped.│
 │ AgentLearning    │ System     │ Lesson from human override. Replayed to same agent.  │
 └──────────────────┴────────────┴──────────────────────────────────────────────────────┘
 ```
@@ -350,7 +416,12 @@ flowchart TD
 │ FraudProfile     │ Redis + PG    │ Redis: fraud_cleared flag. TTL 7 days.          │
 │ Property         │ Postgres      │ No Redis — data changes infrequently.            │
 │ ComplianceRecord │ Postgres      │ Regulatory artefact. Never deleted.              │
-│ DecisionConfig   │ YAML file     │ decisions.yaml — source of truth for all rules.  │
+│ Document         │ Postgres + S3 │ PG: metadata + status + Type-2 chain. S3: bytes. │
+│ Claim            │ Postgres      │ Structured fact + provenance. SHARED scope.      │
+│ Policy           │ Postgres      │ SHARED scope. Decision_id + agency + scope.      │
+│ PolicyVersion    │ Postgres      │ Type-2 SCD. Replay reads at decided_at.          │
+│ DecisionConfig   │ YAML file     │ decisions.yaml — seed for lender_overlay policy. │
+│                  │               │ Real connectors (STREAM E2) supersede YAML.      │
 └──────────────────┴───────────────┴──────────────────────────────────────────────────┘
 ```
 
@@ -621,24 +692,50 @@ decision-os/
 │   │   └── flow.py                ⬜ TODO — event → entity → signal mapper
 │   ├── policy_engine/
 │   │   ├── __init__.py            ✅ EXISTS
-│   │   ├── evaluator.py           ✅ EXISTS — boundary evaluator + 8 hard rules
-│   │   └── loader.py              ✅ EXISTS — DecisionsSpec load+validate path
-│   │                                          (no_decision_without_owner, mode/risk
-│   │                                          enums, depends_on integrity,
-│   │                                          execution_order references)
+│   │   ├── evaluator.py           ✅ EXISTS — async evaluator. Consults PolicyStore
+│   │   │                                       at `at` and stamps policy_version_id;
+│   │   │                                       falls back to YAML when no store.
+│   │   ├── loader.py              ✅ EXISTS — DecisionsSpec load+validate path
+│   │   ├── store.py               ✅ EXISTS — PolicyStore facade over
+│   │   │                                       LendingContextStore. PolicyRecord +
+│   │   │                                       PolicyVersionRecord. active_version()
+│   │   │                                       walks (decision_id, agency, at).
+│   │   └── seeder.py              ✅ EXISTS — seed_policies_from_yaml writes one
+│   │                                          Policy + one PolicyVersion per
+│   │                                          decision under agency=lender_overlay.
+│   │                                          Idempotent.
+│   ├── knowledge/                 ✅ STREAM E v0 — Knowledge Context Layer
+│   │   ├── __init__.py            ✅ EXISTS
+│   │   ├── store.py               ✅ EXISTS — KnowledgeStore facade over
+│   │   │                                       LendingContextStore.
+│   │   │                                       DocumentRecord + ClaimRecord.
+│   │   │                                       put_*/verify_claim/reject_claim/
+│   │   │                                       list_*. Type-2 supersession + lineage.
+│   │   └── retriever.py           ✅ EXISTS — Retriever Protocol +
+│   │                                          MetadataRetriever. Filters claims
+│   │                                          via doc_type → decisions matrix.
+│   │                                          PgVector / Qdrant retrievers stubbed
+│   │                                          for STREAM E2.
 │   ├── normalizer/                ✅ STEP 1 DONE
 │   │   ├── __init__.py            ✅ EXISTS
 │   │   └── models.py              ✅ EXISTS — 13 typed events + 8 entities,
 │   │                                          normalize_event() + EVENT_REGISTRY,
 │   │                                          correlation_id / request_id on BaseEvent
-│   ├── ontology/                  ✅ STEP 2 DONE
+│   ├── ontology/                  ✅ STEP 2 DONE; extended Sessions 9
 │   │   ├── __init__.py            ✅ EXISTS
-│   │   └── object_types.py        ✅ EXISTS — 8 lending object types + semantic
-│   │                                          links + decisions_that_read_it +
+│   │   └── object_types.py        ✅ EXISTS — 12 lending object types:
+│   │                                          - 8 business: Applicant, Application,
+│   │                                            Property, Loan, CreditProfile,
+│   │                                            IncomeProfile, FraudProfile,
+│   │                                            ComplianceRecord
+│   │                                          - 2 policy: Policy, PolicyVersion
+│   │                                            (Type-2 versioned)
+│   │                                          - 2 knowledge: Document, Claim
+│   │                                            (EDMS-sourced + provenance)
+│   │                                          decisions_that_read_it +
 │   │                                          to_context_bundle() projection.
 │   │                                          Applicant carries lead-stage fields
-│   │                                          (channel, utm_params, session_behavior,
-│   │                                          prior_inquiries) for lead_scoring.
+│   │                                          for lead_scoring.
 │   ├── context_store/             ✅ STEP 3 DONE
 │   │   ├── __init__.py            ✅ EXISTS
 │   │   ├── base.py                ✅ EXISTS — ContextStore abstract +
@@ -656,6 +753,13 @@ decision-os/
 │   │   └── context_builder.py     ✅ EXISTS — ContextBuilder + ContextBundle.
 │   │                                          Decision-scoped projection through
 │   │                                          ontology.to_context_bundle.
+│   │                                          Session 9: takes optional retriever;
+│   │                                          fans out to Knowledge Context Layer
+│   │                                          via Retriever.retrieve() and attaches
+│   │                                          claims + claim_records + documents
+│   │                                          to bundle. Document/Claim/Policy/
+│   │                                          PolicyVersion ObjectTypes excluded
+│   │                                          from resolver path (own lanes).
 │   ├── connectors/                ✅ STEP 4 DONE
 │   │   ├── __init__.py            ✅ EXISTS
 │   │   ├── base.py                ✅ EXISTS — BaseConnector +
@@ -718,8 +822,13 @@ decision-os/
 │   ├── __init__.py                ✅ EXISTS
 │   └── lending/
 │       ├── __init__.py            ✅ EXISTS
-│       ├── decisions.yaml         ✅ EXISTS — source of truth, all 12 decisions
-│       ├── knowledge_base.json    ✅ EXISTS — vocabulary, ontology, dep graph
+│       ├── decisions.yaml         ✅ EXISTS — seed for lender_overlay PolicyVersion;
+│       │                                       source of truth until real agency
+│       │                                       connectors land (STREAM E2)
+│       ├── knowledge_base.json    ✅ EXISTS — vocabulary, ontology, dep graph,
+│       │                                       Session 9: document_types matrix
+│       │                                       (14 doc types → feeds_decisions +
+│       │                                       claim field names)
 │       ├── personas/              ✅ STEP 9 DONE
 │       │   ├── __init__.py        ✅ EXISTS — LENDING_PERSONA_CLASSES +
 │       │   │                                  build_lending_personas()
@@ -738,14 +847,23 @@ decision-os/
 │       │   ├── underwriting_decision.py   ✅ SeniorUnderwritingAgent
 │       │   ├── approval_routing.py        ✅ WorkflowRoutingAgent
 │       │   └── closing_readiness.py       ✅ ClosingAgent
-│       └── seed_events/           ✅ STEP 10 DONE
+│       └── seed_events/           ✅ STEP 10 DONE; Session 9 added Doc+Claim seeds
 │           ├── __init__.py        ✅ EXISTS — SCENARIOS manifest +
 │           │                                  csv_connector / http_connector loaders
 │           ├── runner.py          ✅ EXISTS — run_scenario() E2E replay
-│           ├── happy_path/        ✅ events.csv + bureau_responses.json + entities.json
+│           ├── happy_path/        ✅ events + bureau + entities (now incl. 2 verified
+│           │                       Documents + 3 verified Claims — W-2, appraisal)
 │           ├── fraud_block/       ✅ watchlist hit halts pipeline
-│           ├── contamination/     ✅ confidence < 0.75 fires contamination_guard
-│           └── compliance_block/  ✅ fair_lending_violation halts closing_readiness
+│           ├── contamination/     ✅ confidence < 0.75 fires contamination_guard;
+│           │                       now also seeds 1 pending Document + 1 pending
+│           │                       Claim to exercise verified_only filter
+│           ├── compliance_block/  ✅ fair_lending_violation halts closing_readiness
+│           ├── fha/               ✅ Session 9 — FTHB FHA loan, exercises multi-
+│           │                       agency policy_chain on ltv_assessment
+│           ├── jumbo/             ✅ Session 9 — high-balance, no agency in chain
+│           └── va/                ✅ Session 9 — military, agency_chain helper
+│                                                returns [lender_overlay, va]
+│                                                (no VA overlay seeded yet)
 │
 ├── docs/
 │   └── PRD.md                     ✅ EXISTS — this file
@@ -781,6 +899,24 @@ decision-os/
 │       │                            strip + app picker + queue table OR
 │       │                            focused-app view (finished / pending /
 │       │                            waiting / downstream)
+│       ├── persona_index.html     ✅ Session 9 — 12 persona cards by team
+│       ├── persona_workbench.html ✅ Session 9 — header tabs + KPI strip +
+│       │                            queue/recently-completed split, focused
+│       │                            app detail dispatcher
+│       ├── _persona_detail.html   ✅ Session 9 — focused app right column:
+│       │                            Application Context, Policy applied
+│       │                            (clickable), Evidence (frozen at decision
+│       │                            time, clickable doc), Signals, AI Reasoning,
+│       │                            Approve/Decline/Request-evidence
+│       ├── policy_index.html      ✅ Session 9 — policy index by agency
+│       ├── policy_detail.html     ✅ Session 9 — boundary clauses per type +
+│       │                            supersession chain
+│       ├── documents_index.html   ✅ Session 9 — per-app document list with
+│       │                            status pills + claim counts
+│       ├── document_detail.html   ✅ Session 9 — single-doc detail + all
+│       │                            extracted claims with full provenance
+│       ├── claims_pending.html    ✅ Session 9 — cross-app pending claim
+│       │                            queue with verify/reject buttons
 │       └── personas/              ✅ Session 8 — 12 partials, one per decision
 │           ├── _lead_scoring.html         ✅ intent meter + channel pills
 │           ├── _income_verification.html  ✅ stated vs verified + confidence ring
@@ -795,14 +931,46 @@ decision-os/
 │           ├── _approval_routing.html     ✅ target + channel + timeline cards
 │           └── _closing_readiness.html    ✅ closing checklist + flags
 │
-├── tests/                         ⬜ partial — only context_store has tests
-│   └── core/context_store/test_in_memory.py
-│
-├── scripts/                       ✅ Session 7+8 — local smoke runners
+├── scripts/                       ✅ Session 7+8+9 — local smoke runners
 │   ├── smoke_replayer.py          ✅ STEP 13 end-to-end smoke
 │   ├── smoke_ui_credit.py         ✅ credit_assessment panel + cross-cutting
 │   ├── smoke_ui_all_panels.py     ✅ all 12 persona panels x 3 scenarios
-│   └── smoke_workbench.py         ✅ 9 workbenches x 4 scenarios
+│   ├── smoke_workbench.py         ✅ 9 workbenches x 4 scenarios
+│   ├── smoke_persona_workbench.py ✅ Session 9 — 12 persona routes + ack/decline
+│   ├── smoke_policies.py          ✅ Session 9 — STREAM C phase 1: seed +
+│   │                                              idempotency + point-in-time
+│   ├── smoke_policy_evaluator.py  ✅ Session 9 — STREAM C phase 2: outcome parity
+│   │                                              policy_version_id stamped on traces
+│   ├── smoke_knowledge.py         ✅ Session 9 — STREAM E v0: doc-type matrix
+│   │                                              filter + verified-only default +
+│   │                                              verify_claim flips state
+│   ├── smoke_fha_scenario.py      ✅ Session 9 — STREAM B: FHA scenario produces
+│   │                                              2-entry policy_chain on ltv;
+│   │                                              jumbo/va also exercise the chain
+│   └── run_tests.py               ✅ Session 9 — TIER 1 unittest runner.
+│                                                  227 tests across 13 modules,
+│                                                  ~2.6s. Stdlib-only. Add new
+│                                                  modules to TEST_MODULES.
+
+├── tests/                         ✅ Session 9 — TIER 1 first wave done
+│   ├── core/
+│   │   ├── context_store/test_in_memory.py     (9)
+│   │   ├── policy_engine/
+│   │   │   ├── test_loader.py                   (15)
+│   │   │   ├── test_store.py                    (19)
+│   │   │   ├── test_seeder.py                   (10)
+│   │   │   └── test_evaluator.py                (17)
+│   │   ├── decision_agents/test_atomic_tool.py  (15+3)
+│   │   ├── trace/test_reflection.py             (14)
+│   │   ├── knowledge/
+│   │   │   ├── test_store.py                    (16)
+│   │   │   └── test_retriever.py                (10)
+│   │   └── simulation/test_replayer.py          (17)
+│   ├── api/test_routes.py                       (13)
+│   ├── ui/test_views.py                         (40)
+│   └── domains/lending/
+│       ├── test_seed_scenarios.py               (15)
+│       └── personas/test_personas_offline.py    (14)
 │
 ├── CONTEXT.md                     ✅ EXISTS — session history
 ├── docker-compose.yml             ✅ EXISTS — Postgres 16 + Redis 7 services
@@ -915,6 +1083,61 @@ decision-os/
                                           (finished / pending / waiting /
                                           downstream-impact)
 
+     SESSION 9 — STREAMs A, B (7 scenarios), C (all 3 phases), E v0 + UI surface,
+                  TIER 1 tests (227 tests / 13 modules)
+        STREAM A — Per-persona workbench
+          ui/routes.py                — /ui/personas index + per-decision route
+          ui/templates/persona_*.html — header tabs + KPI strip + queue or
+                                          recently-completed split + focused
+                                          app detail with Approve/Decline/
+                                          Request-evidence actions
+          POST .../ack                — positive ack + HumanQueue.resolve()
+          POST .../decline            — override→BLOCK + AgentLearning + resolve()
+          POST .../send_back          — STREAM E2 stub
+        STREAM B — 7 seed scenarios
+          happy_path / fraud_block / contamination / compliance_block (4 hard-rule)
+          fha (multi-agency 2-entry policy_chain) / jumbo / va (chain helper
+          exercised; VA needs PolicyVersion via STREAM E2)
+        STREAM C phase 1 — Policy + PolicyVersion ObjectTypes,
+          PolicyStore facade, decisions.yaml seeder, atomic_tool wired
+        STREAM C phase 2 — PolicyEvaluator async + reads from PolicyStore;
+          DecisionTrace.policy_version_id + policy_chain stamped; replay
+          threads evaluation_at end-to-end
+        STREAM C phase 3 — _AGENCY_CHAIN_BY_LOAN_TYPE in atomic_tool;
+          chain derived from loan_type when caller omits.
+        STREAM E v0 — Knowledge Context Layer
+          Document + Claim ObjectTypes, KnowledgeStore facade,
+          Retriever Protocol + MetadataRetriever,
+          knowledge_base.json#document_types matrix (14 doc types),
+          ContextBundle.claims wired through ContextBuilder + AtomicTool,
+          seed scenarios got mock Documents + Claims (verified +
+          pending) so verified_only filter is exercised end-to-end
+          DecisionTrace.claim_provenance frozen at decision time;
+          UI evidence panel prefers it over live retrieval.
+        UI surface (audit chain end-to-end clickable):
+          /ui/policies + /ui/policies/{policy_version_id}
+          /ui/applications/{id}/documents + /ui/documents/{doc_id}
+          /ui/claims/pending (verify/reject)
+          /ui/queue (open + resolved this session)
+          Top nav: Workbench / Personas / Applications / Policies /
+            Human queue / Pending claims / Health / API docs.
+        HumanQueue.resolve() + HumanQueueResolution + find_open —
+          PRD §19 TIER 3 item complete (was flagged for that tier).
+        TIER 1 tests/ — 227 stdlib-only tests across 13 modules.
+          Run via scripts/run_tests.py (~2.6s).
+          Bug-catchers landed during writing:
+            - PolicyEvaluator hard-rule ordering (specific rules before
+              generic upstream_block_propagates).
+            - api/deps._default_resolver applicant-id filter for
+              Applicant-bound entities (FraudProfile/Credit/Income/
+              Applicant) — fixes cross-application leakage.
+        UI polish: loan-type label map (VA/FHA/Conforming/Jumbo/Non-QM),
+          deterministic friendly-name generator, scenario time
+          backdating, per-persona risk pill (credit_band, fraud_score,
+          ltv_ratio, dti_ratio), Auto-decided KPI fix (mode=auto AND
+          outcome=allow AND no human_review), outcome pill + amber
+          "Pending review" badge + sort-queued-to-top.
+
   ─────────────────────────────────────────────────────────────────
   STRATEGIC DIRECTION (locked in Session 8)
 
@@ -926,15 +1149,21 @@ decision-os/
     ~4-6 weeks of work; complete a tier before opening the next.
   ─────────────────────────────────────────────────────────────────
 
-  TIER 1 — FOUNDATION (next 4-6 weeks; nothing else proceeds without these)
-    14  tests/                       pytest sweep covering loader,
-                                     reflection, personas, seed_events,
-                                     api/, ui/views.py, replayer.
-                                     Bug-catchers first:
-                                       tests/core/policy_engine/test_loader.py
-                                       tests/core/trace/test_reflection.py
-                                       tests/domains/lending/test_seed_scenarios.py
-                                     then expand to api/, ui/, personas/.
+  TIER 1 — FOUNDATION (227 tests landed; this tier substantially complete)
+    14  tests/  ✅ DONE                227 tests across 13 modules:
+                                       - core (context_store, policy_engine,
+                                         decision_agents, trace, knowledge,
+                                         simulation): 142 tests
+                                       - api/test_routes.py: 13
+                                       - ui/test_views.py: 40
+                                       - domains/lending: 29 (seed_scenarios
+                                         + 12-persona offline)
+                                       Run: scripts/run_tests.py (~2.6s).
+                                       Stdlib-only unittest. Two bug-catchers
+                                       fired during writing — PolicyEvaluator
+                                       hard-rule ordering + resolver applicant-
+                                       id filter — both fixed and locked down
+                                       by tests.
         Real-backend verification    Check status of routine
                                      trig_013QhFbYJaViJfNybCbr3KUX (May 3
                                      scheduled run). If the PR landed,
@@ -949,6 +1178,35 @@ decision-os/
                                      in-memory _records walk with SQL.
                                      core/simulation/_build_replay_resolver
                                      needs the same swap.
+                                     KnowledgeStore._iter_active_values
+                                     and PolicyStore._iter_active_values
+                                     have the same in-memory walk; same
+                                     SQL pattern applies.
+        Pre-existing seed bug        api/deps._default_resolver returns
+                                     ALL FraudProfile/CreditProfile/
+                                     IncomeProfile records when entities
+                                     have application_id=None. Cross-
+                                     contaminates when scenarios share
+                                     a platform. Fix: applicant-id
+                                     filter on the resolver path.
+        Application.agency_chain     STREAM C phase 3 — derive from
+                                     loan_type in EntityHydrator on
+                                     ApplicationSubmittedEvent. Today
+                                     every loan uses default
+                                     ["lender_overlay"]. Cheap follow-up
+                                     to STREAM C phase 2.
+        Surface policy_version_id    Persona workbench + decision detail
+          in UI                      should display which rule version
+                                     fired (link to a /ui/policies route
+                                     showing PolicyVersion content).
+        Surface claims in UI         Persona detail right-column should
+                                     render bundle.claims with provenance
+                                     (source doc + page + verifier) so
+                                     the underwriter sees what evidence
+                                     drove the decision.
+        DecisionTrace.claim_         New field stamping which claim_ids
+          provenance                 drove the outcome. Same shape as
+                                     policy_version_id stamp; STREAM E2.
 
   TIER 2 — REAL CONNECTORS (4-6 weeks; first proof the integration pattern works)
         One real PushConnector       Borrower portal webhook (web form
@@ -966,14 +1224,52 @@ decision-os/
                                      decisions today don't flow back to
                                      the LOS.
 
+  TIER 2.5 — STREAM E2 (Knowledge Context Layer real ingestion)
+        EDMS adapter                 Encompass / DocuTech / iManage —
+                                     pull docs by (loan_id, doc_type) +
+                                     RecordedResponse fixtures for replay.
+                                     Same PullConnector pattern as
+                                     bureau pulls. Webhook variant for
+                                     borrower portal uploads (push side).
+        OCR pipeline                 AWS Textract / Google Document AI
+                                     for templated lending docs (W-2,
+                                     pay stub, 1040). Claude Vision for
+                                     fallback. Output: raw text + bbox.
+        Claim extractor              LLM-based structured extraction
+                                     (Claude Sonnet) — text + doc_type
+                                     → list[Claim] with field_name,
+                                     value, confidence, source_page.
+                                     Per-doc-type prompts cached.
+        Document upload UI           ui/routes drag-drop into persona
+                                     workbench. Status: unverified →
+                                     ocr_extracted → human_corrected →
+                                     verified (writes ClaimRecord with
+                                     verifier on each).
+        Vector retriever (selective) PgVectorRetriever for cross-corpus
+                                     workloads only — agency guidelines
+                                     RAG (TIER 4 HMDA), persona learning
+                                     recall (TIER 6), borrower portal
+                                     Q&A. NOT for per-loan doc lookup.
+                                     Same Retriever Protocol — drops in
+                                     behind ContextBuilder without code
+                                     changes elsewhere.
+        Hybrid retriever             Composes MetadataRetriever +
+                                     PgVectorRetriever (+ Qdrant later
+                                     for Rocket-class deployments).
+                                     Routes by workload — metadata for
+                                     per-loan, vectors for cross-corpus.
+
   TIER 3 — OPERATIONAL HARDENING (4-6 weeks)
         API auth                     OIDC / OAuth2 / API key + per-user
                                      scoping. Today the API has no auth
                                      at all.
-        HumanQueue.resolve()         Add resolve() to HumanQueue Protocol
-                                     so override actually dequeues. Add
-                                     role / permission system + dual-
-                                     control for high-risk overrides.
+        HumanQueue.resolve()  ✅ DONE  Session 9 — Approve/Decline now
+                                     dequeue with audit receipt
+                                     (HumanQueueResolution). Open +
+                                     resolved sections in /ui/queue.
+                                     Role / permission system + dual-
+                                     control for high-risk overrides
+                                     STILL open as part of API auth.
         Multi-tenancy                tenant_id through Lineage + every
                                      read scoped by tenant. Schema
                                      migration to add tenant_id column.

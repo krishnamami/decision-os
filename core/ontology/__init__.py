@@ -2,8 +2,10 @@ from .object_types import (
     Applicant,
     Application,
     Cardinality,
+    Claim,
     ComplianceRecord,
     CreditProfile,
+    Document,
     FraudProfile,
     IncomeProfile,
     LENDING_OBJECT_TYPES,
@@ -11,6 +13,8 @@ from .object_types import (
     LinkDirection,
     Loan,
     ObjectType,
+    Policy,
+    PolicyVersion,
     Property,
 )
 
@@ -18,8 +22,10 @@ __all__ = [
     "Applicant",
     "Application",
     "Cardinality",
+    "Claim",
     "ComplianceRecord",
     "CreditProfile",
+    "Document",
     "FraudProfile",
     "IncomeProfile",
     "LENDING_OBJECT_TYPES",
@@ -27,5 +33,7 @@ __all__ = [
     "LinkDirection",
     "Loan",
     "ObjectType",
+    "Policy",
+    "PolicyVersion",
     "Property",
 ]

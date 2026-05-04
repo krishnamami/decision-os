@@ -1,0 +1,32 @@
+[
+  {
+    "entity_type": "Loan",
+    "entity_id": "loan_jumbo",
+    "value": {
+      "loan_id": "loan_jumbo",
+      "application_id": "app_jumbo",
+      "loan_type": "jumbo",
+      "principal_amount": 1200000,
+      "term_months": 360,
+      "lock_period": 60,
+      "interest_rate": 0.0735
+    }
+  },
+  {
+    "entity_type": "ComplianceRecord",
+    "entity_id": "comp_jumbo",
+    "value": {
+      "compliance_record_id": "comp_jumbo",
+      "application_id": "app_jumbo",
+      "all_hmda_fields_complete": true,
+      "fair_lending_violation": false,
+      "missing_required_disclosures": false,
+      "state_rules_passed": true,
+      "cd_timing_compliant": true,
+      "regulatory_ambiguity": false,
+      "mixed_jurisdiction": false,
+      "final_conditions_checklist": {"all_cleared": true},
+      "insurance_binder": true
+    }
+  }
+]

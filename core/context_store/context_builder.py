@@ -39,6 +39,16 @@ class ContextBundle(BaseModel):
     upstream_outputs: dict[str, dict[str, Any]] = Field(default_factory=dict)
     upstream_decision_ids: list[str] = Field(default_factory=list)
 
+    # Knowledge Context Layer — claims extracted from EDMS-sourced
+    # documents, filtered through the doc_type → decisions matrix in
+    # knowledge_base.json. claims is the simple {field_name → value}
+    # shape decision agents read directly. claim_records carries the
+    # full provenance (status, page, verifier, extraction_confidence)
+    # for the trace. See core/knowledge/retriever.py.
+    claims: dict[str, Any] = Field(default_factory=dict)
+    claim_records: list[Any] = Field(default_factory=list)
+    documents: list[Any] = Field(default_factory=list)
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Resolver — turns (object_type_id, application_id) into entity ids.
@@ -115,15 +125,32 @@ class ContextBuilder:
                                       record_ids the bundle was built from.
     """
 
+    # ObjectTypes served by the Knowledge Context Layer (Retriever),
+    # not by the per-loan entity resolver. Excluded from
+    # readable_object_types so build() doesn't snapshot them as
+    # `objects` — they flow into bundle.claims / bundle.claim_records /
+    # bundle.documents instead.
+    KNOWLEDGE_OBJECT_TYPES: tuple[str, ...] = ("Document", "Claim")
+
+    # ObjectTypes used by the policy_engine — Type-2 versioned across
+    # all applications. Not per-loan entities; excluded from the resolver
+    # path so they don't flood every bundle's objects map.
+    POLICY_OBJECT_TYPES: tuple[str, ...] = ("Policy", "PolicyVersion")
+
     def __init__(
         self,
         store: LendingContextStore,
         decisions_config: DecisionsConfig,
         object_types: Optional[dict[str, ObjectType]] = None,
+        retriever: Optional[Any] = None,
     ):
         self._store = store
         self._config = decisions_config
         self._object_types = object_types or LENDING_OBJECT_TYPES
+        # Optional. When set, build() pulls verified claims for this
+        # decision via the Retriever Protocol. None falls back to
+        # empty bundle.claims (legacy / tests that don't need docs).
+        self._retriever = retriever
 
         decisions = self._config.get("decisions", [])
         self._decision_index: dict[str, dict[str, Any]] = {d["id"]: d for d in decisions}
@@ -150,9 +177,11 @@ class ContextBuilder:
         return [d["decision"] for d in spec.get("depends_on") or []]
 
     def readable_object_types(self, decision_id: str) -> list[ObjectType]:
+        excluded = set(self.KNOWLEDGE_OBJECT_TYPES) | set(self.POLICY_OBJECT_TYPES)
         return [
             ot for ot in self._object_types.values()
             if decision_id in ot.decisions_that_read_it
+            and ot.object_type_id not in excluded
         ]
 
     # ── Build ────────────────────────────────────────────────────────
@@ -200,6 +229,21 @@ class ContextBuilder:
             up_id: payload for up_id, payload in snapshot.context.get("decision", {}).items()
         }
 
+        # Knowledge Context — fetched via Retriever, NOT through the
+        # resolver path. Verified claims by default; the retriever
+        # honours the doc_type → decisions matrix. None retriever leaves
+        # the claim fields empty (legacy / tests).
+        claims: dict[str, Any] = {}
+        claim_records: list[Any] = []
+        documents: list[Any] = []
+        if self._retriever is not None:
+            retrieval = await self._retriever.retrieve(
+                decision_id, application_id
+            )
+            claims = dict(retrieval.claims_by_field)
+            claim_records = list(retrieval.claim_records)
+            documents = list(retrieval.documents)
+
         return ContextBundle(
             decision_id=decision_id,
             application_id=application_id,
@@ -209,4 +253,7 @@ class ContextBuilder:
             objects=projected,
             upstream_outputs=upstream_outputs,
             upstream_decision_ids=list(upstream),
+            claims=claims,
+            claim_records=claim_records,
+            documents=documents,
         )

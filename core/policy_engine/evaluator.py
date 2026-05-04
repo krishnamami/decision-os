@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import yaml
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from .store import PolicyStore, PolicyVersionRecord
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -56,6 +60,12 @@ class PolicyDecision(BaseModel):
     unmatched_rules: list[BoundaryRule] = Field(default_factory=list)
     reasons: list[str] = Field(default_factory=list)
     contamination: bool = False
+    # Type-2 policy versioning — set when the evaluator consulted a
+    # PolicyStore. Carries the policy_version_id that produced the
+    # outcome and the full agency chain that was walked (overlay-first).
+    # Both default to None / [] so legacy YAML-only paths keep working.
+    policy_version_id: Optional[str] = None
+    policy_chain: list[str] = Field(default_factory=list)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -259,12 +269,32 @@ class PolicyEvaluator:
 
     # ── Main entrypoint ───────────────────────────────────────────────
 
-    def evaluate(
+    async def evaluate(
         self,
         decision_id: str,
         context: dict[str, Any],
         upstream: Optional[list[UpstreamSummary]] = None,
+        *,
+        policy_store: Optional["PolicyStore"] = None,
+        at: Optional[datetime] = None,
+        agency_chain: Optional[list[str]] = None,
+        product: Optional[str] = None,
+        state: Optional[str] = None,
     ) -> PolicyDecision:
+        """Evaluate a decision's boundary against context.
+
+        When ``policy_store`` is provided, the boundary clauses come from
+        the active PolicyVersion at ``at`` for the first matching agency
+        in ``agency_chain``. The PolicyDecision returned carries
+        ``policy_version_id`` and ``policy_chain`` stamping which exact
+        rule version fired — required for replay and regulator audit.
+
+        When ``policy_store`` is None (legacy / tests), the YAML-loaded
+        boundary is used and policy_version_id is left None. Outcomes
+        are identical between the two paths as long as the seeded
+        PolicyVersion matches the YAML — which is the v1 invariant.
+        """
+
         if decision_id not in self._decisions:
             raise KeyError(f"unknown decision: {decision_id!r}")
 
@@ -272,18 +302,41 @@ class PolicyEvaluator:
         upstream = upstream or []
         upstream_by_id = {u.decision_id: u for u in upstream}
 
+        # Resolve the active PolicyVersion FIRST so every return path —
+        # including the hard-rule short-circuits below — can carry the
+        # policy_version_id stamp. Without this, traces for blocked
+        # dependents (fraud_block_stops_pipeline, contamination_guard,
+        # upstream_block_propagates) would have policy_version_id=None.
+        version_used, agency_used, version_chain = await self._resolve_active_version(
+            decision_id=decision_id,
+            policy_store=policy_store,
+            at=at,
+            agency_chain=agency_chain,
+            product=product,
+            state=state,
+        )
+        if version_used is not None:
+            boundary = version_used.boundary or {}
+            contamination_guard = version_used.contamination_guard or {}
+        else:
+            boundary = spec.get("boundary", {}) or {}
+            contamination_guard = spec.get("contamination_guard") or {}
+
+        version_stamp = self._version_stamp(version_used, version_chain)
+
         # ── 1. Pipeline-level hard rules ──────────────────────────────
         hard_block = self._check_hard_rules(decision_id, upstream_by_id)
         if hard_block is not None:
-            return hard_block
+            return hard_block.model_copy(update=version_stamp)
 
-        # ── 2. contamination_guard from spec ──────────────────────────
-        contamination = self._check_contamination(spec, upstream_by_id)
+        # ── 2. contamination_guard ────────────────────────────────────
+        contamination = self._check_contamination(
+            decision_id, contamination_guard, upstream_by_id
+        )
         if contamination is not None:
-            return contamination
+            return contamination.model_copy(update=version_stamp)
 
         # ── 3. Boundary clauses, in priority order ────────────────────
-        boundary = spec.get("boundary", {}) or {}
         merged_context = self._merge_upstream_into_context(context, upstream)
 
         for clause_name, outcome in _CLAUSE_PRIORITY:
@@ -299,6 +352,7 @@ class PolicyEvaluator:
                     matched_rules=matched,
                     unmatched_rules=unmatched,
                     reasons=[f"clause {clause_name} matched"],
+                    **version_stamp,
                 )
 
         # ── 4. No clause matched → escalate (safe default) ────────────
@@ -309,7 +363,56 @@ class PolicyEvaluator:
             reasons=[
                 "no boundary clause matched; escalating per safe default"
             ],
+            **version_stamp,
         )
+
+    # ── PolicyStore lookup helpers ────────────────────────────────────
+
+    @staticmethod
+    async def _resolve_active_version(
+        *,
+        decision_id: str,
+        policy_store: Optional["PolicyStore"],
+        at: Optional[datetime],
+        agency_chain: Optional[list[str]],
+        product: Optional[str],
+        state: Optional[str],
+    ) -> tuple[Optional["PolicyVersionRecord"], Optional[str], list[str]]:
+        """Walk the agency_chain (overlay-first) and return:
+          (selected_version, agency, version_chain).
+        version_chain lists every agency consulted whether or not it
+        had an active version — useful for the trace stamp."""
+
+        if policy_store is None:
+            return None, None, []
+
+        chain = list(agency_chain or ["lender_overlay"])
+        eval_at = at or datetime.utcnow()
+
+        version_chain: list[str] = []
+        chosen: Optional["PolicyVersionRecord"] = None
+        chosen_agency: Optional[str] = None
+
+        for agency in chain:
+            v = await policy_store.active_version(
+                decision_id, agency, at=eval_at, product=product, state=state
+            )
+            if v is not None:
+                version_chain.append(v.policy_version_id)
+                if chosen is None:
+                    chosen = v
+                    chosen_agency = agency
+        return chosen, chosen_agency, version_chain
+
+    @staticmethod
+    def _version_stamp(
+        version_used: Optional["PolicyVersionRecord"],
+        version_chain: list[str],
+    ) -> dict[str, Any]:
+        return {
+            "policy_version_id": version_used.policy_version_id if version_used else None,
+            "policy_chain": list(version_chain),
+        }
 
     # ── Clause evaluation ─────────────────────────────────────────────
 
@@ -341,23 +444,12 @@ class PolicyEvaluator:
         decision_id: str,
         upstream_by_id: dict[str, UpstreamSummary],
     ) -> Optional[PolicyDecision]:
+        # Order matters: SPECIFIC rules first so the trace's
+        # policy_reasons names the most precise hard rule that fired.
+        # Falls through to the generic upstream_block_propagates check
+        # for any other BLOCK upstream.
 
-        # upstream_block_propagates_to_dependents
-        for u in upstream_by_id.values():
-            if u.outcome == PolicyOutcome.BLOCK:
-                # fraud_block_stops_pipeline / compliance_block_stops_closing
-                # are special-cased below; the generic propagation still
-                # applies to anything else.
-                return PolicyDecision(
-                    decision_id=decision_id,
-                    outcome=PolicyOutcome.BLOCK,
-                    reasons=[
-                        f"upstream {u.decision_id} blocked "
-                        "(upstream_block_propagates_to_dependents)"
-                    ],
-                )
-
-        # closing_readiness specifically must not run if compliance is blocked
+        # closing_readiness specifically must not run if compliance is blocked.
         if decision_id == "closing_readiness":
             comp = upstream_by_id.get("compliance_check")
             if comp and comp.outcome == PolicyOutcome.BLOCK:
@@ -376,21 +468,33 @@ class PolicyEvaluator:
                 reasons=["fraud_block_stops_pipeline"],
             )
 
+        # Generic upstream_block_propagates_to_dependents — any other
+        # BLOCK upstream we didn't catch above.
+        for u in upstream_by_id.values():
+            if u.outcome == PolicyOutcome.BLOCK:
+                return PolicyDecision(
+                    decision_id=decision_id,
+                    outcome=PolicyOutcome.BLOCK,
+                    reasons=[
+                        f"upstream {u.decision_id} blocked "
+                        "(upstream_block_propagates_to_dependents)"
+                    ],
+                )
+
         return None
 
     @staticmethod
     def _check_contamination(
-        spec: dict[str, Any],
+        decision_id: str,
+        guard: dict[str, Any],
         upstream_by_id: dict[str, UpstreamSummary],
     ) -> Optional[PolicyDecision]:
-        guard = spec.get("contamination_guard") or {}
-
         threshold = guard.get("reject_if_upstream_confidence_below")
         if threshold is not None:
             for u in upstream_by_id.values():
                 if u.confidence < threshold:
                     return PolicyDecision(
-                        decision_id=spec["id"],
+                        decision_id=decision_id,
                         outcome=PolicyOutcome.BLOCK,
                         contamination=True,
                         reasons=[
@@ -404,7 +508,7 @@ class PolicyEvaluator:
             for u in upstream_by_id.values():
                 if u.outcome == PolicyOutcome.BLOCK:
                     return PolicyDecision(
-                        decision_id=spec["id"],
+                        decision_id=decision_id,
                         outcome=PolicyOutcome.BLOCK,
                         contamination=True,
                         reasons=[

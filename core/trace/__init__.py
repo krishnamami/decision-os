@@ -1,4 +1,5 @@
 from .trace_schema import (
+    ClaimProvenance,
     Contradiction,
     CriticReview,
     CriticVerdict,
@@ -21,6 +22,7 @@ from .trace_writer import InMemoryTraceWriter, TraceWriter
 
 __all__ = [
     "AgentLearning",
+    "ClaimProvenance",
     "Contradiction",
     "CriticAgent",
     "CriticReview",

@@ -271,6 +271,8 @@ class Replayer:
         trace_writer: TraceWriter,
         agents: dict[str, DecisionAgent],
         critic: Optional[CriticAgent] = None,
+        policy_store: Optional[Any] = None,
+        retriever_factory: Optional[Any] = None,
     ):
         self._store = store
         self._evaluator = evaluator
@@ -278,6 +280,18 @@ class Replayer:
         self._trace_writer = trace_writer
         self._agents = dict(agents)
         self._critic = critic
+        # Optional — when set, replay's AtomicTool consults the same
+        # policy store the live pipeline did, so policy_version_id stamps
+        # appear on simulated traces too. Live durable is wrapped in the
+        # read-only shim, but the policy store itself is read-only by
+        # contract during replay (we never write to it from a shadow
+        # AtomicTool).
+        self._policy_store = policy_store
+        # Callable: (shadow_store) -> Retriever. Called per replay so
+        # the retriever's KnowledgeStore wraps the shadow store (which
+        # in turn wraps the at-time shim) — claim reads pin to
+        # replay_at automatically.
+        self._retriever_factory = retriever_factory
 
     @classmethod
     def from_platform(cls, platform: Any) -> "Replayer":
@@ -285,6 +299,16 @@ class Replayer:
 
         Duck-typed: any object exposing the required attributes works.
         Keeps core/simulation independent of api/."""
+
+        # Build a factory that constructs a fresh Retriever wrapping
+        # whatever shadow store the replayer hands it. This way the
+        # retriever's reads pin to replay_at via the shim, with no
+        # mutation of the live KnowledgeStore.
+        def _retriever_factory(shadow_store: LendingContextStore):
+            from core.knowledge import KnowledgeStore, MetadataRetriever
+            ks = KnowledgeStore(shadow_store)
+            return MetadataRetriever(ks)
+
         return cls(
             store=platform.store,
             evaluator=platform.evaluator,
@@ -292,6 +316,8 @@ class Replayer:
             trace_writer=platform.trace_writer,
             agents=platform.agents,
             critic=getattr(platform, "critic", None),
+            policy_store=getattr(platform, "policy_store", None),
+            retriever_factory=_retriever_factory if getattr(platform, "retriever", None) else None,
         )
 
     # ── Public entry points ──────────────────────────────────────────
@@ -324,7 +350,9 @@ class Replayer:
             decisions_config=self._spec.to_dict(),
             event_bus=InMemoryEventBus(),
         )
-        exec_result = await executor.run_application(application_id, shadow.resolver)
+        exec_result = await executor.run_application(
+            application_id, shadow.resolver, evaluation_at=replay_at
+        )
 
         sim_traces = await shadow.trace_writer.list_for_application(application_id)
         comparison = await self._compare_application(
@@ -381,6 +409,7 @@ class Replayer:
             resolver=shadow.resolver,
             upstream=upstream,
             spec_version=self._spec.version,
+            evaluation_at=replay_at,
         )
 
         original = await self._latest_original_trace(
@@ -401,7 +430,12 @@ class Replayer:
     ) -> "_ShadowComponents":
         shim = _ReadOnlyAtTimeShim(self._raw_durable(), replay_at)
         store = LendingContextStore(InMemoryHotCache(), shim)
-        builder = ContextBuilder(store, self._spec.to_dict())
+        retriever = (
+            self._retriever_factory(store)
+            if self._retriever_factory is not None
+            else None
+        )
+        builder = ContextBuilder(store, self._spec.to_dict(), retriever=retriever)
         router = _ShadowModeRouter()
         trace_writer = InMemoryTraceWriter()
         critic = self._critic if include_critic else None
@@ -411,6 +445,7 @@ class Replayer:
             critic=critic,
             trace_writer=trace_writer,
             router=router,  # type: ignore[arg-type]
+            policy_store=self._policy_store,
         )
         resolver = _build_replay_resolver(shim, replay_at)
         return _ShadowComponents(

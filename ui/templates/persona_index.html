@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Personas{% endblock %}
+{% block content %}
+
+<div class="mb-5">
+  <h1 class="text-2xl font-semibold tracking-tight">Personas</h1>
+  <p class="text-sm text-slate-500 mt-1">
+    The 12 AI agents and the humans who supervise them. Each persona owns one
+    decision in the lending pipeline. Pick a persona to see its queue, recent
+    activity, and KPIs.
+  </p>
+</div>
+
+{% set teams = {} %}
+{% for w in personas %}
+  {% set _ = teams.setdefault(w.owner_team, {"label": w.owner_team_label, "rows": []}) %}
+  {% set _ = teams[w.owner_team]["rows"].append(w) %}
+{% endfor %}
+
+{% for team_id, team in teams.items() %}
+<section class="mb-6">
+  <div class="flex items-baseline justify-between mb-2">
+    <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider">
+      {{ team.label }}
+    </h2>
+    <span class="text-xs mono text-slate-400">{{ team_id }}</span>
+  </div>
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+    {% for p in team.rows %}
+      <a href="/ui/personas/{{ p.decision_id }}"
+         class="block bg-white border border-slate-200 rounded-lg p-4 hover:border-indigo-300 hover:shadow-sm transition">
+        <div class="flex items-start justify-between">
+          <div>
+            <div class="text-base font-medium text-slate-900">{{ p.label }}</div>
+            <div class="text-xs mono text-slate-400 mt-0.5">{{ p.decision_id }}</div>
+          </div>
+          <div class="flex flex-col items-end gap-1">
+            <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded
+                         {% if p.mode == 'auto_execute' %}bg-emerald-50 text-emerald-700
+                         {% elif p.mode == 'human_approval' %}bg-amber-50 text-amber-700
+                         {% elif p.mode == 'recommend' %}bg-indigo-50 text-indigo-700
+                         {% else %}bg-slate-50 text-slate-700{% endif %}">
+              {{ p.mode | replace('_',' ') }}
+            </span>
+            <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded
+                         {% if p.risk_level == 'high' %}bg-rose-50 text-rose-700
+                         {% elif p.risk_level == 'medium' %}bg-amber-50 text-amber-700
+                         {% else %}bg-slate-50 text-slate-700{% endif %}">
+              {{ p.risk_level }} risk
+            </span>
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-2 mt-4">
+          <div>
+            <div class="text-[10px] text-slate-400 uppercase">Completed</div>
+            <div class="text-lg font-semibold mono text-slate-700">{{ p.decisions_completed }}</div>
+          </div>
+          <div>
+            <div class="text-[10px] text-slate-400 uppercase">Pending</div>
+            <div class="text-lg font-semibold mono
+                        {% if p.pending_review > 0 %}text-amber-700{% else %}text-slate-500{% endif %}">
+              {{ p.pending_review }}
+            </div>
+          </div>
+          <div>
+            <div class="text-[10px] text-slate-400 uppercase">Auto %</div>
+            <div class="text-lg font-semibold mono text-emerald-700">
+              {% if p.auto_decided_pct is not none %}{{ '%.0f'|format(p.auto_decided_pct * 100) }}%{% else %}—{% endif %}
+            </div>
+          </div>
+        </div>
+      </a>
+    {% endfor %}
+  </div>
+</section>
+{% endfor %}
+
+{% endblock %}

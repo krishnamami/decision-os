@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}{{ policy_version_id }}{% endblock %}
+{% block content %}
+
+<div class="mb-3">
+  <a href="/ui/policies" class="text-sm text-indigo-600 hover:text-indigo-800">
+    ← All policies
+  </a>
+</div>
+
+{# ── Header ──────────────────────────────────────────────────────── #}
+<div class="bg-white border border-slate-200 rounded-lg p-5 mb-4">
+  <div class="flex items-start justify-between">
+    <div>
+      <div class="text-xs uppercase tracking-wider text-slate-500 mb-1">
+        Policy version
+      </div>
+      <div class="text-lg mono font-semibold text-slate-900">
+        {{ policy_version_id }}
+      </div>
+      <div class="text-sm text-slate-600 mt-1">
+        {{ policy.name if policy else policy_version_id }}
+      </div>
+    </div>
+    <div class="flex flex-col items-end gap-1">
+      <span class="text-[11px] uppercase tracking-wider px-2 py-0.5 rounded bg-indigo-50 text-indigo-800">
+        {{ agency_label }}
+      </span>
+      <span class="text-[11px] mono text-slate-400">v{{ version.version_number }}</span>
+    </div>
+  </div>
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 text-sm">
+    <div>
+      <div class="text-xs text-slate-400">Decision</div>
+      <div class="font-medium text-slate-800">{{ decision_label }}</div>
+      <div class="text-[11px] mono text-slate-400">{{ decision_id or '—' }}</div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400">Effective from</div>
+      <div class="mono text-slate-800">{{ version.valid_from | dt }}</div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400">Effective to</div>
+      <div class="mono text-slate-800">
+        {% if version.valid_to %}{{ version.valid_to | dt }}{% else %}current{% endif %}
+      </div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400">Owner</div>
+      <div class="mono text-slate-800">{{ policy.owner_team if policy else '—' }}</div>
+    </div>
+  </div>
+  {% if version.source_revision or version.source_url %}
+  <div class="mt-4 pt-4 border-t border-slate-200 text-sm">
+    <div class="text-xs text-slate-400">Source</div>
+    <div class="text-slate-700">{{ version.source_revision or '—' }}</div>
+    {% if version.source_url %}
+      <a href="{{ version.source_url }}" target="_blank"
+         class="text-xs text-indigo-600 hover:text-indigo-800 mono break-all">
+        {{ version.source_url }}
+      </a>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% if version.ingested_by or version.ingested_at %}
+  <div class="mt-3 text-[11px] text-slate-400">
+    Ingested by <span class="mono">{{ version.ingested_by or '—' }}</span>
+    {% if version.ingested_at %} at <span class="mono">{{ version.ingested_at | dt }}</span>{% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{# ── Boundary clauses ────────────────────────────────────────────── #}
+<div class="bg-white border border-slate-200 rounded-lg p-5 mb-4">
+  <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">
+    Boundary clauses
+  </h2>
+  <div class="space-y-3">
+    {% for clause in boundary_clauses %}
+      <div class="border border-{{ clause.tone }}-200 bg-{{ clause.tone }}-50/40 rounded-lg p-3">
+        <div class="flex items-baseline justify-between mb-2">
+          <div class="text-sm font-medium mono text-slate-900">
+            {{ clause.clause }}
+          </div>
+          <span class="text-[11px] mono text-slate-500">
+            {{ clause.rule_count }} rule{% if clause.rule_count != 1 %}s{% endif %}
+          </span>
+        </div>
+        {% if clause.rules %}
+          <ul class="space-y-1">
+            {% for rule in clause.rules %}
+              <li class="text-xs mono text-slate-700 bg-white border border-{{ clause.tone }}-200 rounded px-2 py-1">
+                {{ rule }}
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <div class="text-xs text-slate-400 italic">no rules</div>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+</div>
+
+{# ── Contamination guard ─────────────────────────────────────────── #}
+{% if version.contamination_guard %}
+<div class="bg-white border border-slate-200 rounded-lg p-5 mb-4">
+  <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">
+    Contamination guard
+  </h2>
+  <pre class="text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded p-3">{{ version.contamination_guard | tojson(indent=2) }}</pre>
+</div>
+{% endif %}
+
+{# ── Hard rules subscribed ──────────────────────────────────────── #}
+{% if version.hard_rules_subscribed %}
+<div class="bg-white border border-slate-200 rounded-lg p-5 mb-4">
+  <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">
+    Hard rules subscribed
+  </h2>
+  <div class="flex flex-wrap gap-2">
+    {% for rule in version.hard_rules_subscribed %}
+      <span class="text-[11px] mono px-2 py-1 rounded bg-slate-100 text-slate-700 border border-slate-200">
+        {{ rule }}
+      </span>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{# ── Version history (supersession chain) ─────────────────────────── #}
+{% if siblings | length > 1 %}
+<div class="bg-white border border-slate-200 rounded-lg p-5">
+  <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">
+    Version history
+  </h2>
+  <ul class="space-y-2">
+    {% for v in siblings %}
+      <li class="border border-slate-200 rounded p-3 {% if v.policy_version_id == policy_version_id %}bg-indigo-50/40 border-indigo-300{% endif %}">
+        <div class="flex items-baseline justify-between">
+          <a href="/ui/policies/{{ v.policy_version_id }}"
+             class="mono text-sm
+                    {% if v.policy_version_id == policy_version_id %}text-indigo-900 font-semibold{% else %}text-slate-700 hover:text-indigo-700{% endif %}">
+            v{{ v.version_number }} · {{ v.policy_version_id }}
+          </a>
+          <span class="text-[11px] mono text-slate-500">
+            {{ v.valid_from | dt }} →
+            {% if v.valid_to %}{{ v.valid_to | dt }}{% else %}current{% endif %}
+          </span>
+        </div>
+        {% if v.source_revision %}
+          <div class="text-xs text-slate-500 mt-1">{{ v.source_revision }}</div>
+        {% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% endblock %}

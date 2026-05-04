@@ -1,0 +1,7 @@
+event_type,customer_id,application_id,lead_source,channel,session_behavior,loan_purpose,requested_amount,property_state,kyc_status,identity_match_confidence,stated_income,employment_type,employer,gross_amount,period_start,period_end,verified,address,appraised_value,purchase_price
+lead_received,cust_va,,va_partner,api_partner,"{""pages_viewed"": 9, ""time_on_site_seconds"": 360}",,,,,,,,,,,,,,,
+application_submitted,cust_va,app_va,,,,purchase,425000,VA,,,,,,,,,,,,
+kyc_completed,cust_va,app_va,,,,,,,verified,0.99,,,,,,,,,,
+income_declared,cust_va,app_va,,,,,,,,,98000,salaried,,,,,,,,
+payroll_received,cust_va,app_va,,,,,,,,,,,US Department of Defense,98000,2026-01-01T00:00:00,2026-04-30T00:00:00,true,,,
+property_appraised,cust_va,app_va,,,,,,,,,,,,,,,,"412 Liberty Way, Norfolk, VA",425000,425000

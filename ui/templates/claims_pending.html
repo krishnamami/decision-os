@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}Pending claims · Decision OS{% endblock %}
+{% block content %}
+
+<div class="flex items-baseline justify-between mb-4">
+  <div>
+    <h1 class="text-2xl font-semibold tracking-tight">Pending claims</h1>
+    <p class="text-sm text-slate-500 mt-1">
+      Claims extracted from uploaded documents that haven't been
+      verified yet. Decision agents read only verified claims by default,
+      so a pending claim sits here until a human reviewer Verifies or
+      Rejects it.
+    </p>
+  </div>
+  <div class="text-sm text-slate-500">
+    {{ total }} pending
+  </div>
+</div>
+
+{% if claims %}
+<div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="bg-slate-50">
+      <tr class="text-xs uppercase tracking-wider text-slate-400 border-b border-slate-200">
+        <th class="text-left px-4 py-2">Application</th>
+        <th class="text-left px-4 py-2">Document</th>
+        <th class="text-left px-4 py-2">Claim</th>
+        <th class="text-left px-4 py-2">Confidence</th>
+        <th class="text-left px-4 py-2">Extracted</th>
+        <th class="text-left px-4 py-2"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in claims %}
+      <tr class="border-b border-slate-100 hover:bg-slate-50">
+        <td class="px-4 py-3">
+          <a href="/ui/applications/{{ c.application_id }}"
+             class="mono text-indigo-700 hover:text-indigo-900">
+            {{ c.application_id }}
+          </a>
+          {% if c.applicant_id %}
+            <div class="text-[11px] mono text-slate-400">{{ c.applicant_id }}</div>
+          {% endif %}
+        </td>
+        <td class="px-4 py-3">
+          <a href="/ui/documents/{{ c.document_id }}"
+             class="mono text-indigo-700 hover:text-indigo-900">
+            {{ c.document_id }}
+          </a>
+          <div class="text-[11px] text-slate-500 mt-0.5">
+            <span class="mono">{{ c.doc_type or '—' }}</span>
+            {% if c.source_page %} · p.{{ c.source_page }}{% endif %}
+            {% if c.doc_status %}
+              · status <span class="mono">{{ c.doc_status }}</span>
+            {% endif %}
+          </div>
+        </td>
+        <td class="px-4 py-3">
+          <div>
+            <span class="mono text-slate-600">{{ c.field_name }}</span>
+            <span class="text-slate-400 mx-1">→</span>
+            <span class="font-medium mono text-slate-900">{{ c.field_value }}</span>
+          </div>
+          <div class="text-[11px] text-slate-400 mt-0.5">
+            <span class="mono">{{ c.claim_id }}</span>
+          </div>
+        </td>
+        <td class="px-4 py-3 text-xs">
+          <div class="mono text-slate-700">
+            {% if c.extraction_confidence is not none %}
+              {{ '%.2f'|format(c.extraction_confidence) }}
+            {% else %}—{% endif %}
+          </div>
+          <div class="text-[11px] text-slate-400">
+            {{ c.extraction_method or 'manual' }}
+          </div>
+        </td>
+        <td class="px-4 py-3 text-xs">
+          <div class="mono text-slate-500">
+            {% if c.extracted_at %}{{ c.extracted_at | dt }}{% else %}—{% endif %}
+          </div>
+          {% if c.extracted_by %}
+            <div class="text-[11px] mono text-slate-400">{{ c.extracted_by }}</div>
+          {% endif %}
+        </td>
+        <td class="px-4 py-3">
+          <div class="flex items-center gap-2 justify-end">
+            <form method="post" action="/ui/claims/{{ c.claim_id }}/verify">
+              <input type="hidden" name="reviewer_id" value="ui-user">
+              <input type="hidden" name="reviewer_role" value="underwriter">
+              <button type="submit"
+                      class="text-xs px-2 py-1 rounded border border-emerald-300 text-emerald-800 bg-emerald-50 hover:bg-emerald-100">
+                Verify
+              </button>
+            </form>
+            <form method="post" action="/ui/claims/{{ c.claim_id }}/reject">
+              <input type="hidden" name="reviewer_id" value="ui-user">
+              <input type="hidden" name="reviewer_role" value="underwriter">
+              <input type="hidden" name="reason" value="Manual reject from pending queue">
+              <button type="submit"
+                      class="text-xs px-2 py-1 rounded border border-rose-300 text-rose-800 bg-white hover:bg-rose-50">
+                Reject
+              </button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="bg-white border border-dashed border-slate-300 rounded-lg p-10 text-center text-sm text-slate-500">
+  No pending claims. All extracted claims are either verified
+  (visible to decision agents) or rejected (excluded from bundles).
+</div>
+{% endif %}
+
+<div class="mt-6 text-xs text-slate-500 leading-relaxed">
+  <strong class="text-slate-700">Verification flow:</strong>
+  Documents are uploaded → OCR + LLM extraction produces Claims with
+  <span class="mono">status=pending</span>. The
+  <span class="mono">MetadataRetriever</span>'s default
+  <span class="mono">verified_only=True</span> hides pending claims
+  from decision agents — so an unverified W-2 income figure can't
+  silently drive an underwriting decision. Verify here promotes the
+  claim into the next decision's bundle. Reject removes it from
+  consideration.
+</div>
+
+{% endblock %}

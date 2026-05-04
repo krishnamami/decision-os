@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -X utf8 scripts/smoke_fha_scenario.py)",
+      "Bash(python -X utf8 scripts/smoke_replayer.py)",
+      "Bash(python -X utf8 scripts/smoke_policies.py)",
+      "Bash(python -X utf8 scripts/smoke_policy_evaluator.py)",
+      "Bash(python -X utf8 scripts/smoke_workbench.py)",
+      "Bash(python -X utf8 scripts/smoke_persona_workbench.py)",
+      "Bash(python -X utf8 scripts/smoke_ui_all_panels.py)",
+      "Bash(python -X utf8 scripts/smoke_knowledge.py)",
+      "Bash(python -X utf8 -c ' *)",
+      "Bash(python -m unittest discover -s tests -t .)",
+      "Bash(python -c \"import pytest; print\\(pytest.__version__\\)\")",
+      "Bash(python -X utf8 scripts/run_tests.py)",
+      "Bash(python -m unittest tests.core.policy_engine.test_evaluator)",
+      "Bash(python -m unittest tests.core.trace.test_reflection)",
+      "Bash(python -m unittest tests.domains.lending.test_seed_scenarios)",
+      "Bash(python -m unittest tests.core.decision_agents.test_atomic_tool)",
+      "Bash(python -m unittest tests.core.simulation.test_replayer)",
+      "Bash(python -m unittest tests.api.test_routes)",
+      "Bash(python -m unittest tests.ui.test_views)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:8000/health)",
+      "Bash(uvicorn api.main:get_app --factory --port 8000 --host 127.0.0.1)"
+    ]
+  }
+}

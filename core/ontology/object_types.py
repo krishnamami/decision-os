@@ -541,6 +541,242 @@ class ComplianceRecord(ObjectType):
     ])
 
 
+class Policy(ObjectType):
+    object_type_id: str = "Policy"
+    semantic_definition: str = (
+        "A named rule that gates one of the lending decisions. Identified "
+        "by (agency, decision_id, product_scope, state_scope). The Policy "
+        "itself is the IDENTITY of the rule; the actual clauses live on a "
+        "PolicyVersion. Cross-application — every Application's decisions "
+        "consult the same Policy registry under the SHARED scope."
+    )
+    primary_key: str = "policy_id"
+    properties: dict[str, str] = Field(default_factory=lambda: {
+        "policy_id": "string",
+        "name": "string",
+        "description": "string",
+        "owner_team": "string",
+        "agency": "enum<freddie|fannie|fha|va|usda|cfpb|state|lender_overlay>",
+        # Which of the 12 decisions this policy gates. Null for cross-cutting
+        # hard-rule packs that apply across decisions.
+        "decision_id": "string",
+        "product_scope": "list<loan_type>",   # [] = all products
+        "state_scope": "list<string>",         # [] = all states
+        "created_at": "datetime",
+    })
+    links: list[Link] = Field(default_factory=lambda: [
+        Link(
+            name="has_version",
+            target="PolicyVersion",
+            cardinality=Cardinality.ONE_TO_MANY,
+            direction=LinkDirection.OUTBOUND,
+            semantic_meaning=(
+                "A Policy accumulates many PolicyVersions over time. "
+                "Effective version at a given moment is determined by "
+                "PolicyVersion.valid_from / valid_to."
+            ),
+        ),
+    ])
+    decisions_that_read_it: list[str] = Field(default_factory=lambda: [
+        "lead_scoring",
+        "income_verification",
+        "credit_assessment",
+        "fraud_screening",
+        "compliance_check",
+        "dti_calculation",
+        "ltv_assessment",
+        "product_eligibility",
+        "rate_pricing",
+        "underwriting_decision",
+        "approval_routing",
+        "closing_readiness",
+    ])
+
+
+class PolicyVersion(ObjectType):
+    object_type_id: str = "PolicyVersion"
+    semantic_definition: str = (
+        "A specific version of a Policy — Type 2 SCD. Carries the actual "
+        "boundary clauses, a business effectivity window (valid_from / "
+        "valid_to) for 'when this rule was in force in the world', and a "
+        "supersession chain (handled at the ContextStore layer) for 'what "
+        "our system knew at time T'. Replay correctness depends on "
+        "looking up the PolicyVersion effective at the original "
+        "decided_at, not the current version."
+    )
+    primary_key: str = "policy_version_id"
+    properties: dict[str, str] = Field(default_factory=lambda: {
+        "policy_version_id": "string",
+        "policy_id": "string",
+        "version_number": "integer",
+        "valid_from": "datetime",
+        "valid_to": "datetime",        # null = currently in force
+        "source_url": "string",
+        "source_revision": "string",   # e.g. "Freddie Selling Guide Bulletin 2026-04"
+        # Same shape as the boundary block in decisions.yaml today.
+        "boundary": "object",
+        "contamination_guard": "object",
+        "hard_rules_subscribed": "list<string>",
+        "ingested_at": "datetime",
+        "ingested_by": "string",       # connector_id or "core.policy_engine.seeder"
+    })
+    links: list[Link] = Field(default_factory=lambda: [
+        Link(
+            name="version_of",
+            target="Policy",
+            cardinality=Cardinality.MANY_TO_ONE,
+            direction=LinkDirection.INBOUND,
+            semantic_meaning="Inverse of Policy.has_version.",
+        ),
+    ])
+    # Same readers as Policy — every decision reads policy versions because
+    # the PolicyEvaluator runs in every atomic_tool path.
+    decisions_that_read_it: list[str] = Field(default_factory=lambda: [
+        "lead_scoring",
+        "income_verification",
+        "credit_assessment",
+        "fraud_screening",
+        "compliance_check",
+        "dti_calculation",
+        "ltv_assessment",
+        "product_eligibility",
+        "rate_pricing",
+        "underwriting_decision",
+        "approval_routing",
+        "closing_readiness",
+    ])
+
+
+class Document(ObjectType):
+    object_type_id: str = "Document"
+    semantic_definition: str = (
+        "An uploaded artifact in the loan file — W-2, pay stub, tax "
+        "return, bank statement, ID, appraisal, title report, insurance "
+        "binder, closing disclosure, etc. Stored as raw bytes in the "
+        "EDMS / blob store; this ObjectType is the metadata + status "
+        "row. Status moves unverified → ocr_extracted → human_corrected "
+        "→ verified | rejected. Re-uploads supersede via the standard "
+        "Type 2 chain on ContextRecord."
+    )
+    primary_key: str = "document_id"
+    properties: dict[str, str] = Field(default_factory=lambda: {
+        "document_id": "string",
+        "application_id": "string",
+        "applicant_id": "string",
+        # Free-form on this ObjectType; the canonical doc_type vocabulary
+        # lives in domains/lending/knowledge_base.json#document_types.
+        "doc_type": "string",
+        "status": "enum<unverified|ocr_extracted|human_corrected|verified|rejected>",
+        # EDMS / blob URI — the actual bytes are not stored on this row.
+        "source_url": "string",
+        "source_system": "string",       # encompass | docutech | borrower_portal | ...
+        "uploaded_at": "datetime",
+        "uploaded_by": "string",
+        "verified_at": "datetime",       # null until human verification
+        "verified_by": "string",
+        "ocr_confidence": "float",       # null when not yet OCR'd
+        "page_count": "integer",
+        "mime_type": "string",
+    })
+    links: list[Link] = Field(default_factory=lambda: [
+        Link(
+            name="belongs_to_application",
+            target="Application",
+            cardinality=Cardinality.MANY_TO_ONE,
+            direction=LinkDirection.OUTBOUND,
+            semantic_meaning="The application this doc was uploaded against.",
+        ),
+        Link(
+            name="belongs_to_applicant",
+            target="Applicant",
+            cardinality=Cardinality.MANY_TO_ONE,
+            direction=LinkDirection.OUTBOUND,
+            semantic_meaning="The applicant the doc pertains to (a co-applicant's W-2 is still attached to this Applicant).",
+        ),
+        Link(
+            name="produces_claim",
+            target="Claim",
+            cardinality=Cardinality.ONE_TO_MANY,
+            direction=LinkDirection.OUTBOUND,
+            semantic_meaning="Each Document yields zero or more structured Claims via OCR + extraction.",
+        ),
+    ])
+    # Coarse-grained ObjectType permission: every decision can touch
+    # Document records. Fine-grained per-doc_type filtering happens in
+    # the Retriever — see knowledge_base.json document_types.feeds_decisions.
+    decisions_that_read_it: list[str] = Field(default_factory=lambda: [
+        "lead_scoring",
+        "income_verification",
+        "credit_assessment",
+        "fraud_screening",
+        "compliance_check",
+        "dti_calculation",
+        "ltv_assessment",
+        "product_eligibility",
+        "rate_pricing",
+        "underwriting_decision",
+        "approval_routing",
+        "closing_readiness",
+    ])
+
+
+class Claim(ObjectType):
+    object_type_id: str = "Claim"
+    semantic_definition: str = (
+        "A structured fact extracted from a Document, with provenance "
+        "back to the source page and the verifier. The Decision Agent "
+        "reads claims (e.g. verified_income=120000, source=doc_42, "
+        "page=2, verified_by=underwriter) — not the raw PDF — so the "
+        "trace stays auditable. Status pending → verified | rejected; "
+        "supersession on re-extraction via the standard Type 2 chain."
+    )
+    primary_key: str = "claim_id"
+    properties: dict[str, str] = Field(default_factory=lambda: {
+        "claim_id": "string",
+        "document_id": "string",
+        "application_id": "string",
+        "applicant_id": "string",
+        # The canonical claim field — e.g. verified_income, employer,
+        # appraised_value, identity_match_confidence. Decision agents
+        # look up by this name.
+        "field_name": "string",
+        # JSON-typed value — string / number / bool / list / nested object.
+        "field_value": "object",
+        "source_page": "integer",
+        "source_bbox": "object",       # {x0, y0, x1, y1} in page coords
+        "extraction_method": "enum<manual|ocr|llm_extract|structured_pull>",
+        "extraction_confidence": "float",
+        "status": "enum<pending|verified|rejected|superseded>",
+        "verified_at": "datetime",
+        "verified_by": "string",
+        "extracted_at": "datetime",
+        "extracted_by": "string",      # connector_id or "core.knowledge.extractor"
+    })
+    links: list[Link] = Field(default_factory=lambda: [
+        Link(
+            name="extracted_from",
+            target="Document",
+            cardinality=Cardinality.MANY_TO_ONE,
+            direction=LinkDirection.INBOUND,
+            semantic_meaning="Inverse of Document.produces_claim.",
+        ),
+    ])
+    decisions_that_read_it: list[str] = Field(default_factory=lambda: [
+        "lead_scoring",
+        "income_verification",
+        "credit_assessment",
+        "fraud_screening",
+        "compliance_check",
+        "dti_calculation",
+        "ltv_assessment",
+        "product_eligibility",
+        "rate_pricing",
+        "underwriting_decision",
+        "approval_routing",
+        "closing_readiness",
+    ])
+
+
 LENDING_OBJECT_TYPES: dict[str, ObjectType] = {
     cls().object_type_id: cls()
     for cls in (
@@ -552,5 +788,9 @@ LENDING_OBJECT_TYPES: dict[str, ObjectType] = {
         IncomeProfile,
         FraudProfile,
         ComplianceRecord,
+        Policy,
+        PolicyVersion,
+        Document,
+        Claim,
     )
 }

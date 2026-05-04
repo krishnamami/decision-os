@@ -28,5 +28,105 @@
       "final_conditions_checklist": {"all_cleared": true},
       "insurance_binder": true
     }
+  },
+  {
+    "entity_type": "Document",
+    "entity_id": "doc_happy_w2",
+    "value": {
+      "document_id": "doc_happy_w2",
+      "application_id": "app_happy",
+      "applicant_id": "cust_happy",
+      "doc_type": "w2",
+      "status": "verified",
+      "source_url": "edms://encompass/loans/app_happy/income/w2_2024.pdf",
+      "source_system": "encompass",
+      "uploaded_at": "2026-04-12T14:22:00",
+      "uploaded_by": "borrower:cust_happy",
+      "verified_at": "2026-04-13T10:18:00",
+      "verified_by": "underwriter:bgoud",
+      "ocr_confidence": 0.97,
+      "page_count": 1,
+      "mime_type": "application/pdf"
+    }
+  },
+  {
+    "entity_type": "Document",
+    "entity_id": "doc_happy_appraisal",
+    "value": {
+      "document_id": "doc_happy_appraisal",
+      "application_id": "app_happy",
+      "applicant_id": "cust_happy",
+      "doc_type": "appraisal_report",
+      "status": "verified",
+      "source_url": "edms://encompass/loans/app_happy/property/urar_1004.pdf",
+      "source_system": "encompass",
+      "uploaded_at": "2026-04-15T09:00:00",
+      "uploaded_by": "amc:firstamerican",
+      "verified_at": "2026-04-15T11:30:00",
+      "verified_by": "underwriter:bgoud",
+      "ocr_confidence": 0.95,
+      "page_count": 12,
+      "mime_type": "application/pdf"
+    }
+  },
+  {
+    "entity_type": "Claim",
+    "entity_id": "claim_happy_w2_income",
+    "value": {
+      "claim_id": "claim_happy_w2_income",
+      "document_id": "doc_happy_w2",
+      "application_id": "app_happy",
+      "applicant_id": "cust_happy",
+      "field_name": "verified_income",
+      "field_value": 124500,
+      "source_page": 1,
+      "extraction_method": "llm_extract",
+      "extraction_confidence": 0.96,
+      "status": "verified",
+      "verified_at": "2026-04-13T10:18:00",
+      "verified_by": "underwriter:bgoud",
+      "extracted_at": "2026-04-12T14:25:00",
+      "extracted_by": "core.knowledge.extractor"
+    }
+  },
+  {
+    "entity_type": "Claim",
+    "entity_id": "claim_happy_w2_employer",
+    "value": {
+      "claim_id": "claim_happy_w2_employer",
+      "document_id": "doc_happy_w2",
+      "application_id": "app_happy",
+      "applicant_id": "cust_happy",
+      "field_name": "employer",
+      "field_value": "Acme Engineering Co.",
+      "source_page": 1,
+      "extraction_method": "llm_extract",
+      "extraction_confidence": 0.99,
+      "status": "verified",
+      "verified_at": "2026-04-13T10:18:00",
+      "verified_by": "underwriter:bgoud",
+      "extracted_at": "2026-04-12T14:25:00",
+      "extracted_by": "core.knowledge.extractor"
+    }
+  },
+  {
+    "entity_type": "Claim",
+    "entity_id": "claim_happy_appraisal_value",
+    "value": {
+      "claim_id": "claim_happy_appraisal_value",
+      "document_id": "doc_happy_appraisal",
+      "application_id": "app_happy",
+      "applicant_id": "cust_happy",
+      "field_name": "appraised_value",
+      "field_value": 525000,
+      "source_page": 3,
+      "extraction_method": "llm_extract",
+      "extraction_confidence": 0.94,
+      "status": "verified",
+      "verified_at": "2026-04-15T11:30:00",
+      "verified_by": "underwriter:bgoud",
+      "extracted_at": "2026-04-15T09:05:00",
+      "extracted_by": "core.knowledge.extractor"
+    }
   }
 ]

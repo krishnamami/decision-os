@@ -45,9 +45,38 @@ class HumanQueueItem(BaseModel):
     enqueued_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class HumanQueueResolution(BaseModel):
+    """Outcome of a human acting on a queue item — the dequeue receipt.
+    Auditable via the trace_writer's attached HumanReview, but stored
+    on the queue too so list_resolved() can replay the queue's history
+    without joining against the trace store."""
+
+    item_id: UUID
+    decision_id: str
+    application_id: str
+    resolution: str            # "approve" | "decline" | "send_back" | ...
+    reviewer_id: str
+    reviewer_role: str
+    resolved_at: datetime = Field(default_factory=datetime.utcnow)
+    notes: Optional[str] = None
+
+
 class HumanQueue(Protocol):
     async def enqueue(self, item: HumanQueueItem) -> UUID: ...
     async def list_open(self) -> list[HumanQueueItem]: ...
+    async def resolve(
+        self,
+        item_id: UUID,
+        *,
+        resolution: str,
+        reviewer_id: str,
+        reviewer_role: str,
+        notes: Optional[str] = None,
+    ) -> Optional[HumanQueueResolution]: ...
+    async def list_resolved(self) -> list[HumanQueueResolution]: ...
+    async def find_open(
+        self, *, application_id: str, decision_id: str
+    ) -> Optional[HumanQueueItem]: ...
 
 
 class InMemoryHumanQueue:
@@ -56,6 +85,7 @@ class InMemoryHumanQueue:
 
     def __init__(self) -> None:
         self._items: dict[UUID, HumanQueueItem] = {}
+        self._resolved: list[HumanQueueResolution] = []
 
     async def enqueue(self, item: HumanQueueItem) -> UUID:
         self._items[item.id] = item
@@ -63,6 +93,48 @@ class InMemoryHumanQueue:
 
     async def list_open(self) -> list[HumanQueueItem]:
         return list(self._items.values())
+
+    async def find_open(
+        self, *, application_id: str, decision_id: str
+    ) -> Optional[HumanQueueItem]:
+        for item in self._items.values():
+            if (
+                item.application_id == application_id
+                and item.decision_id == decision_id
+            ):
+                return item
+        return None
+
+    async def resolve(
+        self,
+        item_id: UUID,
+        *,
+        resolution: str,
+        reviewer_id: str,
+        reviewer_role: str,
+        notes: Optional[str] = None,
+    ) -> Optional[HumanQueueResolution]:
+        """Remove the item from the open list and record the resolution.
+        No-op + None when the id is unknown — idempotent in the face of
+        concurrent reviewers (HTMX double-submit, etc.)."""
+
+        item = self._items.pop(item_id, None)
+        if item is None:
+            return None
+        receipt = HumanQueueResolution(
+            item_id=item_id,
+            decision_id=item.decision_id,
+            application_id=item.application_id,
+            resolution=resolution,
+            reviewer_id=reviewer_id,
+            reviewer_role=reviewer_role,
+            notes=notes,
+        )
+        self._resolved.append(receipt)
+        return receipt
+
+    async def list_resolved(self) -> list[HumanQueueResolution]:
+        return list(self._resolved)
 
 
 # ─────────────────────────────────────────────────────────────────────

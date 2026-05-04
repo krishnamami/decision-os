@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block title %}{{ document.document_id }}{% endblock %}
+{% block content %}
+
+<div class="mb-3 flex items-center gap-3 text-sm">
+  <a href="/ui/applications/{{ document.application_id }}"
+     class="text-indigo-600 hover:text-indigo-800">
+    ← Application {{ document.application_id }}
+  </a>
+  <span class="text-slate-400">·</span>
+  <a href="/ui/applications/{{ document.application_id }}/documents"
+     class="text-indigo-600 hover:text-indigo-800">All documents</a>
+</div>
+
+{# ── Header ──────────────────────────────────────────────────────── #}
+<div class="bg-white border border-slate-200 rounded-lg p-5 mb-4">
+  <div class="flex items-start justify-between">
+    <div>
+      <div class="text-xs uppercase tracking-wider text-slate-500 mb-1">
+        Document
+      </div>
+      <div class="text-lg mono font-semibold text-slate-900">
+        {{ document.document_id }}
+      </div>
+      <div class="text-sm text-slate-600 mt-1">
+        <span class="mono">{{ doc_type or '—' }}</span>
+        {% if document.page_count %}
+          · {{ document.page_count }} page{% if document.page_count != 1 %}s{% endif %}
+        {% endif %}
+        {% if document.mime_type %}
+          · <span class="mono">{{ document.mime_type }}</span>
+        {% endif %}
+      </div>
+    </div>
+    <span class="text-[11px] uppercase tracking-wider px-2 py-0.5 rounded
+                 bg-{{ status_tone }}-50 text-{{ status_tone }}-700
+                 border border-{{ status_tone }}-200">
+      {{ status or '—' }}
+    </span>
+  </div>
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 text-sm">
+    <div>
+      <div class="text-xs text-slate-400">Application</div>
+      <a href="/ui/applications/{{ document.application_id }}"
+         class="mono text-indigo-700 hover:text-indigo-900">
+        {{ document.application_id }}
+      </a>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400">Applicant</div>
+      <div class="mono text-slate-800">{{ document.applicant_id or '—' }}</div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400">Source system</div>
+      <div class="mono text-slate-800">{{ document.source_system or '—' }}</div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400">OCR confidence</div>
+      <div class="mono text-slate-800">
+        {% if document.ocr_confidence is not none %}
+          {{ '%.2f'|format(document.ocr_confidence) }}
+        {% else %}—{% endif %}
+      </div>
+    </div>
+  </div>
+  {% if document.uploaded_at or document.uploaded_by %}
+  <div class="mt-4 pt-4 border-t border-slate-200 grid grid-cols-2 gap-4 text-sm">
+    <div>
+      <div class="text-xs text-slate-400">Uploaded</div>
+      <div class="text-slate-700">
+        {% if document.uploaded_by %}
+          by <span class="mono">{{ document.uploaded_by }}</span>
+        {% endif %}
+        {% if document.uploaded_at %}
+          at <span class="mono">{{ document.uploaded_at | dt }}</span>
+        {% endif %}
+      </div>
+    </div>
+    {% if document.verified_at or document.verified_by %}
+    <div>
+      <div class="text-xs text-slate-400">Verified</div>
+      <div class="text-slate-700">
+        {% if document.verified_by %}
+          by <span class="mono">{{ document.verified_by }}</span>
+        {% endif %}
+        {% if document.verified_at %}
+          at <span class="mono">{{ document.verified_at | dt }}</span>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% if document.source_url %}
+  <div class="mt-3">
+    <div class="text-xs text-slate-400">Source URL</div>
+    <a href="{{ document.source_url }}" target="_blank"
+       class="text-xs mono text-indigo-600 hover:text-indigo-800 break-all">
+      {{ document.source_url }}
+    </a>
+  </div>
+  {% endif %}
+</div>
+
+{# ── Claims extracted from this document ─────────────────────────── #}
+<div class="bg-white border border-slate-200 rounded-lg p-5">
+  <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">
+    Extracted claims · {{ verified_count }}/{{ claim_count }} verified
+  </h2>
+  {% if claims %}
+    <ul class="space-y-2">
+      {% for c in claims %}
+        {% set tone = 'emerald' if c.status == 'verified' else ('amber' if c.status == 'pending' else 'rose') %}
+        <li class="border border-{{ tone }}-200 bg-{{ tone }}-50/40 rounded-lg p-3">
+          <div class="flex items-baseline justify-between">
+            <div class="text-sm">
+              <span class="mono text-slate-600">{{ c.field_name }}</span>
+              <span class="text-slate-400 mx-1">→</span>
+              <span class="font-medium mono text-slate-900">{{ c.field_value }}</span>
+            </div>
+            <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded
+                         bg-{{ tone }}-100 text-{{ tone }}-700">
+              {{ c.status }}
+            </span>
+          </div>
+          <div class="text-[11px] text-slate-500 mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+            <span><span class="text-slate-400">claim_id:</span> <span class="mono">{{ c.claim_id }}</span></span>
+            {% if c.source_page %}
+              <span><span class="text-slate-400">page:</span> {{ c.source_page }}</span>
+            {% endif %}
+            {% if c.extraction_method %}
+              <span><span class="text-slate-400">method:</span> <span class="mono">{{ c.extraction_method }}</span></span>
+            {% endif %}
+            {% if c.extraction_confidence is not none %}
+              <span><span class="text-slate-400">conf:</span> <span class="mono">{{ '%.2f'|format(c.extraction_confidence) }}</span></span>
+            {% endif %}
+            {% if c.verified_by %}
+              <span><span class="text-slate-400">verifier:</span> <span class="mono">{{ c.verified_by }}</span></span>
+            {% endif %}
+            {% if c.extracted_at %}
+              <span><span class="text-slate-400">extracted:</span> <span class="mono">{{ c.extracted_at | dt }}</span></span>
+            {% endif %}
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <div class="text-sm text-slate-500">
+      No claims extracted from this document yet. The OCR pipeline runs
+      at upload time (STREAM E2); for seeded documents, the Claims live
+      in <span class="mono">entities.json</span> alongside the Document.
+    </div>
+  {% endif %}
+</div>
+
+{% endblock %}

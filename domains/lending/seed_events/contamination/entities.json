@@ -23,5 +23,41 @@
       "state_rules_passed": true,
       "cd_timing_compliant": true
     }
+  },
+  {
+    "entity_type": "Document",
+    "entity_id": "doc_contam_w2",
+    "value": {
+      "document_id": "doc_contam_w2",
+      "application_id": "app_contam",
+      "applicant_id": "cust_contam",
+      "doc_type": "w2",
+      "status": "ocr_extracted",
+      "source_url": "edms://encompass/loans/app_contam/income/w2_2024.pdf",
+      "source_system": "encompass",
+      "uploaded_at": "2026-04-20T08:15:00",
+      "uploaded_by": "borrower:cust_contam",
+      "ocr_confidence": 0.62,
+      "page_count": 1,
+      "mime_type": "application/pdf"
+    }
+  },
+  {
+    "entity_type": "Claim",
+    "entity_id": "claim_contam_w2_income",
+    "value": {
+      "claim_id": "claim_contam_w2_income",
+      "document_id": "doc_contam_w2",
+      "application_id": "app_contam",
+      "applicant_id": "cust_contam",
+      "field_name": "verified_income",
+      "field_value": 180000,
+      "source_page": 1,
+      "extraction_method": "llm_extract",
+      "extraction_confidence": 0.62,
+      "status": "pending",
+      "extracted_at": "2026-04-20T08:18:00",
+      "extracted_by": "core.knowledge.extractor"
+    }
   }
 ]

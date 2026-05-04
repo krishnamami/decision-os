@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Policies{% endblock %}
+{% block content %}
+
+<div class="mb-5">
+  <h1 class="text-2xl font-semibold tracking-tight">Policies</h1>
+  <p class="text-sm text-slate-500 mt-1">
+    Active Policies and PolicyVersions in the policy store. Each
+    decision agent consults these at evaluation time — the chain is
+    overlay-first (lender's overlay wins, then the agency's baseline).
+    Re-extracted versions land here via STREAM E2 connectors.
+  </p>
+  <div class="text-xs text-slate-500 mt-2 flex gap-4">
+    <span>{{ total_policies }} active polic{% if total_policies == 1 %}y{% else %}ies{% endif %}</span>
+    <span>{{ total_versions }} active version{% if total_versions != 1 %}s{% endif %}</span>
+  </div>
+</div>
+
+{% for agency in agencies %}
+<section class="mb-6">
+  <div class="flex items-baseline justify-between mb-2">
+    <h2 class="text-sm font-medium text-slate-500 uppercase tracking-wider">
+      {{ agency.label }}
+    </h2>
+    <span class="text-xs mono text-slate-400">
+      {{ agency.policy_count }} polic{% if agency.policy_count == 1 %}y{% else %}ies{% endif %} · agency={{ agency.agency }}
+    </span>
+  </div>
+  <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-slate-50">
+        <tr class="text-xs uppercase tracking-wider text-slate-400 border-b border-slate-200">
+          <th class="text-left px-4 py-2">Decision</th>
+          <th class="text-left px-4 py-2">Policy</th>
+          <th class="text-left px-4 py-2">Scope</th>
+          <th class="text-left px-4 py-2">Latest version</th>
+          <th class="text-left px-4 py-2">Effective from</th>
+          <th class="text-left px-4 py-2">Source</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in agency.policies %}
+        <tr class="border-b border-slate-100 hover:bg-slate-50">
+          <td class="px-4 py-3">
+            <div class="text-sm font-medium text-slate-900">{{ p.decision_label }}</div>
+            <div class="text-[11px] mono text-slate-400">{{ p.decision_id or '—' }}</div>
+          </td>
+          <td class="px-4 py-3">
+            <div class="text-sm text-slate-700">{{ p.name or p.policy_id }}</div>
+            <div class="text-[11px] mono text-slate-400">{{ p.policy_id }}</div>
+          </td>
+          <td class="px-4 py-3 text-xs">
+            {% if p.product_scope %}
+              <div class="text-slate-600">products: <span class="mono">{{ p.product_scope | join(', ') }}</span></div>
+            {% endif %}
+            {% if p.state_scope %}
+              <div class="text-slate-600">states: <span class="mono">{{ p.state_scope | join(', ') }}</span></div>
+            {% endif %}
+            {% if not p.product_scope and not p.state_scope %}
+              <span class="text-slate-400">all</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-3">
+            <div class="text-sm mono text-slate-700">v{{ p.latest_version_number or '—' }}</div>
+            <div class="text-[11px] text-slate-400">{{ p.version_count }} total</div>
+          </td>
+          <td class="px-4 py-3 text-xs mono text-slate-500">
+            {{ p.latest_valid_from | dt }}
+          </td>
+          <td class="px-4 py-3 text-xs text-slate-500 truncate max-w-[18rem]">
+            {{ p.latest_source_revision or '—' }}
+          </td>
+          <td class="px-4 py-3 text-right">
+            {% if p.latest_version_id %}
+              <a href="/ui/policies/{{ p.latest_version_id }}"
+                 class="text-xs text-indigo-600 hover:text-indigo-800">Open →</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endfor %}
+
+{% if not agencies %}
+<div class="bg-white border border-dashed border-slate-300 rounded-lg p-10 text-center text-sm text-slate-500">
+  No policies seeded yet. Run the lender_overlay + FHA seeders or boot
+  with seed_demo_data=True.
+</div>
+{% endif %}
+
+{% endblock %}
