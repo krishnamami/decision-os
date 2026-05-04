@@ -36,6 +36,7 @@ TEST_MODULES: tuple[str, ...] = (
     "tests.api.test_routes",
     "tests.ui.test_views",
     "tests.domains.lending.test_seed_scenarios",
+    "tests.domains.lending.test_synthetic",
     "tests.domains.lending.personas.test_personas_offline",
 )
 

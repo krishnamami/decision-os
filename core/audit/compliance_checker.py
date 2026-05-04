@@ -28,10 +28,12 @@ DEFAULT_REGULATION_TAGS: dict[str, tuple[str, ...]] = {
 }
 
 DEFAULT_DATA_SOURCES_BY_TAG: dict[str, tuple[str, ...]] = {
-    "FCRA": ("credit_bureau",),
-    "HMDA": ("application_form",),
+    # FCRA gates third-party credit pulls. RESPA gates title/escrow
+    # access. HMDA is a reporting regime, not a data-source gate, so
+    # it does NOT appear here — application_form intake doesn't
+    # require HMDA tagging.
+    "FCRA":  ("credit_bureau",),
     "RESPA": ("title_provider",),
-    "TRID": ("rate_sheet",),
 }
 
 

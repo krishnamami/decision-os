@@ -180,6 +180,11 @@ class AtomicTool:
         # responsible for refusing to boot without audit in production.
         self._audit_engine = audit_engine
         self._audit_store = audit_store
+        # Audit input derivation reads system-wide entity state (consent,
+        # protected attributes on Applicant) regardless of per-decision
+        # read perms. The store is the canonical handle. Fall back to
+        # builder._store when not explicitly set.
+        self._store = getattr(builder, "_store", None)
 
     # ── Public entrypoint ────────────────────────────────────────────
 
@@ -333,6 +338,15 @@ class AtomicTool:
         audit_record: Optional[AuditRecord] = None
         if self._audit_engine is not None and self._audit_store is not None:
             try:
+                # System-wide read of the Applicant — the audit gate
+                # cares about consent + protected attrs regardless of
+                # whether THIS decision's read perms include Applicant.
+                applicant_value = await self._fetch_applicant_for_audit(
+                    application_id, resolver
+                )
+                used_attrs, excluded_attrs = self._protected_attrs_for_audit(
+                    bundle, applicant_value
+                )
                 audit_record = await self._audit_engine.evaluate(
                     trace,
                     event_input={"application_id": application_id},
@@ -347,12 +361,15 @@ class AtomicTool:
                         for ot, entities in bundle.objects.items()
                     },
                     regulation_tags=self._regulation_tags_for(agent.decision_id),
-                    consent_status=self._consent_status_from_bundle(bundle),
+                    consent_status=self._consent_status_from_applicant(
+                        applicant_value, bundle
+                    ),
                     data_sources_used=list(
                         _DEFAULT_DATA_SOURCES_BY_DECISION.get(agent.decision_id, ())
                     ),
                     disclosure_sent=self._disclosure_sent_from_bundle(bundle),
-                    protected_attrs_excluded=list(PROTECTED_ATTRIBUTES),
+                    protected_attrs_used=used_attrs,
+                    protected_attrs_excluded=excluded_attrs,
                     applicant_segment=self._applicant_segment_from_bundle(bundle),
                 )
                 await self._audit_store.write(audit_record)
@@ -581,28 +598,72 @@ class AtomicTool:
 
         return list(DEFAULT_REGULATION_TAGS.get(decision_id, ()))
 
+    async def _fetch_applicant_for_audit(
+        self, application_id: str, resolver: EntityResolver
+    ) -> Optional[dict]:
+        """Read the Applicant entity for this application, bypassing
+        per-decision read perms. The audit gate is system-wide: it
+        cares about consent and protected attributes regardless of
+        which decision is running."""
+
+        if self._store is None:
+            return None
+        try:
+            ids = await resolver("Applicant", application_id)
+        except Exception:
+            return None
+        if not ids:
+            return None
+        try:
+            record = await self._store.get("Applicant", ids[0])
+        except Exception:
+            return None
+        if record is None:
+            return None
+        value = record.value if hasattr(record, "value") else None
+        return value if isinstance(value, dict) else None
+
     @staticmethod
-    def _consent_status_from_bundle(bundle: ContextBundle) -> ConsentStatus:
-        # Look at the Applicant entity — if it carries a consent flag,
-        # use it; otherwise default to OBTAINED for the local smoke.
+    def _consent_status_from_applicant(
+        applicant_value: Optional[dict], bundle: ContextBundle
+    ) -> ConsentStatus:
+        # Prefer the system-wide Applicant fetch; fall back to whatever
+        # the bundle exposes if the resolver path failed.
+        candidates: list[dict] = []
+        if isinstance(applicant_value, dict):
+            candidates.append(applicant_value)
         for fields in (bundle.objects.get("Applicant") or {}).values():
             if isinstance(fields, dict):
-                raw = fields.get("consent_status")
-                if raw:
-                    try:
-                        return ConsentStatus(raw)
-                    except ValueError:
-                        return ConsentStatus.OBTAINED
-                if fields.get("consent_obtained") is False:
-                    return ConsentStatus.MISSING
+                candidates.append(fields)
+
+        for fields in candidates:
+            raw = fields.get("consent_status")
+            if raw:
+                try:
+                    return ConsentStatus(raw)
+                except ValueError:
+                    return ConsentStatus.OBTAINED
+            if fields.get("consent_obtained") is False:
+                return ConsentStatus.MISSING
         return ConsentStatus.OBTAINED
 
     @staticmethod
     def _disclosure_sent_from_bundle(bundle: ContextBundle) -> bool:
-        for fields in (bundle.objects.get("ComplianceRecord") or {}).values():
-            if isinstance(fields, dict) and fields.get("disclosure_sent"):
-                return True
-        return False
+        # Default True when ComplianceRecord isn't in this decision's
+        # bundle (e.g., rate_pricing's read perms exclude it). The
+        # audit check should fail only on POSITIVE evidence that
+        # disclosure was missing — silence is treated as "presumably
+        # compliant" because closing_readiness (which can read
+        # ComplianceRecord) is the one that authoritatively gates on
+        # this field.
+        records = bundle.objects.get("ComplianceRecord") or {}
+        if not records:
+            return True
+        for fields in records.values():
+            if isinstance(fields, dict):
+                if fields.get("disclosure_sent") is False:
+                    return False
+        return True
 
     @staticmethod
     def _applicant_segment_from_bundle(bundle: ContextBundle) -> Optional[str]:
@@ -614,6 +675,42 @@ class AtomicTool:
                 if band:
                     return str(band)
         return None
+
+    @staticmethod
+    def _protected_attrs_for_audit(
+        bundle: ContextBundle, applicant_value: Optional[dict]
+    ) -> tuple[list[str], list[str]]:
+        """Detect which protected attributes (per PRD §23.9) are
+        present in this application's data. Reads from BOTH the
+        per-decision bundle (anything the agent could have seen) AND
+        the system-wide Applicant entity (anything that exists at
+        all, even if the agent's read perms exclude it). The audit
+        cares about the latter — a leak on Applicant.race must fire
+        even if the running decision can't read Applicant.
+
+        Returns (used, excluded):
+          used     — protected attrs detected in application data
+          excluded — protected attrs successfully kept out
+
+        EthicsChecker treats `used ∖ excluded ∩ PROTECTED_ATTRIBUTES`
+        as the leak signal."""
+
+        used: list[str] = []
+
+        def _scan(d: dict) -> None:
+            for k in d:
+                if k in PROTECTED_ATTRIBUTES and k not in used:
+                    used.append(k)
+
+        if isinstance(applicant_value, dict):
+            _scan(applicant_value)
+        for entities in bundle.objects.values():
+            for fields in entities.values():
+                if isinstance(fields, dict):
+                    _scan(fields)
+
+        excluded = [a for a in PROTECTED_ATTRIBUTES if a not in used]
+        return used, excluded
 
     @staticmethod
     def _validate_reasoning(reasoning: AgentReasoning) -> None:
