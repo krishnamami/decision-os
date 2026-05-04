@@ -35,8 +35,10 @@ from core.policy_engine import (
 from core.trace import (
     CriticAgent,
     InMemoryLearningStore,
+    InMemoryOutcomeTracker,
     InMemoryTraceWriter,
     LearningStore,
+    OutcomeTracker,
     ReflectionService,
     TraceWriter,
 )
@@ -97,6 +99,7 @@ class Platform:
         audit_store: AuditStore,
         audit_alert_sink: AlertSink,
         pii_access_log: PIIAccessLog,
+        outcome_tracker: OutcomeTracker,
     ):
         self.spec = spec
         self.store = store
@@ -120,6 +123,7 @@ class Platform:
         self.audit_store = audit_store
         self.audit_alert_sink = audit_alert_sink
         self.pii_access_log = pii_access_log
+        self.outcome_tracker = outcome_tracker
 
         self.agents: dict[str, DecisionAgent] = {}
         self.connectors: dict[str, BaseConnector] = {}
@@ -288,6 +292,7 @@ def build_default_platform(
     audit_alert_sink: AlertSink = InMemoryAlertSink()
     audit_engine = AuditEngine(alert_sink=audit_alert_sink)
     audit_store: AuditStore = InMemoryAuditStore()
+    outcome_tracker: OutcomeTracker = InMemoryOutcomeTracker()
 
     atomic_tool = AtomicTool(
         builder=builder,
@@ -329,6 +334,7 @@ def build_default_platform(
         audit_store=audit_store,
         audit_alert_sink=audit_alert_sink,
         pii_access_log=pii_access_log,
+        outcome_tracker=outcome_tracker,
     )
 
 

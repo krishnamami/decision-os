@@ -18,6 +18,14 @@ from .reflection import (
     ReflectionService,
     derive_similarity_tags,
 )
+from .outcome_tracker import (
+    DecisionOutcomeCorrelation,
+    InMemoryOutcomeTracker,
+    OutcomeRecord,
+    OutcomeTracker,
+    OutcomeType,
+    correlate,
+)
 from .trace_writer import InMemoryTraceWriter, TraceWriter
 
 __all__ = [
@@ -28,16 +36,22 @@ __all__ = [
     "CriticReview",
     "CriticVerdict",
     "DEFAULT_RETENTION_DAYS",
+    "DecisionOutcomeCorrelation",
     "DecisionTrace",
     "HumanReview",
     "InMemoryLearningStore",
+    "InMemoryOutcomeTracker",
     "InMemoryTraceWriter",
     "LearningStore",
+    "OutcomeRecord",
+    "OutcomeTracker",
+    "OutcomeType",
     "ReflectionService",
     "SelfReviewError",
     "Signal",
     "SignalDirection",
     "TraceWriter",
     "WorkJournalEntry",
+    "correlate",
     "derive_similarity_tags",
 ]

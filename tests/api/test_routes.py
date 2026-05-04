@@ -394,6 +394,56 @@ class AuditRouteTests(_SeededAppMixin, unittest.TestCase):
             obj = json.loads(ln)
             self.assertEqual(obj["decision_type"], "credit_assessment")
 
+    def test_outcome_capture_then_list(self):
+        r = self.client.post("/outcomes", json={
+            "application_id": "app_happy",
+            "outcome_type":   "funded",
+            "amount":         400_000,
+            "source":         "servicer",
+            "reason":         "loan funded on schedule",
+        })
+        self.assertEqual(r.status_code, 201, r.text[:200])
+        captured = r.json()
+        self.assertEqual(captured["application_id"], "app_happy")
+        self.assertEqual(captured["outcome_type"], "funded")
+        self.assertEqual(captured["amount"], 400_000)
+
+        r2 = self.client.get("/outcomes/application/app_happy")
+        self.assertEqual(r2.status_code, 200)
+        rows = r2.json()
+        self.assertGreaterEqual(len(rows), 1)
+        self.assertTrue(any(row["outcome_type"] == "funded" for row in rows))
+
+    def test_outcome_correlate_joins_with_underwriting_trace(self):
+        # First capture an outcome
+        self.client.post("/outcomes", json={
+            "application_id": "app_happy",
+            "outcome_type":   "funded",
+            "amount":         400_000,
+        })
+        r = self.client.get(
+            "/outcomes/application/app_happy/correlate"
+        )
+        self.assertEqual(r.status_code, 200, r.text[:200])
+        body = r.json()
+        self.assertEqual(body["application_id"], "app_happy")
+        self.assertEqual(body["decision_id"], "underwriting_decision")
+        self.assertIn("decision_outcome", body)
+        self.assertEqual(body["final_outcome_type"], "funded")
+
+    def test_outcome_correlate_unknown_decision_returns_404(self):
+        r = self.client.get(
+            "/outcomes/application/app_happy/correlate?decision_id=ghost_decision"
+        )
+        self.assertEqual(r.status_code, 404)
+
+    def test_outcome_capture_rejects_unknown_outcome_type(self):
+        r = self.client.post("/outcomes", json={
+            "application_id": "app_happy",
+            "outcome_type":   "moonshot",
+        })
+        self.assertEqual(r.status_code, 422)
+
     def test_adverse_action_returns_notice_for_block_decision(self):
         # fraud_block scenario produces a fraud_screening BLOCK trace.
         # The audit record for that decision is the source of an

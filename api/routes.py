@@ -27,8 +27,12 @@ from core.normalizer.models import (
 )
 from core.trace import (
     AgentLearning,
+    DecisionOutcomeCorrelation,
     DecisionTrace,
     HumanReview,
+    OutcomeRecord,
+    OutcomeType,
+    correlate,
     derive_similarity_tags,
 )
 
@@ -649,6 +653,93 @@ async def post_audit_access(
             detail=str(err) or f"audit record {audit_id} not found",
         ) from err
     return await platform.audit_store.access_log(audit_id)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Outcome tracker — PRD STEP 12. Post-decision ground-truth feed.
+#
+# POST /outcomes                             — capture an OutcomeRecord
+# GET  /outcomes/application/{id}            — full history for an app
+# GET  /outcomes/application/{id}/correlate  — join the underwriting
+#                                              decision trace with the
+#                                              outcome trajectory
+# ─────────────────────────────────────────────────────────────────────
+
+
+class CaptureOutcomeRequest(BaseModel):
+    application_id: str
+    outcome_type: OutcomeType
+    occurred_at: Optional[datetime] = None
+    source: str = "manual"
+    reason: Optional[str] = None
+    amount: Optional[float] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post(
+    "/outcomes",
+    response_model=OutcomeRecord,
+    status_code=status.HTTP_201_CREATED,
+)
+async def capture_outcome(
+    body: CaptureOutcomeRequest,
+    platform: Platform = Depends(get_platform),
+) -> OutcomeRecord:
+    record = OutcomeRecord(
+        application_id=body.application_id,
+        outcome_type=body.outcome_type,
+        occurred_at=body.occurred_at,
+        source=body.source,
+        reason=body.reason,
+        amount=body.amount,
+        metadata=body.metadata,
+    )
+    await platform.outcome_tracker.capture(record)
+    return record
+
+
+@router.get(
+    "/outcomes/application/{application_id}",
+    response_model=list[OutcomeRecord],
+)
+async def list_outcomes_for_application(
+    application_id: str,
+    platform: Platform = Depends(get_platform),
+) -> list[OutcomeRecord]:
+    return await platform.outcome_tracker.list_for_application(application_id)
+
+
+@router.get(
+    "/outcomes/application/{application_id}/correlate",
+    response_model=DecisionOutcomeCorrelation,
+)
+async def correlate_outcomes(
+    application_id: str,
+    decision_id: str = "underwriting_decision",
+    platform: Platform = Depends(get_platform),
+) -> DecisionOutcomeCorrelation:
+    """Join the named DecisionTrace with the captured outcomes for
+    this application. Defaults to underwriting_decision since that's
+    the trace most regulators / risk teams correlate against."""
+
+    traces = await platform.trace_writer.list_for_application(application_id)
+    trace = next((t for t in traces if t.decision_id == decision_id), None)
+    if trace is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"no {decision_id!r} trace for application {application_id!r}"
+            ),
+        )
+    outcomes = await platform.outcome_tracker.list_for_application(application_id)
+    return correlate(
+        application_id,
+        decision_id=decision_id,
+        decision_outcome=trace.outcome.value,
+        decision_confidence=trace.confidence,
+        decision_at=trace.started_at,
+        outcomes=outcomes,
+    )
 
 
 __all__ = ["router", "get_platform"]

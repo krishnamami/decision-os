@@ -28,6 +28,7 @@ TEST_MODULES: tuple[str, ...] = (
     "tests.core.policy_engine.test_evaluator",
     "tests.core.decision_agents.test_atomic_tool",
     "tests.core.trace.test_reflection",
+    "tests.core.trace.test_outcome_tracker",
     "tests.core.knowledge.test_store",
     "tests.core.knowledge.test_retriever",
     "tests.core.simulation.test_replayer",
