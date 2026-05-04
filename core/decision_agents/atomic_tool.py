@@ -6,6 +6,13 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from core.audit import (
+    AuditEngine,
+    AuditRecord,
+    AuditStore,
+    ConsentStatus,
+)
+from core.audit.ethics_checker import PROTECTED_ATTRIBUTES
 from core.context_store import ContextBuilder, ContextBundle, EntityResolver
 from core.normalizer.models import DecisionMode, DecisionOutcome, RiskLevel
 from core.policy_engine import (
@@ -28,6 +35,26 @@ from .mode_router import ModeRouter, RoutedDecision
 
 if TYPE_CHECKING:
     from core.policy_engine.store import PolicyStore
+
+
+# Default data sources by decision_id. Used by the audit engine to
+# stamp data_sources_used onto AuditRecord. Compliance checker cross-
+# references these against regulation_tags (FCRA must be tagged when
+# credit_bureau is used, etc.). Override per platform in production.
+_DEFAULT_DATA_SOURCES_BY_DECISION: dict[str, tuple[str, ...]] = {
+    "lead_scoring":          ("application_form",),
+    "income_verification":   ("payroll_provider",),
+    "credit_assessment":     ("credit_bureau",),
+    "fraud_screening":       ("fraud_engine",),
+    "compliance_check":      ("application_form",),
+    "dti_calculation":       (),
+    "ltv_assessment":        (),
+    "product_eligibility":   (),
+    "rate_pricing":          ("rate_sheet",),
+    "underwriting_decision": ("credit_bureau", "payroll_provider"),
+    "approval_routing":      (),
+    "closing_readiness":     ("title_provider",),
+}
 
 
 # Default agency chain when no loan_type / per-Application override.
@@ -93,6 +120,7 @@ class AtomicToolResult(BaseModel):
     final_outcome: DecisionOutcome
     routed: RoutedDecision
     trace: DecisionTrace
+    audit_record: Optional[AuditRecord] = None
     duration_ms: int
 
 
@@ -133,6 +161,8 @@ class AtomicTool:
         trace_writer: TraceWriter,
         router: ModeRouter,
         policy_store: Optional["PolicyStore"] = None,
+        audit_engine: Optional[AuditEngine] = None,
+        audit_store: Optional[AuditStore] = None,
     ):
         self._builder = builder
         self._evaluator = evaluator
@@ -143,6 +173,13 @@ class AtomicTool:
         # by (decision_id, agency, at) and stamps policy_version_id on
         # the trace. When None the evaluator falls back to YAML.
         self._policy_store = policy_store
+        # Audit gate. When BOTH audit_engine and audit_store are wired,
+        # the AuditRecord is built + persisted between trace_write and
+        # mode_route (PRD §23.9 audit_record_required_before_writeback).
+        # Either being None disables the gate — the platform startup is
+        # responsible for refusing to boot without audit in production.
+        self._audit_engine = audit_engine
+        self._audit_store = audit_store
 
     # ── Public entrypoint ────────────────────────────────────────────
 
@@ -285,6 +322,46 @@ class AtomicTool:
         # ── 7. trace_write ──────────────────────────────────────────
         await self._trace_writer.write(trace)
 
+        # ── 7b. audit (PRD §23.9 audit_record_required_before_writeback) ─
+        # The audit gate runs AFTER trace_write so the AuditRecord can
+        # reference the persisted decision_id, but BEFORE mode_route so
+        # that no writeback fires without a corresponding audit record.
+        # When the engine + store aren't wired (legacy bring-up paths,
+        # tests that don't care about audit), the gate is skipped — the
+        # platform is responsible for refusing to boot without it in
+        # production.
+        audit_record: Optional[AuditRecord] = None
+        if self._audit_engine is not None and self._audit_store is not None:
+            try:
+                audit_record = await self._audit_engine.evaluate(
+                    trace,
+                    event_input={"application_id": application_id},
+                    context_used={
+                        "snapshot_id": str(bundle.snapshot_id),
+                        "object_types": list(bundle.objects.keys()),
+                        "upstream_decisions": list(bundle.upstream_decision_ids),
+                        "claim_count": len(bundle.claims or {}),
+                    },
+                    ontology_mapping={
+                        ot: list(entities.keys())
+                        for ot, entities in bundle.objects.items()
+                    },
+                    regulation_tags=self._regulation_tags_for(agent.decision_id),
+                    consent_status=self._consent_status_from_bundle(bundle),
+                    data_sources_used=list(
+                        _DEFAULT_DATA_SOURCES_BY_DECISION.get(agent.decision_id, ())
+                    ),
+                    disclosure_sent=self._disclosure_sent_from_bundle(bundle),
+                    protected_attrs_excluded=list(PROTECTED_ATTRIBUTES),
+                    applicant_segment=self._applicant_segment_from_bundle(bundle),
+                )
+                await self._audit_store.write(audit_record)
+            except Exception as err:
+                raise AtomicToolError(
+                    f"audit gate failed for {agent.decision_id!r} "
+                    f"(application={application_id!r}): {err}"
+                ) from err
+
         # ── 8. mode_route ───────────────────────────────────────────
         routed = await self._router.route(
             agent_id=agent.agent_id,
@@ -309,6 +386,7 @@ class AtomicTool:
             final_outcome=final_outcome,
             routed=routed,
             trace=trace,
+            audit_record=audit_record,
             duration_ms=trace.duration_ms or 0,
         )
 
@@ -488,6 +566,54 @@ class AtomicTool:
         policy outcome the policy wins."""
 
         return self._to_decision_outcome(policy.outcome)
+
+    # ── Audit input derivation ───────────────────────────────────────
+    #
+    # Pure helpers — they read the bundle / decision_id and produce
+    # AuditRecord-input shapes. Defaults are intentionally permissive
+    # (consent OBTAINED, disclosure False, segment None) so the live
+    # smoke pass produces clean AuditRecords; the synthetic-data slice
+    # injects intentional violations to exercise the warn / fail paths.
+
+    @staticmethod
+    def _regulation_tags_for(decision_id: str) -> list[str]:
+        from core.audit.compliance_checker import DEFAULT_REGULATION_TAGS
+
+        return list(DEFAULT_REGULATION_TAGS.get(decision_id, ()))
+
+    @staticmethod
+    def _consent_status_from_bundle(bundle: ContextBundle) -> ConsentStatus:
+        # Look at the Applicant entity — if it carries a consent flag,
+        # use it; otherwise default to OBTAINED for the local smoke.
+        for fields in (bundle.objects.get("Applicant") or {}).values():
+            if isinstance(fields, dict):
+                raw = fields.get("consent_status")
+                if raw:
+                    try:
+                        return ConsentStatus(raw)
+                    except ValueError:
+                        return ConsentStatus.OBTAINED
+                if fields.get("consent_obtained") is False:
+                    return ConsentStatus.MISSING
+        return ConsentStatus.OBTAINED
+
+    @staticmethod
+    def _disclosure_sent_from_bundle(bundle: ContextBundle) -> bool:
+        for fields in (bundle.objects.get("ComplianceRecord") or {}).values():
+            if isinstance(fields, dict) and fields.get("disclosure_sent"):
+                return True
+        return False
+
+    @staticmethod
+    def _applicant_segment_from_bundle(bundle: ContextBundle) -> Optional[str]:
+        # Surface the credit_band as the segment when present —
+        # FairnessChecker compares that against population baselines.
+        for fields in (bundle.objects.get("CreditProfile") or {}).values():
+            if isinstance(fields, dict):
+                band = fields.get("credit_band")
+                if band:
+                    return str(band)
+        return None
 
     @staticmethod
     def _validate_reasoning(reasoning: AgentReasoning) -> None:

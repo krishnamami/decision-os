@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional, Union
 
+from core.audit import AuditEngine, AuditStore, InMemoryAuditStore
 from core.connectors import BaseConnector, EventSink
 from core.context_store import (
     ContextBuilder,
@@ -85,6 +86,8 @@ class Platform:
         policy_store: PolicyStore,
         knowledge_store: KnowledgeStore,
         retriever: Retriever,
+        audit_engine: AuditEngine,
+        audit_store: AuditStore,
     ):
         self.spec = spec
         self.store = store
@@ -104,6 +107,8 @@ class Platform:
         self.policy_store = policy_store
         self.knowledge_store = knowledge_store
         self.retriever = retriever
+        self.audit_engine = audit_engine
+        self.audit_store = audit_store
 
         self.agents: dict[str, DecisionAgent] = {}
         self.connectors: dict[str, BaseConnector] = {}
@@ -268,6 +273,9 @@ def build_default_platform(
 
     policy_store = PolicyStore(store)
 
+    audit_engine = AuditEngine()
+    audit_store: AuditStore = InMemoryAuditStore()
+
     atomic_tool = AtomicTool(
         builder=builder,
         evaluator=evaluator,
@@ -275,6 +283,8 @@ def build_default_platform(
         trace_writer=trace_writer,
         router=mode_router,
         policy_store=policy_store,
+        audit_engine=audit_engine,
+        audit_store=audit_store,
     )
 
     event_log = EventLog()
@@ -302,6 +312,8 @@ def build_default_platform(
         policy_store=policy_store,
         knowledge_store=knowledge_store,
         retriever=retriever,
+        audit_engine=audit_engine,
+        audit_store=audit_store,
     )
 
 

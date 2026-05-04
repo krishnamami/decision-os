@@ -256,5 +256,74 @@ class ClaimProvenanceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(c.document_id, "doc_happy_appraisal")
 
 
+class AuditGateTests(unittest.IsolatedAsyncioTestCase):
+    """PRD §23.9 audit_record_required_before_writeback — every
+    decision the atomic_tool runs must produce a corresponding
+    AuditRecord in the AuditStore."""
+
+    async def test_happy_path_writes_audit_record_per_decision(self):
+        p, res = await _fresh_platform_and_run("happy_path")
+        records = await p.audit_store.list_for_application(
+            APPLICATION_IDS["happy_path"]
+        )
+        # 12 decisions → 12 audit records.
+        self.assertEqual(len(records), 12)
+        decision_types = {r.decision_type for r in records}
+        for did in (
+            "lead_scoring", "income_verification", "credit_assessment",
+            "fraud_screening", "compliance_check", "dti_calculation",
+            "ltv_assessment", "product_eligibility", "rate_pricing",
+            "underwriting_decision", "approval_routing", "closing_readiness",
+        ):
+            self.assertIn(did, decision_types)
+
+    async def test_audit_record_carries_decision_provenance(self):
+        p, res = await _fresh_platform_and_run("happy_path")
+        records = await p.audit_store.list_for_application(
+            APPLICATION_IDS["happy_path"]
+        )
+        credit = next(r for r in records if r.decision_type == "credit_assessment")
+        # Identity
+        self.assertEqual(credit.application_id, APPLICATION_IDS["happy_path"])
+        self.assertIsNotNone(credit.decision_id)
+        # Decision block
+        self.assertEqual(credit.owner, "credit_risk_agent")
+        self.assertEqual(
+            credit.mode.value,
+            p.spec.decision_index["credit_assessment"]["mode"],
+        )
+        # Compliance block stamped from defaults
+        self.assertIn("FCRA", credit.regulation_tags)
+        self.assertIn("ECOA", credit.regulation_tags)
+        self.assertIn("credit_bureau", credit.data_sources_used)
+        # Aggregate status — happy path runs clean
+        self.assertEqual(credit.overall_status.value, "pass")
+
+    async def test_fraud_block_still_audits_dependents_that_executed(self):
+        # Even when the pipeline halts, the decisions that DID execute
+        # (lead/income/credit/fraud/compliance) must each have an
+        # AuditRecord. Skipped dependents do not.
+        p, res = await _fresh_platform_and_run("fraud_block")
+        records = await p.audit_store.list_for_application(
+            APPLICATION_IDS["fraud_block"]
+        )
+        completed = set(res.execution.completed_decisions)
+        self.assertEqual(
+            {r.decision_type for r in records},
+            completed,
+            "every executed decision must produce an AuditRecord",
+        )
+
+    async def test_audit_store_is_append_only(self):
+        # Re-writing the same record id must raise — the in-memory
+        # store enforces the §23.9 audit_records_never_deleted invariant.
+        p, res = await _fresh_platform_and_run("happy_path")
+        records = await p.audit_store.list_for_application(
+            APPLICATION_IDS["happy_path"]
+        )
+        with self.assertRaises(ValueError):
+            await p.audit_store.write(records[0])
+
+
 if __name__ == "__main__":
     unittest.main()
