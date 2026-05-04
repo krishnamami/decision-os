@@ -347,6 +347,17 @@ class AtomicTool:
                 used_attrs, excluded_attrs = self._protected_attrs_for_audit(
                     bundle, applicant_value
                 )
+                # _policy_scope_hints already pulled (loan_type, state)
+                # for the policy chain; reuse so the audit's
+                # execution_result carries property_state for HMDA's
+                # by_state aggregation.
+                audit_loan_type, audit_state = self._policy_scope_hints(bundle)
+                if audit_state is None:
+                    # Fall back to a system-wide Application read when
+                    # this decision can't read Application directly.
+                    audit_state = await self._fetch_property_state_for_audit(
+                        application_id, resolver
+                    )
                 audit_record = await self._audit_engine.evaluate(
                     trace,
                     event_input={"application_id": application_id},
@@ -355,6 +366,8 @@ class AtomicTool:
                         "object_types": list(bundle.objects.keys()),
                         "upstream_decisions": list(bundle.upstream_decision_ids),
                         "claim_count": len(bundle.claims or {}),
+                        "property_state": audit_state,
+                        "loan_type": audit_loan_type,
                     },
                     ontology_mapping={
                         ot: list(entities.keys())
@@ -371,6 +384,10 @@ class AtomicTool:
                     protected_attrs_used=used_attrs,
                     protected_attrs_excluded=excluded_attrs,
                     applicant_segment=self._applicant_segment_from_bundle(bundle),
+                    execution_result={
+                        "property_state": audit_state,
+                        "loan_type": audit_loan_type,
+                    },
                 )
                 await self._audit_store.write(audit_record)
             except Exception as err:
@@ -606,16 +623,38 @@ class AtomicTool:
         cares about consent and protected attributes regardless of
         which decision is running."""
 
+        return await self._fetch_entity_value_for_audit(
+            "Applicant", application_id, resolver
+        )
+
+    async def _fetch_property_state_for_audit(
+        self, application_id: str, resolver: EntityResolver
+    ) -> Optional[str]:
+        """Read property_state from the Application entity for the HMDA
+        report's by_state aggregation. System-wide read so decisions
+        whose read perms exclude Application still stamp the state."""
+
+        value = await self._fetch_entity_value_for_audit(
+            "Application", application_id, resolver
+        )
+        if isinstance(value, dict):
+            state = value.get("property_state")
+            return str(state) if state else None
+        return None
+
+    async def _fetch_entity_value_for_audit(
+        self, entity_type: str, application_id: str, resolver: EntityResolver
+    ) -> Optional[dict]:
         if self._store is None:
             return None
         try:
-            ids = await resolver("Applicant", application_id)
+            ids = await resolver(entity_type, application_id)
         except Exception:
             return None
         if not ids:
             return None
         try:
-            record = await self._store.get("Applicant", ids[0])
+            record = await self._store.get(entity_type, ids[0])
         except Exception:
             return None
         if record is None:

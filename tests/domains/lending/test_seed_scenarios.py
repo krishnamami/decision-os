@@ -324,6 +324,23 @@ class AuditGateTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await p.audit_store.write(records[0])
 
+    async def test_audit_record_carries_property_state_for_hmda(self):
+        # HMDA report's by_state aggregation reads
+        # AuditRecord.execution_result.property_state. atomic_tool
+        # plumbs that from Application → audit so HMDA has data.
+        p, res = await _fresh_platform_and_run("happy_path")
+        records = await p.audit_store.list_for_application(
+            APPLICATION_IDS["happy_path"]
+        )
+        # At least one of the HMDA-relevant records must carry state.
+        hmda_types = {"underwriting_decision", "approval_routing", "closing_readiness"}
+        with_state = [
+            r for r in records
+            if r.decision_type in hmda_types
+            and r.execution_result.get("property_state")
+        ]
+        self.assertGreater(len(with_state), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
