@@ -125,7 +125,23 @@ async def main() -> int:
             fail_by_decision[r.decision_type] = fail_by_decision.get(r.decision_type, 0) + 1
         elif s == "warn":
             warn_by_decision[r.decision_type] = warn_by_decision.get(r.decision_type, 0) + 1
+    # Decision outcome breakdown per decision_type
+    outcomes_by_decision: dict[str, dict[str, int]] = {}
+    for r in all_records:
+        dt = r.decision_type
+        oc = r.decision_output.value
+        outcomes_by_decision.setdefault(dt, {}).setdefault(oc, 0)
+        outcomes_by_decision[dt][oc] += 1
+
     print(f"  status mix:        {by_status}")
+    print(f"  outcomes by decision:")
+    for dt in (
+        "lead_scoring", "income_verification", "credit_assessment",
+        "fraud_screening", "compliance_check", "dti_calculation",
+        "ltv_assessment", "product_eligibility", "rate_pricing",
+        "underwriting_decision", "approval_routing", "closing_readiness",
+    ):
+        print(f"    {dt}: {outcomes_by_decision.get(dt, {})}")
     print(f"  warns per decision: {warn_by_decision}")
     print(f"  warns per check:    {warn_by_check}")
     print(f"  fails per decision: {fail_by_decision}")

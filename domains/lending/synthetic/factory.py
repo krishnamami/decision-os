@@ -161,22 +161,40 @@ def build_synthetic_applicants(
 
         # Income tracks credit band — loose correlation, not deterministic.
         income_base = {
-            "super_prime": 200_000,
-            "prime":       125_000,
-            "near_prime":   85_000,
-            "subprime":     55_000,
+            "super_prime": 350_000,
+            "prime":       170_000,
+            "near_prime":   95_000,
+            "subprime":     65_000,
         }[seg]
         annual_income = income_base + rng.randint(-15_000, 25_000)
 
-        # Loan amount tracks loan_type.
+        # Loan amount tracks loan_type. Jumbo only goes to super_prime
+        # so DTI stays under the 0.50 BLOCK threshold; other types are
+        # band-agnostic.
+        if loan_type == "jumbo" and seg != "super_prime":
+            loan_type = "conforming"
         amt_base = {
             "conforming": 400_000,
             "fha":        300_000,
-            "jumbo":    1_200_000,
+            "jumbo":      800_000,
             "va":         350_000,
         }[loan_type]
         requested_amount = amt_base + rng.randint(-50_000, 50_000)
-        appraised_value = int(requested_amount * (1 + rng.uniform(0.05, 0.30)))
+        # Appraised value = requested + meaningful equity. Tuned per
+        # credit band so LTV outcomes track real underwriting:
+        #   super_prime / prime: ≤ 0.80 → ALLOW
+        #   near_prime: 0.80 – 0.90 → RECOMMEND
+        #   subprime: 0.90 – 0.95 → RECOMMEND/ESCALATE
+        # The persona's _MAX_LTV_BY_BAND drives whether each lands in
+        # ALLOW vs RECOMMEND; the equity here just makes the mix
+        # realistic across a synthetic batch.
+        equity_multiplier = {
+            "super_prime": rng.uniform(1.30, 1.50),
+            "prime":       rng.uniform(1.25, 1.40),
+            "near_prime":  rng.uniform(1.15, 1.30),
+            "subprime":    rng.uniform(1.08, 1.18),
+        }[seg]
+        appraised_value = int(requested_amount * equity_multiplier)
 
         overlay_kind = overlay_assignments[i]
         overlay = AuditOverlay()
@@ -257,14 +275,20 @@ async def inject_into_platform(
         # the Applicant entity, otherwise every applicant would trip
         # the ethics check. Real production stores DOB and computes
         # age out of band; we mirror that pattern here.
+        #
+        # session_behavior + lead_source + channel matter — lead_scoring
+        # persona derives intent_score from session_behavior. Values
+        # tuned so the default applicant lands above the 0.7 ALLOW
+        # threshold.
         applicant_value: dict[str, Any] = {
             "applicant_id":     p.applicant_id,
             "first_name":       p.first_name,
             "last_name":        p.last_name,
-            "lead_source":      "synthetic",
+            "lead_source":      "web_form",
             "channel":          "digital",
             "consent_obtained": not p.overlay.consent_missing,
-            "intent_score":     0.7,
+            "session_behavior": {"pages_viewed": 8, "time_on_site_seconds": 240},
+            "prior_inquiries":  0,
         }
         if p.overlay.protected_attr_leak:
             # Intentional leak — race is in PROTECTED_ATTRIBUTES so the
@@ -275,6 +299,10 @@ async def inject_into_platform(
         )
 
         # ── Application ──────────────────────────────────────────────
+        # existing_debt_obligations is the monthly payment that DTI
+        # adds onto proposed mortgage payment. ~10% of monthly income
+        # keeps DTI clean (mortgage at 28% of income → DTI ~38%).
+        existing_debt_monthly = int(p.annual_income * 0.10 / 12)
         await platform.store.set(
             "Application",
             p.application_id,
@@ -286,11 +314,17 @@ async def inject_into_platform(
                 "requested_amount": p.requested_amount,
                 "property_state":   p.state,
                 "purpose":          "purchase",
+                "existing_debt_obligations": existing_debt_monthly,
             },
             lineage,
         )
 
         # ── Property ────────────────────────────────────────────────
+        # ltv_assessment reads appraised_value + (purchase_price OR
+        # principal_amount). dti_calculation reads proposed_payment
+        # via amortization on the Loan principal.
+        purchase_price = int(p.requested_amount * 1.10)  # 10% down typical
+        down_payment = purchase_price - p.requested_amount
         await platform.store.set(
             "Property",
             f"prop_synth_{i:03d}",
@@ -298,8 +332,11 @@ async def inject_into_platform(
                 "property_id":     f"prop_synth_{i:03d}",
                 "application_id":  p.application_id,
                 "appraised_value": p.appraised_value,
+                "purchase_price":  purchase_price,
+                "down_payment":    down_payment,
                 "state":           p.state,
                 "occupancy":       "primary",
+                "appraisal_disputed": False,
             },
             lineage,
         )
@@ -342,50 +379,68 @@ async def inject_into_platform(
         )
 
         # ── CreditProfile ───────────────────────────────────────────
+        # Persona reads: credit_score, credit_band, active_bankruptcy,
+        # foreclosure_last_36_months, thin_file, derogatory_marks,
+        # open_tradelines, credit_utilization, no_derogatory_last_24_months.
         await platform.store.set(
             "CreditProfile",
             f"credit_synth_{i:03d}",
             {
-                "credit_profile_id": f"credit_synth_{i:03d}",
-                "applicant_id":      p.applicant_id,
-                "score":             p.credit_score,
-                "credit_band":       p.credit_band,
-                "bureau":            "experian",
-                "pulled_at":         (base_time + timedelta(minutes=i)).isoformat(),
-                "tradelines":        12,
-                "delinquencies":     0,
-                "stable_employment_24mo": True,
+                "credit_profile_id":   f"credit_synth_{i:03d}",
+                "applicant_id":        p.applicant_id,
+                "credit_score":        p.credit_score,
+                "credit_band":         p.credit_band,
+                "bureau":              "experian",
+                "pulled_at":           (base_time + timedelta(minutes=i)).isoformat(),
+                "open_tradelines":     8,
+                "derogatory_marks":    0,
+                "credit_utilization":  0.20,
+                "thin_file":           False,
+                "active_bankruptcy":   False,
+                "foreclosure_last_36_months": False,
+                "no_derogatory_last_24_months": True,
             },
             lineage,
         )
 
         # ── IncomeProfile ───────────────────────────────────────────
+        # Persona reads: stated_income, verified_income, employment_type,
+        # payroll_verified, multiple_income_sources, foreign_income,
+        # income_confidence_score.
         await platform.store.set(
             "IncomeProfile",
             f"income_synth_{i:03d}",
             {
-                "income_profile_id": f"income_synth_{i:03d}",
-                "applicant_id":      p.applicant_id,
-                "stated_income":     p.annual_income,
-                "verified_income":   p.annual_income,
-                "verification_source": "payroll_provider",
-                "confidence":        0.92,
-                "stable_employment_24mo": True,
+                "income_profile_id":     f"income_synth_{i:03d}",
+                "applicant_id":          p.applicant_id,
+                "stated_income":         p.annual_income,
+                "verified_income":       p.annual_income,
+                "verification_source":   "payroll_provider",
+                "income_confidence_score": 0.95,
+                "employment_type":       "salaried",
+                "payroll_verified":      True,
+                "multiple_income_sources": False,
+                "foreign_income":        False,
             },
             lineage,
         )
 
         # ── FraudProfile ────────────────────────────────────────────
+        # Persona reads: fraud_score, identity_match_confidence,
+        # document_authenticity_score, watchlist_match,
+        # synthetic_identity_flag.
         await platform.store.set(
             "FraudProfile",
             f"fraud_synth_{i:03d}",
             {
-                "fraud_profile_id": f"fraud_synth_{i:03d}",
-                "applicant_id":     p.applicant_id,
-                "fraud_cleared":    True,
-                "watchlist_hit":    False,
-                "fraud_score":      0.05,
-                "reviewed_at":      (base_time + timedelta(minutes=i)).isoformat(),
+                "fraud_profile_id":          f"fraud_synth_{i:03d}",
+                "applicant_id":              p.applicant_id,
+                "fraud_score":               0.05,
+                "identity_match_confidence": 0.97,
+                "document_authenticity_score": 0.95,
+                "watchlist_match":           False,
+                "synthetic_identity_flag":   False,
+                "reviewed_at":               (base_time + timedelta(minutes=i)).isoformat(),
             },
             lineage,
         )

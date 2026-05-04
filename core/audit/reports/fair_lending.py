@@ -24,6 +24,14 @@ from .base import Report, filter_by_window
 FOUR_FIFTHS_RATIO = 0.80
 
 
+# Outcomes that count as "approval" for fair-lending analysis.
+# ALLOW is the auto-approval path. RECOMMEND is the conditional path
+# (human signs off) — in practice the vast majority of recommends
+# become funded loans, so both are originations for ECOA / FHA
+# disparate-impact purposes. BLOCK and ESCALATE are denials.
+APPROVAL_OUTCOMES = frozenset({"allow", "recommend"})
+
+
 def _approval_rate(approvals: int, total: int) -> float:
     return approvals / total if total else 0.0
 
@@ -44,7 +52,7 @@ def generate_fair_lending_report(
     for r in in_window:
         seg = r.applicant_segment or "unknown"
         seg_total[seg] += 1
-        if r.decision_output.value == "allow":
+        if r.decision_output.value in APPROVAL_OUTCOMES:
             seg_approvals[seg] += 1
 
     overall_total = sum(seg_total.values())
