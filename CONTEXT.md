@@ -417,6 +417,140 @@ Connector layering — push vs pull (STEP 4 design)
 
 ## Session history
 
+### Session 10 — May 4 2026
+
+**What was built (PRD §23 Audit Engine, end to end):**
+
+PRD §23 spec landed
+  Section 23 (9 subsections — 23.1 What it is through 23.9 Hard rules)
+    appended to docs/PRD.md. Defines AuditRecord schema, four checks
+    (compliance / security / ethics / fairness), pipeline position, store
+    tables, six report types, file structure, and four hard rules.
+  §17 file-structure block added for core/audit/.
+  §19 build sequence row 8 — "Build after core/trace; engine.py first
+    then four checkers then schema.sql; AuditRecord must be created
+    before any writeback executes."
+
+core/audit/ scaffold
+  schema.py — AuditRecord Pydantic v2 with decision / compliance /
+    security / ethics blocks. Sub-models: PolicyApplied, AccessRecord,
+    FairnessFlag, CheckResult.
+  compliance_checker.py — regulation-tag coverage, consent gate,
+    TRID/RESPA disclosure timing, data-source ↔ tag alignment.
+    DEFAULT_REGULATION_TAGS by decision_id.
+  security_checker.py — PII permission gating (no permissions for
+    PII fields → FAIL), velocity anomaly (N reads in window → WARN),
+    encryption requirement for confidential/restricted data.
+  ethics_checker.py — protected-attribute leak detection (any attr
+    in used + not in excluded → FAIL), bias_score thresholds (0.15
+    monitoring / 0.30 action per PRD §23.4).
+  fairness_checker.py — segment vs overall approval-rate deviation,
+    flips disparate_impact_flag at >15% drift.
+  engine.py — AuditEngine.evaluate(trace, **inputs) fans out four
+    checkers via asyncio.gather, aggregates worst-of statuses.
+  store.py — AuditStore Protocol + InMemoryAuditStore (append-only,
+    duplicate audit_id raises) + PostgresAuditStore (asyncpg pool +
+    JSONB codec, mirrors warn/fail per-check status into audit_flags).
+  schema.sql — three append-only tables (audit_records,
+    audit_access_log, audit_flags) with self-FK supersession,
+    partial index on warn/fail, and audit_flags resolution columns.
+
+atomic_tool gate (PRD §23.9 audit_record_required_before_writeback)
+  AtomicTool.run() now invokes engine.evaluate + store.write between
+  trace_write and mode_route. If the gate raises, mode_route never
+  runs — no writeback fires without an AuditRecord. Audit inputs
+  derived from the bundle + system-wide store reads:
+    consent_status from Applicant.consent_obtained
+    protected_attrs detected across bundle ∪ Applicant entity (system-
+      wide so leaks fire even when the running decision can't read
+      Applicant)
+    disclosure_sent defaults True when ComplianceRecord isn't in
+      this decision's read perms (only fails on POSITIVE evidence)
+    regulation_tags + data_sources_used from per-decision defaults
+    applicant_segment from CreditProfile.credit_band
+  Platform.audit_engine + Platform.audit_store on the deps surface.
+
+API + UI + reports
+  api/routes — GET /audit/flags, /audit/application/{app_id},
+    /audit/{audit_id} (with implicit access_log entry), POST
+    /audit/{audit_id}/access. Route order ensures literal segments
+    win over the {audit_id} path parameter.
+  ui/views — list_audit_flags / list_audit_for_application /
+    audit_record_detail (dry-runs all four checkers so the drilldown
+    shows the same findings the engine produced).
+  ui/templates/audit_flags.html — KPI cards (total / warn / fail) +
+    per-flag table with 4-check status columns.
+  ui/templates/audit_detail.html — 4-check strip with findings + 4
+    detail panels (decision / compliance / security / ethics) +
+    access-log section.
+  base.html — "Audit flags" entry on the top nav.
+  core/audit/reports/ — 6 generators per PRD §23.7 (hmda monthly,
+    fair_lending quarterly with EEOC 4/5 ratio, ai_trail weekly,
+    security daily, bias weekly, overrides weekly). All return the
+    same Report shape (name + cadence + window + summary + rows +
+    flags).
+
+domains/lending/synthetic/ + smoke
+  factory.build_synthetic_applicants(n, seed=42) — deterministic
+    profile generator with weighted draws (4 segments, 7 states,
+    4 loan types), 3 audit overlays (consent_missing /
+    protected_attr_leak / no_disclosure), 5 EDMS docs per profile
+    (W-2, paystub, 1040, ID, appraisal) with W-2 + appraisal Claims.
+  factory.inject_into_platform — bulk-seeds via store.set; bypasses
+    the event sink for performance (24 applicants in <2s).
+  scripts/smoke_audit_reports.py — boots platform, generates 24
+    synthetic applicants, runs DAG, generates all 6 reports. Status
+    mix: 264 pass / 24 fail (matches 1 consent_missing + 1
+    protected_attr_leak × 12 decisions each).
+
+Bug catchers fired during writing
+  HMDA had application_form listed as expected data source — every
+    lead_scoring audit warned. Fixed: HMDA is reporting, not data
+    sourcing — dropped from DEFAULT_DATA_SOURCES_BY_TAG.
+  age was in Applicant entity AND in PROTECTED_ATTRIBUTES — every
+    applicant tripped ethics. Fixed: factory keeps age as profile
+    metadata, doesn't write it to the entity.
+  disclosure_sent_from_bundle defaulted False when ComplianceRecord
+    wasn't in scope — every TRID/RESPA-tagged decision failed
+    everywhere. Fixed: default True; fail only on positive evidence.
+  Bundle-only protected attr scan missed leaks on decisions whose
+    read perms exclude Applicant. Fixed: AtomicTool now reads
+    Applicant directly via the resolver + store for audit input
+    (system-wide), not via the per-decision bundle.
+
+Tests (294/294, ~8s)
+  tests/core/audit/test_engine.py        29 — schema, 4 checkers,
+    engine fan-out + aggregation, store invariants.
+  tests/core/audit/test_reports.py       14 — six generators with
+    aggregation correctness + EEOC 4/5 + bias action threshold.
+  tests/api/test_routes.py                +9 — audit endpoints + UI
+    rendering smoke (mount_ui=True).
+  tests/ui/test_views.py                  +4 — audit view-models.
+  tests/domains/lending/test_seed_scenarios.py +4 — AuditGateTests
+    (12 records per happy_path, decision provenance, executed-only
+    coverage, append-only invariant).
+  tests/domains/lending/test_synthetic.py 10 — factory determinism
+    / distribution / overlay proportions + 3-applicant integration
+    suite asserting clean = pass / consent_missing = compliance fail
+    on every decision / leak = ethics fail with race in
+    protected_attrs_used and not in excluded.
+
+Deferred to next session
+  - Surface AuditRecord summary on persona / decision detail pages
+    (the audit panel exists at /ui/audit/{id}; persona drilldown
+    should embed it).
+  - HMDA report's by_state needs property_state plumbed into the
+    audit's execution_result. Currently empty.
+  - Persona-input completeness — synthetic underwriting decisions
+    block more than they should because the synthetic factory under-
+    seeds for the personas' expected fields. Audit gate works; agent
+    outcomes are noisier than they need to be.
+  - audit_fail_alerts_compliance_immediately — alert sink Protocol
+    (PRD §23.9) is not yet wired. Today the store records fail; no
+    realtime notification.
+  - pii_access_always_logged at the context_store level — currently
+    only logged at audit-record reads via /audit/{id}.
+
 ### Session 9 — May 3 2026
 
 **What was built (5 streams + 1 fixture set; all smokes green):**

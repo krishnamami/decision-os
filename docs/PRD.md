@@ -768,16 +768,54 @@ decision-os/
 │   │   │                                       EventSink protocol + ConnectorHealth
 │   │   ├── mock_csv.py            ✅ EXISTS — push reference (CSV / file drop)
 │   │   └── mock_http.py           ✅ EXISTS — pull reference (RecordedResponse)
-│   ├── core/audit/                TODO — audit engine (see Section 23)
-│   │     engine.py
-│   │     compliance_checker.py
-│   │     security_checker.py
-│   │     ethics_checker.py
-│   │     fairness_checker.py
-│   │     schema.py
-│   │     store.py
-│   │     schema.sql
-│   │     reports/
+│   ├── audit/                     ✅ STEP 8b DONE — Session 10
+│   │   ├── __init__.py            ✅ EXISTS — re-exports
+│   │   ├── schema.py              ✅ EXISTS — AuditRecord (decision +
+│   │   │                                       compliance + security +
+│   │   │                                       ethics blocks); CheckResult,
+│   │   │                                       PolicyApplied, AccessRecord,
+│   │   │                                       FairnessFlag sub-models.
+│   │   ├── engine.py              ✅ EXISTS — AuditEngine.evaluate; fans
+│   │   │                                       out 4 checkers via
+│   │   │                                       asyncio.gather; aggregates
+│   │   │                                       worst-of overall_status.
+│   │   ├── compliance_checker.py  ✅ EXISTS — regulation tags, consent
+│   │   │                                       gate, TRID/RESPA disclosure
+│   │   │                                       timing, source ↔ tag align.
+│   │   ├── security_checker.py    ✅ EXISTS — PII permission gating,
+│   │   │                                       velocity anomaly,
+│   │   │                                       encryption requirement.
+│   │   ├── ethics_checker.py      ✅ EXISTS — protected-attribute leak
+│   │   │                                       detection, bias_score
+│   │   │                                       monitoring/action thresholds.
+│   │   ├── fairness_checker.py    ✅ EXISTS — segment vs overall approval-
+│   │   │                                       rate deviation; flips
+│   │   │                                       disparate_impact_flag at
+│   │   │                                       >15% drift.
+│   │   ├── store.py               ✅ EXISTS — AuditStore Protocol +
+│   │   │                                       InMemoryAuditStore +
+│   │   │                                       PostgresAuditStore.
+│   │   │                                       Append-only; duplicate
+│   │   │                                       audit_id raises.
+│   │   ├── schema.sql             ✅ EXISTS — audit_records (append-only,
+│   │   │                                       supersedes_audit_id self-
+│   │   │                                       FK), audit_access_log,
+│   │   │                                       audit_flags (resolution
+│   │   │                                       columns).
+│   │   └── reports/               ✅ STEP 8c DONE — six generators per §23.7
+│   │       ├── __init__.py        ✅ EXISTS
+│   │       ├── base.py            ✅ EXISTS — Report model +
+│   │       │                                  filter_by_window
+│   │       ├── hmda.py            ✅ Monthly. by outcome / state /
+│   │       │                                 decision_type.
+│   │       ├── fair_lending.py    ✅ Quarterly. EEOC 4/5 ratio for
+│   │       │                                 disparate impact.
+│   │       ├── ai_trail.py        ✅ Weekly. Per-decision listing.
+│   │       ├── security.py        ✅ Daily. PII counts + anomalies.
+│   │       ├── bias.py            ✅ Weekly. Score distribution +
+│   │       │                                 fairness flags by segment.
+│   │       └── overrides.py       ✅ Weekly. human_reviewed roster +
+│   │                                          review rate.
 │   ├── decision_agents/           ✅ STEP 5 DONE
 │   │   ├── __init__.py            ✅ EXISTS
 │   │   ├── base.py                ✅ EXISTS — DecisionAgent ABC + AgentReasoning
@@ -1344,7 +1382,7 @@ decision-os/
     - Borrower portal: separate frontend project consuming the API,
       not in this repo
 
-  8  core/audit/  Audit engine. Build after core/trace/ is complete. engine.py first then four checkers then schema.sql. AuditRecord must be created before any writeback executes. Reports layer built last after API is working.
+  8  core/audit/  ✅ DONE Session 10. AuditEngine + 4 checkers + schema.sql + AuditStore (InMemory + Postgres). atomic_tool gate enforces audit_record_required_before_writeback. /audit API + /ui/audit/* surface + 6 reports per §23.7. Synthetic factory drives 24-applicant smoke for reports validation.
 ```
 
 ---
