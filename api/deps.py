@@ -3,7 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional, Union
 
-from core.audit import AuditEngine, AuditStore, InMemoryAuditStore
+from core.audit import (
+    AlertSink,
+    AuditEngine,
+    AuditStore,
+    InMemoryAlertSink,
+    InMemoryAuditStore,
+)
 from core.connectors import BaseConnector, EventSink
 from core.context_store import (
     ContextBuilder,
@@ -88,6 +94,7 @@ class Platform:
         retriever: Retriever,
         audit_engine: AuditEngine,
         audit_store: AuditStore,
+        audit_alert_sink: AlertSink,
     ):
         self.spec = spec
         self.store = store
@@ -109,6 +116,7 @@ class Platform:
         self.retriever = retriever
         self.audit_engine = audit_engine
         self.audit_store = audit_store
+        self.audit_alert_sink = audit_alert_sink
 
         self.agents: dict[str, DecisionAgent] = {}
         self.connectors: dict[str, BaseConnector] = {}
@@ -273,7 +281,8 @@ def build_default_platform(
 
     policy_store = PolicyStore(store)
 
-    audit_engine = AuditEngine()
+    audit_alert_sink: AlertSink = InMemoryAlertSink()
+    audit_engine = AuditEngine(alert_sink=audit_alert_sink)
     audit_store: AuditStore = InMemoryAuditStore()
 
     atomic_tool = AtomicTool(
@@ -314,6 +323,7 @@ def build_default_platform(
         retriever=retriever,
         audit_engine=audit_engine,
         audit_store=audit_store,
+        audit_alert_sink=audit_alert_sink,
     )
 
 

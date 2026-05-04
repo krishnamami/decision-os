@@ -5,6 +5,7 @@ from typing import Any, Optional
 
 from core.trace.trace_schema import DecisionTrace
 
+from .alerts import AlertSink, AuditAlert
 from .compliance_checker import ComplianceChecker
 from .ethics_checker import EthicsChecker
 from .fairness_checker import FairnessChecker
@@ -45,11 +46,16 @@ class AuditEngine:
         security: Optional[SecurityChecker] = None,
         ethics: Optional[EthicsChecker] = None,
         fairness: Optional[FairnessChecker] = None,
+        alert_sink: Optional[AlertSink] = None,
     ):
         self._compliance = compliance or ComplianceChecker()
         self._security = security or SecurityChecker()
         self._ethics = ethics or EthicsChecker()
         self._fairness = fairness or FairnessChecker()
+        # Optional sink for PRD §23.9 audit_fail_alerts_compliance_immediately.
+        # When set, every record with overall_status=FAIL fires synchronously
+        # through the sink before evaluate() returns. WARN does not alert.
+        self._alert_sink = alert_sink
 
     async def evaluate(
         self,
@@ -139,6 +145,20 @@ class AuditEngine:
             ethics_r.status,
             fairness_r.status,
         )
+
+        # PRD §23.9 audit_fail_alerts_compliance_immediately. FAIL fires
+        # synchronously — no buffering, no batching. WARN flows through
+        # the standard /ui/audit/flags queue. Sink errors don't propagate
+        # because alerting must never block the audit gate itself.
+        if (
+            self._alert_sink is not None
+            and record.overall_status == CheckStatus.FAIL
+        ):
+            try:
+                await self._alert_sink.fire(AuditAlert(record))
+            except Exception:
+                pass
+
         return record
 
     @staticmethod

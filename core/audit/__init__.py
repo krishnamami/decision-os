@@ -19,6 +19,7 @@ follows once the store is durable.
 """
 from __future__ import annotations
 
+from .alerts import AlertSink, AuditAlert, InMemoryAlertSink, LoggingAlertSink
 from .compliance_checker import ComplianceChecker
 from .engine import AuditEngine
 from .ethics_checker import EthicsChecker
@@ -39,6 +40,8 @@ from .store import AuditStore, InMemoryAuditStore, PostgresAuditStore
 
 __all__ = [
     "AccessRecord",
+    "AlertSink",
+    "AuditAlert",
     "AuditEngine",
     "AuditRecord",
     "AuditStore",
@@ -51,7 +54,9 @@ __all__ = [
     "EthicsChecker",
     "FairnessChecker",
     "FairnessFlag",
+    "InMemoryAlertSink",
     "InMemoryAuditStore",
+    "LoggingAlertSink",
     "PolicyApplied",
     "PostgresAuditStore",
     "SecurityChecker",

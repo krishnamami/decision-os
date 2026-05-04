@@ -469,5 +469,91 @@ class StoreTests(unittest.TestCase):
             )
 
 
+class AlertSinkTests(unittest.TestCase):
+    """PRD §23.9 audit_fail_alerts_compliance_immediately."""
+
+    def test_fail_fires_alert(self):
+        from core.audit import InMemoryAlertSink
+
+        sink = InMemoryAlertSink()
+        engine = AuditEngine(alert_sink=sink)
+        # consent_status=MISSING → compliance FAIL → overall FAIL
+        record = _run(
+            engine.evaluate(
+                _trace(),
+                regulation_tags=["FCRA", "ECOA"],
+                consent_status=ConsentStatus.MISSING,
+                protected_attrs_excluded=["race"],
+            )
+        )
+        self.assertEqual(record.overall_status, CheckStatus.FAIL)
+        self.assertEqual(len(sink), 1)
+        alert = sink.alerts[0]
+        self.assertEqual(alert.application_id, "app_audit_test")
+        self.assertEqual(alert.overall_status, "fail")
+        self.assertIn("compliance", alert.failed_checks)
+        self.assertEqual(alert.audit_id, str(record.audit_id))
+
+    def test_warn_does_not_alert(self):
+        from core.audit import InMemoryAlertSink
+
+        sink = InMemoryAlertSink()
+        engine = AuditEngine(alert_sink=sink)
+        # missing required FCRA tag → compliance WARN → overall WARN
+        record = _run(
+            engine.evaluate(
+                _trace(),
+                regulation_tags=["FCRA"],
+                protected_attrs_excluded=["race"],
+            )
+        )
+        self.assertEqual(record.overall_status, CheckStatus.WARN)
+        self.assertEqual(len(sink), 0)
+
+    def test_pass_does_not_alert(self):
+        from core.audit import InMemoryAlertSink
+
+        sink = InMemoryAlertSink()
+        engine = AuditEngine(alert_sink=sink)
+        record = _run(
+            engine.evaluate(
+                _trace(),
+                regulation_tags=["FCRA", "ECOA"],
+                protected_attrs_excluded=["race"],
+            )
+        )
+        self.assertEqual(record.overall_status, CheckStatus.PASS)
+        self.assertEqual(len(sink), 0)
+
+    def test_no_sink_means_no_alert(self):
+        # Default engine = no sink wired; FAIL still produces a record.
+        engine = AuditEngine()
+        record = _run(
+            engine.evaluate(
+                _trace(),
+                regulation_tags=["FCRA", "ECOA"],
+                consent_status=ConsentStatus.MISSING,
+                protected_attrs_excluded=["race"],
+            )
+        )
+        self.assertEqual(record.overall_status, CheckStatus.FAIL)
+
+    def test_sink_failure_does_not_propagate(self):
+        # Sink errors must never block the audit gate.
+        class _Bad:
+            async def fire(self, alert):
+                raise RuntimeError("sink down")
+        engine = AuditEngine(alert_sink=_Bad())
+        record = _run(
+            engine.evaluate(
+                _trace(),
+                regulation_tags=["FCRA", "ECOA"],
+                consent_status=ConsentStatus.MISSING,
+                protected_attrs_excluded=["race"],
+            )
+        )
+        self.assertEqual(record.overall_status, CheckStatus.FAIL)
+
+
 if __name__ == "__main__":
     unittest.main()
