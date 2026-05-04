@@ -40,8 +40,11 @@ from ui.views import (  # noqa: E402
     _risk_pill_for_confidence,
     _risk_pill_for_persona,
     application_detail,
+    audit_record_detail,
     decision_detail,
     list_applications,
+    list_audit_flags,
+    list_audit_for_application,
     list_persona_workbenches,
     list_workbenches,
     persona_workbench_view,
@@ -434,6 +437,46 @@ class ListWorkbenchesTests(unittest.TestCase):
         view = workbench_view(self.platform, "underwriting")
         self.assertIsNotNone(view)
         self.assertEqual(len(view["owned_decisions"]), 4)
+
+
+class AuditViewTests(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.platform = _PlatformFixture.setup(
+            scenarios=("happy_path", "fraud_block")
+        )
+
+    def test_list_audit_for_application_returns_per_decision_rows(self):
+        view = list_audit_for_application(self.platform, "app_happy")
+        self.assertEqual(view["application_id"], "app_happy")
+        self.assertEqual(view["decision_count"], 12)
+        decision_types = {r["decision_type"] for r in view["records"]}
+        self.assertIn("credit_assessment", decision_types)
+        self.assertIn("closing_readiness", decision_types)
+
+    def test_audit_record_detail_carries_findings_dict(self):
+        view = list_audit_for_application(self.platform, "app_happy")
+        first_id = view["records"][0]["audit_id"]
+        detail = audit_record_detail(self.platform, first_id)
+        self.assertIsNotNone(detail)
+        # Re-running checkers must yield a findings entry per check.
+        self.assertEqual(
+            set(detail["findings"].keys()),
+            {"compliance", "security", "ethics", "fairness"},
+        )
+
+    def test_audit_record_detail_unknown_id_returns_none(self):
+        self.assertIsNone(
+            audit_record_detail(self.platform, "00000000-0000-0000-0000-000000000000")
+        )
+
+    def test_list_audit_flags_returns_count_summary(self):
+        view = list_audit_flags(self.platform)
+        # Happy + fraud_block on default audit inputs run clean — total
+        # may be 0; the contract is just that the keys are present.
+        for key in ("flags", "total", "warn_count", "fail_count"):
+            self.assertIn(key, view)
 
 
 if __name__ == "__main__":

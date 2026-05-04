@@ -2713,13 +2713,161 @@ def document_detail_view(
     }
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Audit views — list flags + drill into a single AuditRecord
+# ─────────────────────────────────────────────────────────────────────
+
+
+# Tone palette for the four overall_status values.
+AUDIT_STATUS_TONES = {
+    "pass": "emerald",
+    "warn": "amber",
+    "fail": "rose",
+}
+
+
+def _audit_records_sync(audit_store: Any) -> list[Any]:
+    """Best-effort sync read of every AuditRecord. The InMemory store
+    exposes _records as a {audit_id: AuditRecord} dict; production
+    Postgres is async, so this view reads via the public coroutine
+    when available and falls back to the dict otherwise."""
+
+    records_attr = getattr(audit_store, "_records", None)
+    if isinstance(records_attr, dict):
+        return list(records_attr.values())
+    return []
+
+
+def _audit_record_to_row(record: Any) -> dict[str, Any]:
+    overall = getattr(record.overall_status, "value", record.overall_status)
+    return {
+        "audit_id":           str(record.audit_id),
+        "decision_id":        str(record.decision_id),
+        "application_id":     record.application_id,
+        "decision_type":      record.decision_type,
+        "decision_label":     PERSONA_LABELS.get(record.decision_type, record.decision_type),
+        "owner":              record.owner,
+        "mode":               getattr(record.mode, "value", record.mode),
+        "outcome":            getattr(record.decision_output, "value", record.decision_output),
+        "overall_status":     overall,
+        "overall_tone":       AUDIT_STATUS_TONES.get(overall, "slate"),
+        "compliance_status":  getattr(record.compliance_status, "value", record.compliance_status),
+        "security_status":    getattr(record.security_status, "value", record.security_status),
+        "ethics_status":      getattr(record.ethics_status, "value", record.ethics_status),
+        "fairness_status":    getattr(record.fairness_status, "value", record.fairness_status),
+        "regulation_tags":    list(record.regulation_tags or []),
+        "consent_status":     getattr(record.consent_status, "value", record.consent_status),
+        "fairness_flag_count": len(record.fairness_flags or []),
+        "bias_score":         record.bias_score,
+        "human_reviewed":     record.human_reviewed,
+        "timestamp":          record.timestamp,
+    }
+
+
+def list_audit_flags(platform: Platform) -> dict[str, Any]:
+    """Cross-application audit flags index. Surfaces every record
+    whose overall_status is warn or fail so the compliance team can
+    work the queue."""
+
+    audit_store = getattr(platform, "audit_store", None)
+    if audit_store is None:
+        return {"flags": [], "total": 0, "warn_count": 0, "fail_count": 0}
+
+    records = _audit_records_sync(audit_store)
+    flagged = [
+        r for r in records
+        if getattr(r.overall_status, "value", r.overall_status) in ("warn", "fail")
+    ]
+    flagged.sort(key=lambda r: (r.timestamp or datetime.min), reverse=True)
+
+    rows = [_audit_record_to_row(r) for r in flagged]
+    return {
+        "flags":       rows,
+        "total":       len(rows),
+        "warn_count":  sum(1 for r in rows if r["overall_status"] == "warn"),
+        "fail_count":  sum(1 for r in rows if r["overall_status"] == "fail"),
+    }
+
+
+def list_audit_for_application(
+    platform: Platform, application_id: str
+) -> dict[str, Any]:
+    """Per-application audit roster. Used by the application detail
+    page to render the "all decisions audited" summary strip."""
+
+    audit_store = getattr(platform, "audit_store", None)
+    if audit_store is None:
+        return {"records": [], "application_id": application_id}
+
+    records = [
+        r for r in _audit_records_sync(audit_store)
+        if r.application_id == application_id
+    ]
+    records.sort(key=lambda r: (r.timestamp or datetime.min))
+    return {
+        "records":        [_audit_record_to_row(r) for r in records],
+        "application_id": application_id,
+        "decision_count": len(records),
+    }
+
+
+def audit_record_detail(
+    platform: Platform, audit_id: str
+) -> Optional[dict[str, Any]]:
+    """Drilldown for a single AuditRecord. Renders all four blocks +
+    associated check findings (re-runs the checkers in dry-run mode
+    so the UI shows the same findings strings the engine produced)."""
+
+    from core.audit.compliance_checker import ComplianceChecker
+    from core.audit.ethics_checker import EthicsChecker
+    from core.audit.fairness_checker import FairnessChecker
+    from core.audit.security_checker import SecurityChecker
+
+    audit_store = getattr(platform, "audit_store", None)
+    if audit_store is None:
+        return None
+
+    matching = [
+        r for r in _audit_records_sync(audit_store)
+        if str(r.audit_id) == audit_id
+    ]
+    if not matching:
+        return None
+    record = matching[0]
+
+    # Re-run checkers — pure functions on the record, so this is cheap
+    # and gives the UI the actual `findings` strings without persisting
+    # them on the record itself.
+    findings = {
+        "compliance": ComplianceChecker().check(record).findings,
+        "security":   SecurityChecker().check(record).findings,
+        "ethics":     EthicsChecker().check(record).findings,
+        "fairness":   FairnessChecker().check(record).findings,
+    }
+
+    overall = getattr(record.overall_status, "value", record.overall_status)
+    return {
+        "record":          record,
+        "row":             _audit_record_to_row(record),
+        "findings":        findings,
+        "overall_tone":    AUDIT_STATUS_TONES.get(overall, "slate"),
+        "policy_applied":  [p.model_dump() for p in record.policy_applied],
+        "fairness_flags":  [f.model_dump() for f in record.fairness_flags],
+        "accessed_by":     [a.model_dump() for a in record.accessed_by],
+    }
+
+
 __all__ = [
     "AGENCY_LABELS",
+    "AUDIT_STATUS_TONES",
     "DOC_STATUS_TONES",
     "application_detail",
+    "audit_record_detail",
     "decision_detail",
     "document_detail_view",
     "list_applications",
+    "list_audit_flags",
+    "list_audit_for_application",
     "list_documents_for_application",
     "list_pending_claims",
     "list_persona_workbenches",

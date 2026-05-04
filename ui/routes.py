@@ -14,9 +14,12 @@ from core.trace import HumanReview, derive_similarity_tags
 
 from .views import (
     application_detail,
+    audit_record_detail,
     decision_detail,
     document_detail_view,
     list_applications,
+    list_audit_flags,
+    list_audit_for_application,
     list_documents_for_application,
     list_pending_claims,
     list_persona_workbenches,
@@ -582,6 +585,40 @@ async def submit_override(
             **(detail or {}),
             "learning": learning,
         },
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Audit — flag queue + per-record drilldown
+# ─────────────────────────────────────────────────────────────────────
+
+
+@router.get("/ui/audit/flags", response_class=HTMLResponse)
+async def audit_flags_route(
+    request: Request,
+    platform: Platform = Depends(get_platform),
+):
+    return templates.TemplateResponse(
+        "audit_flags.html",
+        {"request": request, **list_audit_flags(platform)},
+    )
+
+
+@router.get("/ui/audit/{audit_id}", response_class=HTMLResponse)
+async def audit_record_route(
+    audit_id: str,
+    request: Request,
+    platform: Platform = Depends(get_platform),
+):
+    detail = audit_record_detail(platform, audit_id)
+    if detail is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"unknown audit_id {audit_id!r}",
+        )
+    return templates.TemplateResponse(
+        "audit_detail.html",
+        {"request": request, **detail},
     )
 
 

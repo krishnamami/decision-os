@@ -332,5 +332,40 @@ class AuditRouteTests(_SeededAppMixin, unittest.TestCase):
         self.assertEqual(r.status_code, 404)
 
 
+class AuditUIRenderTests(unittest.TestCase):
+    """Boot a separate app with mount_ui=True so the audit templates
+    render through Jinja2. Catches template syntax / missing-context
+    bugs that the view-model tests can't see."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = create_app(seed_demo_data=True, mount_ui=True)
+        cls.client = TestClient(cls.app)
+        cls.client.__enter__()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.client.__exit__(None, None, None)
+
+    def test_audit_flags_page_renders(self):
+        r = self.client.get("/ui/audit/flags")
+        self.assertEqual(r.status_code, 200, r.text[:500])
+        self.assertIn("Audit flags", r.text)
+
+    def test_audit_record_detail_renders(self):
+        # Pull any audit_id from the API to drive the UI route.
+        r = self.client.get("/audit/application/app_happy")
+        audit_id = r.json()[0]["audit_id"]
+        r2 = self.client.get(f"/ui/audit/{audit_id}")
+        self.assertEqual(r2.status_code, 200, r2.text[:500])
+        self.assertIn("Audit record", r2.text)
+        self.assertIn("Compliance", r2.text)
+        self.assertIn("Security", r2.text)
+
+    def test_audit_unknown_id_returns_404(self):
+        r = self.client.get("/ui/audit/00000000-0000-0000-0000-000000000000")
+        self.assertEqual(r.status_code, 404)
+
+
 if __name__ == "__main__":
     unittest.main()

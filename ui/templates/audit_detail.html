@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}Audit · {{ row.decision_label }} · Decision OS{% endblock %}
+{% block content %}
+
+<div class="mb-6">
+  <div class="flex items-center gap-3">
+    <h1 class="text-xl font-semibold tracking-tight">
+      Audit record · {{ row.decision_label }}
+    </h1>
+    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium
+                 bg-{{ overall_tone }}-50 text-{{ overall_tone }}-700
+                 ring-1 ring-{{ overall_tone }}-200">
+      {{ row.overall_status }}
+    </span>
+  </div>
+  <div class="text-xs text-slate-400 mt-1 mono">
+    audit_id={{ row.audit_id }} · decision_id={{ row.decision_id }} ·
+    application_id=<a class="text-blue-600 hover:underline" href="/ui/applications/{{ row.application_id }}">{{ row.application_id }}</a>
+  </div>
+</div>
+
+<!-- Four-check status strip -->
+<div class="grid grid-cols-4 gap-4 mb-6">
+  {% for check in [
+       ("compliance", row.compliance_status, "Compliance"),
+       ("security",   row.security_status,   "Security"),
+       ("ethics",     row.ethics_status,     "Ethics"),
+       ("fairness",   row.fairness_status,   "Fairness"),
+     ] %}
+  <div class="bg-white border border-slate-200 rounded-lg p-4">
+    <div class="flex items-center justify-between">
+      <div class="text-xs uppercase text-slate-400 tracking-wide">{{ check[2] }}</div>
+      <span class="text-xs font-medium px-2 py-0.5 rounded
+                   {% if check[1] == 'pass' %}bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200
+                   {% elif check[1] == 'warn' %}bg-amber-50 text-amber-700 ring-1 ring-amber-200
+                   {% else %}bg-rose-50 text-rose-700 ring-1 ring-rose-200{% endif %}">
+        {{ check[1] }}
+      </span>
+    </div>
+    <ul class="mt-3 space-y-1 text-xs text-slate-600">
+      {% for f in findings[check[0]] %}
+        <li class="leading-snug">• {{ f }}</li>
+      {% else %}
+        <li class="text-slate-400">No findings.</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="grid grid-cols-2 gap-6">
+  <!-- Decision block -->
+  <div class="bg-white border border-slate-200 rounded-lg p-4">
+    <div class="text-sm font-medium mb-3">Decision</div>
+    <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+      <dt class="text-slate-500">Outcome</dt>
+      <dd class="font-medium">{{ row.outcome }}</dd>
+      <dt class="text-slate-500">Mode</dt>
+      <dd class="font-medium">{{ row.mode }}</dd>
+      <dt class="text-slate-500">Owner</dt>
+      <dd class="font-medium">{{ row.owner }}</dd>
+      <dt class="text-slate-500">Confidence</dt>
+      <dd class="font-medium">{{ record.confidence | confidence }}</dd>
+      <dt class="text-slate-500">Human reviewed</dt>
+      <dd class="font-medium">{{ "yes" if row.human_reviewed else "no" }}</dd>
+      <dt class="text-slate-500">When</dt>
+      <dd class="font-medium">{{ row.timestamp | dt }}</dd>
+    </dl>
+    <div class="mt-3 text-xs">
+      <div class="text-slate-500 mb-1">Policies applied</div>
+      {% if policy_applied %}
+      <ul class="space-y-1">
+        {% for p in policy_applied %}
+          <li class="mono text-slate-700">
+            {{ p.policy_id }}{% if p.clause %} · <span class="text-slate-500">{{ p.clause }}</span>{% endif %}
+            <span class="text-slate-400">→ {{ p.result }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+        <span class="text-slate-400">none</span>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Compliance block -->
+  <div class="bg-white border border-slate-200 rounded-lg p-4">
+    <div class="text-sm font-medium mb-3">Compliance</div>
+    <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+      <dt class="text-slate-500">Regulation tags</dt>
+      <dd class="mono">{{ row.regulation_tags | join(", ") or "—" }}</dd>
+      <dt class="text-slate-500">Consent</dt>
+      <dd class="font-medium">{{ row.consent_status }}</dd>
+      <dt class="text-slate-500">Data sources</dt>
+      <dd class="mono">{{ record.data_sources_used | join(", ") or "—" }}</dd>
+      <dt class="text-slate-500">Disclosure sent</dt>
+      <dd class="font-medium">{{ "yes" if record.disclosure_sent else "no" }}</dd>
+      <dt class="text-slate-500">Retention</dt>
+      <dd class="font-medium">{{ record.retention_policy or "—" }}</dd>
+    </dl>
+  </div>
+
+  <!-- Security block -->
+  <div class="bg-white border border-slate-200 rounded-lg p-4">
+    <div class="text-sm font-medium mb-3">Security</div>
+    <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+      <dt class="text-slate-500">Classification</dt>
+      <dd class="font-medium">{{ record.data_classification.value }}</dd>
+      <dt class="text-slate-500">Encryption</dt>
+      <dd class="font-medium">{{ record.encryption_status.value }}</dd>
+      <dt class="text-slate-500">PII fields</dt>
+      <dd class="mono">{{ record.pii_fields_accessed | join(", ") or "—" }}</dd>
+      <dt class="text-slate-500">Permissions</dt>
+      <dd class="mono">{{ record.permissions_used | join(", ") or "—" }}</dd>
+      <dt class="text-slate-500">Anomaly</dt>
+      <dd class="font-medium">{{ "yes" if record.access_anomaly else "no" }}</dd>
+    </dl>
+    {% if accessed_by %}
+    <div class="mt-3 text-xs">
+      <div class="text-slate-500 mb-1">Accessed by ({{ accessed_by | length }})</div>
+      <ul class="space-y-1">
+        {% for a in accessed_by %}
+          <li class="mono text-slate-700">{{ a.user_id }} · {{ a.role }} · {{ a.action }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Ethics block -->
+  <div class="bg-white border border-slate-200 rounded-lg p-4">
+    <div class="text-sm font-medium mb-3">Ethics + fairness</div>
+    <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+      <dt class="text-slate-500">Applicant segment</dt>
+      <dd class="font-medium">{{ row.consent_status if false else (record.applicant_segment or "—") }}</dd>
+      <dt class="text-slate-500">Bias score</dt>
+      <dd class="font-medium">{{ row.bias_score if row.bias_score is not none else "—" }}</dd>
+      <dt class="text-slate-500">Disparate impact</dt>
+      <dd class="font-medium">{{ "yes" if record.disparate_impact_flag else "no" }}</dd>
+      <dt class="text-slate-500">Protected attrs used</dt>
+      <dd class="mono">{{ record.protected_attrs_used | join(", ") or "—" }}</dd>
+      <dt class="text-slate-500">Excluded</dt>
+      <dd class="mono">{{ record.protected_attrs_excluded | join(", ") or "—" }}</dd>
+    </dl>
+    {% if fairness_flags %}
+    <div class="mt-3 text-xs">
+      <div class="text-slate-500 mb-1">Flags ({{ fairness_flags | length }})</div>
+      <ul class="space-y-1">
+        {% for f in fairness_flags %}
+          <li class="text-slate-700">
+            <span class="mono">{{ f.attribute }}</span> · {{ f.flag_type }}
+            <span class="text-slate-400 block ml-3">{{ f.description }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="mt-6 flex justify-between text-xs text-slate-400">
+  <a href="/ui/audit/flags" class="hover:text-slate-700">← back to audit flags</a>
+  <a href="/ui/applications/{{ row.application_id }}" class="hover:text-slate-700">
+    application drilldown →
+  </a>
+</div>
+
+{% endblock %}
