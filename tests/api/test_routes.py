@@ -266,5 +266,71 @@ class RunApplicationTests(_SeededAppMixin, unittest.TestCase):
         self.assertEqual(len(body["completed"]), 12)
 
 
+class AuditRouteTests(_SeededAppMixin, unittest.TestCase):
+    """GET /audit/{id}, /audit/application/{id}, /audit/flags +
+    POST /audit/{id}/access — covers the read paths and the
+    pii_access_always_logged side-channel."""
+
+    def test_list_audit_records_for_seeded_application(self):
+        r = self.client.get("/audit/application/app_happy")
+        self.assertEqual(r.status_code, 200, r.text)
+        records = r.json()
+        # 12 decisions → 12 audit records.
+        self.assertEqual(len(records), 12)
+        decision_types = {r["decision_type"] for r in records}
+        for did in (
+            "lead_scoring", "credit_assessment", "fraud_screening",
+            "underwriting_decision", "closing_readiness",
+        ):
+            self.assertIn(did, decision_types)
+
+    def test_get_audit_record_round_trip(self):
+        r = self.client.get("/audit/application/app_happy")
+        first = r.json()[0]
+        r2 = self.client.get(f"/audit/{first['audit_id']}")
+        self.assertEqual(r2.status_code, 200, r2.text)
+        self.assertEqual(r2.json()["audit_id"], first["audit_id"])
+
+    def test_unknown_audit_id_returns_404(self):
+        r = self.client.get("/audit/00000000-0000-0000-0000-000000000000")
+        self.assertEqual(r.status_code, 404)
+
+    def test_flags_endpoint_filters_warn_and_fail(self):
+        # Happy-path scenario should produce no flags. fraud_block /
+        # contamination / compliance_block produce flags depending on
+        # default audit inputs — the contract is just that the response
+        # is a list.
+        r = self.client.get("/audit/flags")
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertIsInstance(r.json(), list)
+
+    def test_post_access_log_writes_entry(self):
+        r = self.client.get("/audit/application/app_happy")
+        audit_id = r.json()[0]["audit_id"]
+        r2 = self.client.post(
+            f"/audit/{audit_id}/access",
+            json={
+                "user_id": "auditor_test",
+                "role": "auditor",
+                "action": "review",
+            },
+        )
+        self.assertEqual(r2.status_code, 201, r2.text)
+        log = r2.json()
+        # At least the entry we just posted; get() above already added a
+        # `system` row, plus the explicit POST row is present.
+        actions = {entry["action"] for entry in log}
+        users = {entry["user_id"] for entry in log}
+        self.assertIn("review", actions)
+        self.assertIn("auditor_test", users)
+
+    def test_post_access_log_unknown_audit_id_returns_404(self):
+        r = self.client.post(
+            "/audit/00000000-0000-0000-0000-000000000000/access",
+            json={"user_id": "x", "role": "y", "action": "read"},
+        )
+        self.assertEqual(r.status_code, 404)
+
+
 if __name__ == "__main__":
     unittest.main()

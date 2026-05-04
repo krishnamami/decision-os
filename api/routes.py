@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from pydantic import BaseModel, Field
 
+from core.audit import AccessRecord, AuditRecord
 from core.connectors import ConnectorError
 from core.normalizer.models import (
     BaseEvent,
@@ -373,6 +374,89 @@ async def run_application(
         halt_reason=result.halt_reason,
         outcomes=result.outcomes,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# GET /audit/{audit_id}                — read one AuditRecord
+# GET /audit/application/{app_id}      — list AuditRecords for an application
+# GET /audit/flags                     — open warn/fail records (compliance)
+# POST /audit/{audit_id}/access        — explicit access-log write
+#
+# Reading an AuditRecord auto-logs an access entry (PRD §23.9
+# pii_access_always_logged). The InMemory store records `system` as the
+# user; production swaps in the API auth context (TIER 3).
+# ─────────────────────────────────────────────────────────────────────
+
+
+class AccessLogRequest(BaseModel):
+    user_id: str
+    role: str
+    action: str = "read"
+    ip_hash: Optional[str] = None
+
+
+@router.get("/audit/flags", response_model=list[AuditRecord])
+async def list_audit_flags(
+    platform: Platform = Depends(get_platform),
+) -> list[AuditRecord]:
+    return await platform.audit_store.list_flags()
+
+
+@router.get(
+    "/audit/application/{application_id}",
+    response_model=list[AuditRecord],
+)
+async def list_audit_records_for_application(
+    application_id: str,
+    platform: Platform = Depends(get_platform),
+) -> list[AuditRecord]:
+    return await platform.audit_store.list_for_application(application_id)
+
+
+@router.get("/audit/{audit_id}", response_model=AuditRecord)
+async def get_audit_record(
+    audit_id: UUID,
+    platform: Platform = Depends(get_platform),
+) -> AuditRecord:
+    record = await platform.audit_store.get(audit_id)
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"audit record {audit_id} not found",
+        )
+    await platform.audit_store.log_access(
+        audit_id,
+        AccessRecord(user_id="system", role="system", action="read"),
+    )
+    return record
+
+
+@router.post(
+    "/audit/{audit_id}/access",
+    response_model=list[AccessRecord],
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_audit_access(
+    audit_id: UUID,
+    body: AccessLogRequest,
+    platform: Platform = Depends(get_platform),
+) -> list[AccessRecord]:
+    try:
+        await platform.audit_store.log_access(
+            audit_id,
+            AccessRecord(
+                user_id=body.user_id,
+                role=body.role,
+                action=body.action,
+                ip_hash=body.ip_hash,
+            ),
+        )
+    except KeyError as err:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(err) or f"audit record {audit_id} not found",
+        ) from err
+    return await platform.audit_store.access_log(audit_id)
 
 
 __all__ = ["router", "get_platform"]
