@@ -535,21 +535,37 @@ Tests (294/294, ~8s)
     on every decision / leak = ethics fail with race in
     protected_attrs_used and not in excluded.
 
-Deferred to next session
-  - Surface AuditRecord summary on persona / decision detail pages
-    (the audit panel exists at /ui/audit/{id}; persona drilldown
-    should embed it).
-  - HMDA report's by_state needs property_state plumbed into the
-    audit's execution_result. Currently empty.
+Deferred items closed in same session (slices 5–8):
+  ✓ Embedded audit panel on decision + persona detail pages —
+    _audit_panel_for_trace + decision.html section + _persona_detail.html
+    compact card. Tone-aware (emerald/amber/rose), 4-check status grid,
+    "full record →" link to /ui/audit/{id}.
+  ✓ Alert sink — AlertSink Protocol + InMemoryAlertSink + LoggingAlertSink
+    in core/audit/alerts.py. AuditEngine fires synchronously on FAIL; sink
+    errors swallowed so the audit gate stays up. Wired through Platform.
+    PRD §23.9 audit_fail_alerts_compliance_immediately ✓
+  ✓ HMDA by_state — atomic_tool reuses _policy_scope_hints to plumb
+    property_state into context_used + execution_result; falls back to
+    a system-wide Application read when per-decision perms exclude it.
+    Smoke now shows by_state populated across 7 states.
+  ✓ Store-level PII logging — core/audit/pii_log.py PII_FIELDS +
+    PIIAccessEntry + PIIAccessLog Protocol + InMemoryPIIAccessLog +
+    detect_pii_fields. LendingContextStore.get() instrumented best-
+    effort. PRD §23.9 pii_access_always_logged ✓ (456 PII reads
+    logged on the 24-applicant smoke). API surface:
+    /audit/pii-log/recent + /audit/pii-log/application/{id}.
+
+Still deferred:
   - Persona-input completeness — synthetic underwriting decisions
-    block more than they should because the synthetic factory under-
-    seeds for the personas' expected fields. Audit gate works; agent
-    outcomes are noisier than they need to be.
-  - audit_fail_alerts_compliance_immediately — alert sink Protocol
-    (PRD §23.9) is not yet wired. Today the store records fail; no
-    realtime notification.
-  - pii_access_always_logged at the context_store level — currently
-    only logged at audit-record reads via /audit/{id}.
+    still block more than they should because the synthetic factory
+    under-seeds for the personas' expected fields. Audit gate works;
+    agent outcomes are noisier than they need to be. Outside §23 scope.
+  - PostgresAuditStore + Postgres PII log + alert sink production
+    swap — code paths exist; tests stay on InMemory. Run via
+    docker-compose up postgres when ready to flip.
+  - Real critic agent (PRD TIER 5) — current critic is a heuristic
+    stub; production needs Anthropic-backed implementation with
+    rubric.
 
 ### Session 9 — May 3 2026
 
