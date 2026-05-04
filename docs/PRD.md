@@ -768,6 +768,16 @@ decision-os/
 │   │   │                                       EventSink protocol + ConnectorHealth
 │   │   ├── mock_csv.py            ✅ EXISTS — push reference (CSV / file drop)
 │   │   └── mock_http.py           ✅ EXISTS — pull reference (RecordedResponse)
+│   ├── core/audit/                TODO — audit engine (see Section 23)
+│   │     engine.py
+│   │     compliance_checker.py
+│   │     security_checker.py
+│   │     ethics_checker.py
+│   │     fairness_checker.py
+│   │     schema.py
+│   │     store.py
+│   │     schema.sql
+│   │     reports/
 │   ├── decision_agents/           ✅ STEP 5 DONE
 │   │   ├── __init__.py            ✅ EXISTS
 │   │   ├── base.py                ✅ EXISTS — DecisionAgent ABC + AgentReasoning
@@ -1333,6 +1343,8 @@ decision-os/
       SelfReviewError can never fire
     - Borrower portal: separate frontend project consuming the API,
       not in this repo
+
+  8  core/audit/  Audit engine. Build after core/trace/ is complete. engine.py first then four checkers then schema.sql. AuditRecord must be created before any writeback executes. Reports layer built last after API is working.
 ```
 
 ---
@@ -1455,6 +1467,170 @@ Build next, in this order:
   6. Override authority — single approver or dual-control for high-risk?
   7. Connector marketplace — build all or open SDK?
 ```
+
+---
+
+## 23. Audit Engine
+
+### 23.1 What it is
+
+Every decision that passes through the pipeline is automatically evaluated by the Audit Engine before the result is written to the Audit Store. The engine runs four checks in parallel: compliance, security, ethics, and bias. The output is a structured AuditRecord — one per decision — stored permanently alongside the DecisionTrace. AuditRecords are append-only and never deleted.
+
+### 23.2 Pipeline position
+
+DecisionTrace
+     │
+     ▼
+AUDIT ENGINE  core/audit/
+  1. Compliance rules evaluator
+  2. Security access checker
+  3. Ethics + bias checker
+  4. Fairness flag detector
+               │
+               ▼
+AUDIT STORE — Postgres audit_records table
+Append-only. Never deleted.
+               │
+               ▼
+Audit Reports + Dashboards
+Underwriter workbench · Compliance reports · Scheduled exports · Regulator submissions
+
+### 23.3 AuditRecord schema
+
+AuditRecord {
+
+  DECISION BLOCK
+  audit_id:                uuid        PK
+  decision_id:             uuid        FK → decision_traces
+  timestamp:               datetime
+  event_input:             jsonb       snapshot of NormalizedEvent at decision time
+  context_used:            jsonb       snapshot of ContextBundle at decision time
+  ontology_mapping:        jsonb       object types + semantic links resolved
+  policy_applied:          jsonb[]     [{policy_id, clause, result, reason}]
+  decision_output:         enum        approve | decline | escalate | block
+  confidence:              float       0.0–1.0
+  owner:                   string      owner_team from decisions.yaml
+  mode:                    enum        shadow | recommend | human_approval | auto_execute
+  execution_result:        jsonb       what was written back + to which system
+  outcome:                 string      final business outcome (funded, withdrawn, etc)
+
+  COMPLIANCE BLOCK
+  regulation_tags:         string[]    [ECOA, HMDA, FCRA, TRID, RESPA, GDPR]
+  consent_status:          enum        obtained | pending | missing | withdrawn
+  data_sources_used:       string[]    [credit_bureau, payroll_provider, fraud_engine, ...]
+  disclosure_sent:         bool
+  disclosure_timestamp:    datetime
+  retention_policy:        string      how long this record is kept + regulatory basis
+
+  SECURITY BLOCK
+  accessed_by:             jsonb[]     [{user_id, role, timestamp, action, ip_hash}]
+  permissions_used:        string[]    ontology read permissions exercised
+  data_classification:     enum        public | internal | confidential | restricted
+  pii_fields_accessed:     string[]    which PII fields were read during this decision
+  encryption_status:       enum        encrypted_at_rest | in_transit | both
+  access_anomaly:          bool        true if access pattern deviates from baseline
+  access_anomaly_reason:   string|null description if anomaly flagged
+
+  ETHICS BLOCK
+  applicant_segment:       string|null demographic segment if permitted and consented
+  protected_attrs_used:    string[]    protected attributes present in context
+  protected_attrs_excluded: string[]   attributes explicitly excluded from reasoning
+  fairness_flags:          jsonb[]     [{attribute, flag_type, description, severity}]
+  bias_score:              float|null  0.0–1.0 lower is better
+  disparate_impact_flag:   bool        true if decision rate diverges by segment
+  human_reviewed:          bool        whether a human reviewed AI reasoning before action
+}
+
+### 23.4 Four audit checks
+
+CHECK 1 — COMPLIANCE
+  Evaluates: regulation_tags, consent_status, disclosure timing, data source permissions
+  Fails if:  consent missing, required disclosure not sent, unpermitted data source used
+  Produces:  compliance_status = pass | warn | fail
+
+CHECK 2 — SECURITY
+  Evaluates: who accessed what PII, which permissions used, access timing and velocity
+  Flags if:  access outside normal workflow, PII accessed beyond decision scope,
+             same user accesses multiple sensitive records in short window
+  Produces:  security_status = pass | warn | fail + access_anomaly bool
+
+CHECK 3 — ETHICS + BIAS
+  Evaluates: protected attributes in context vs excluded, bias score, segment divergence
+  Flags if:  bias_score > 0.15 (monitoring threshold)
+             bias_score > 0.30 (action required threshold)
+             disparate impact rate > 2.0x baseline for any segment
+  Produces:  ethics_status = pass | warn | fail
+
+CHECK 4 — FAIRNESS
+  Evaluates: approval rates across credit bands, geographies, product types
+  Flags if:  any segment deviates > 15% from overall rate without credit-based explanation
+  Produces:  fairness_flags[] + disparate_impact_flag
+
+### 23.5 Audit check outcomes
+
+pass  → AuditRecord written. No action required.
+warn  → AuditRecord written. Flagged for compliance team review.
+fail  → AuditRecord written. Decision flagged. Compliance team alerted immediately.
+
+### 23.6 Audit Store tables
+
+audit_records      One row per decision. Append-only. Never deleted.
+audit_access_log   Every access to an audit record. Who, when, why.
+audit_flags        Active warnings and failures. Resolved when cleared by compliance.
+audit_reports      Generated report metadata + S3 key to stored report file.
+audit_schedules    Report generation schedules + distribution lists.
+
+### 23.7 Report types
+
+HMDA compliance report        Monthly    All HMDA fields + decision rates by geography
+Fair lending analysis         Quarterly  ECOA/FHA disparate impact across protected classes
+AI decision audit trail       Weekly     Every automated decision with full context + policy
+Security access report        Daily      PII access log, permissions used, anomalies flagged
+Bias and fairness report      Weekly     Bias scores, fairness flags, disparate impact rates
+Override and rollback report  Weekly     Human overrides, reason codes, agent learning log
+
+### 23.8 File structure
+
+core/audit/
+  __init__.py
+  engine.py              TODO — orchestrates 4 checks in parallel, writes AuditRecord
+  compliance_checker.py  TODO — regulation tags, consent, disclosure timing
+  security_checker.py    TODO — access log, anomaly detection, velocity check
+  ethics_checker.py      TODO — bias score, protected attribute exclusion log
+  fairness_checker.py    TODO — disparate impact, segment approval rate analysis
+  schema.py              TODO — AuditRecord Pydantic v2 model + all sub-models
+  store.py               TODO — writes to audit_records Postgres table
+  schema.sql             TODO — audit_records, audit_flags, audit_access_log tables
+  reports/
+    hmda.py              TODO
+    fair_lending.py      TODO
+    ai_trail.py          TODO
+    security.py          TODO
+    bias.py              TODO
+    overrides.py         TODO
+
+### 23.9 Hard rules — Audit Engine
+
+audit_record_required_before_writeback
+  No decision result written to any external system until AuditRecord is created.
+  Enforced in execution layer — same gate as trace_required. Non-negotiable.
+
+audit_fail_alerts_compliance_immediately
+  Any audit check returning fail status triggers real-time alert to compliance team.
+  No buffering. No batching. Immediate notification.
+
+audit_records_never_deleted
+  audit_records table is append-only. No DELETE permissions granted to any role.
+  Corrections are new rows with supersedes_audit_id referencing the prior record.
+
+pii_access_always_logged
+  Every read of a PII field anywhere in the pipeline writes to audit_access_log.
+  Enforced at context_store level. Not optional per decision.
+
+protected_attributes_excluded_by_default
+  race, sex, national_origin, religion, marital_status, age are excluded from all
+  agent context unless explicitly permitted by compliance policy and logged in
+  protected_attrs_used field of the AuditRecord.
 
 ---
 
