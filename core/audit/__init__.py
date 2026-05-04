@@ -35,7 +35,7 @@ from .schema import (
     PolicyApplied,
 )
 from .security_checker import SecurityChecker
-from .store import AuditStore, InMemoryAuditStore
+from .store import AuditStore, InMemoryAuditStore, PostgresAuditStore
 
 __all__ = [
     "AccessRecord",
@@ -53,5 +53,6 @@ __all__ = [
     "FairnessFlag",
     "InMemoryAuditStore",
     "PolicyApplied",
+    "PostgresAuditStore",
     "SecurityChecker",
 ]
