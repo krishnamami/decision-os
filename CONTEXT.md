@@ -417,6 +417,161 @@ Connector layering — push vs pull (STEP 4 design)
 
 ## Session history
 
+### Session 11 — May 4 2026
+
+**Theme:** PRD review + multi-source income verification track.
+**Commits:** 4 (`723411c`, `d90930d`, `0febead`, `4f661b5`). All pushed.
+
+**What landed:**
+
+PRD review + repair (`723411c`)
+  - Front matter (lines 2–84) was an exploded H1 block (every line
+    started with `#` → ~80 stacked H1s). Replaced with a single H1
+    title + bold version line + Session-deltas as proper bullets.
+  - §23 (Audit Engine) prose blocks (schema / four-checks / outcomes /
+    store-tables / report-types / file-structure / hard-rules) all
+    wrapped in fenced code blocks so significant indentation renders.
+  - §23.8 stale TODO markers replaced with ✅ status (every audit
+    file actually shipped in Session 10). Added missing alerts.py /
+    pii_log.py / adverse_action.py / export.py rows.
+  - §17 file-structure tree got the synthetic factory + Session-10
+    test files + audit submodules.
+  - 227 → 350 test count reconciled across 5 sites; preserved
+    Session-9-ended-at-227 as historical context.
+  - §20 resume prompt rewritten to Session 10 reality (was frozen at
+    Session 6 — "STEPS 1-11 complete, STEP 14 TODO").
+  - Orphan "8 core/audit/" line removed from bottom of TIER 6 (TIER 4
+    already documents audit completion in detail).
+  - §23 heading style: `## 23. Audit Engine` (sentence case) →
+    `## 23. AUDIT ENGINE` (matches every other §heading).
+
+Brainstorm 1 — EDMS document collation
+  Real EDMS pain: docs arrive with mismatched join keys (W-2 has
+  employee_id, bank statement has account_id, tax return has SSN-
+  last-4, pay stub has name only). Need entity resolution to attach
+  documents to the right Application before any persona reads them.
+  Architectural answer: an `evidence_collation` decision as a DAG
+  node (NOT inside the retriever) so the trace shows every match
+  decision with its confidence + basis. Slice not yet shipped.
+
+Brainstorm 2 — multi-source income verification
+  Real flow: TWN / Argyle / Plaid / VOE / 1099 / bank deposits each
+  return partial pictures with different schemas + employer-name
+  variants ("ACME CORPORATION INC" vs "Acme Corp"). Underwriter
+  reconciles across providers, checks 24-month continuity, escalates
+  to manual VOE on partial coverage. Architectural answer: two-stage
+  pattern — STAGE A parallel `VerificationAttempt` writes via
+  EntityHydrator (preserves multi-provider data); STAGE B
+  `employment_reconciliation` decision joins attempts into an
+  EmploymentTimeline, drives `income_verification` downstream.
+
+Slice 1 — `employment_continuity/` seed scenario (`d90930d`)
+  Demonstrates the gap concretely. 8th seed scenario.
+  - Two `payroll_received` events: TWN-style "ACME CORPORATION INC"
+    @ $100k + Argyle-style "Acme Corp" @ $92k. Both verified.
+  - EDMS holds an unattached Beta Inc W-2 (`applicant_id=null`,
+    `status=ocr_extracted`) representing a 16-month prior-employer
+    coverage gap.
+  - Pending 2022 1099 representing the gig year that would normally
+    trigger 4506-C tax-transcript fetch + send_back outcome.
+  - `scripts/smoke_employment_continuity.py` enumerates every gap
+    the system can't currently see.
+
+Slice 2 — VerificationAttempt + EmploymentRecord + new decision (`0febead`)
+  - Two new ObjectTypes in `core/ontology/object_types.py`:
+    - `VerificationAttempt` — append-only per (provider, applicant,
+      time). Captures source, employer_name_raw, gross_amount,
+      period_start/end, status. Preserves multi-provider data that
+      IncomeProfile's last-write-wins merge collapsed.
+    - `EmploymentRecord` — reconciled employer-window per applicant.
+      Output projection of the new decision (SHARED-store writeback
+      is a follow-up).
+  - `EntityHydrator._hydrate_payroll` now writes ONE
+    VerificationAttempt per `PayrollReceivedEvent` IN ADDITION to
+    merging into IncomeProfile (so two payroll feeds for the same
+    applicant land as two distinct rows; IncomeProfile keeps the
+    existing last-write-wins shape — no ripples).
+  - New decision `employment_reconciliation` in `decisions.yaml`.
+    Initially mode=shadow. PolicyVersion auto-seeded by the existing
+    YAML seeder (no seeder change).
+  - `domains/lending/personas/employment_reconciliation.py` —
+    deterministic offline reasoning. Joins attempts by canonical
+    employer name (entity-suffix normalization → "ACME CORPORATION
+    INC" and "Acme Corp" both resolve to "acme") and overlapping
+    date ranges. Computes 24-month continuity coverage, max gap,
+    employer-name match vs stated, comp drift, stated/verified drift.
+    Produces reconciliation_status + employer_records[] +
+    structured remediation flags (manual_voe_required,
+    gap_letter_required, tax_transcript_required).
+
+Slice 3 — wire upstream of income_verification + mode_router fix (`4f661b5`)
+  - `employment_reconciliation` mode shadow → recommend.
+  - `income_verification` becomes type=dependent, depends_on
+    [employment_reconciliation]. Moved from `parallel_independent`
+    to its own `sequential_dependent` wave.
+  - `income_verification` persona refactored — reads
+    `upstream_payload(bundle, "employment_reconciliation")` as the
+    primary signal. Confidence anchored to reconciliation_status
+    (auto_verified=0.95, partial-clean=0.95, partial-conflict=0.82,
+    conflict=0.55, missing=0.4). Verified income aggregated from
+    reconciled employer_records. Pass-through of remediation flags
+    into IV's own output_payload.
+  - `income_verification` boundary in YAML updated:
+    automate_if requires `reconciliation_status in [auto_verified,
+    partial]`; escalate_if fires on `[conflict, missing]`.
+  - **mode_router writeback fix** — recommend / human_approval modes
+    now writeback to scoped store IN ADDITION to enqueueing for
+    human review. Without this, downstream decisions saw empty
+    upstream_outputs because only `auto_execute + ALLOW` triggered
+    writeback. Latent gap masked by entity-store fallbacks (DTI etc.
+    fall back to IncomeProfile). The fix means upstream payloads
+    always flow.
+
+**Demo scenario after slice 3:**
+```
+employment_continuity (TWN $100k vs Argyle $92k, both verified)
+  employment_reconciliation → RECOMMEND
+    status=partial, comp_drift=8.3%, manual_voe_required=True,
+    employer_windows=1 (canonical "acme")
+  income_verification        → RECOMMEND
+    verified=$96k (avg), confidence=0.84, status=partial passed
+    through. (Was: ALLOW with 0.95 confidence on $92k from one
+    provider — multi-provider conflict was invisible.)
+```
+
+**Tests + smokes:**
+  351/351 unit tests green (~7s). All 7 smokes green
+  (employment_continuity, replayer, audit_reports, ui_all_panels,
+  persona_workbench, fha_scenario, workbench).
+
+**On the plate (next session, ranked by leverage):**
+
+  1. Persist EmploymentRecord rows to SHARED store. Today they live
+     only in the reconciliation trace's output_payload. ~1h.
+  2. Extend IncomeDeclaredEvent with `stated_employer` so
+     employer_name_match_confidence stops reading 0.0 in real data.
+     Touches event schema + hydrator + 8 fixture CSVs. ~30min.
+     Recommendation: bundle 1 + 2 in one slice (~1.5h).
+  3. Structured HumanQueue sub-tasks — manual VOE / tax transcript /
+     gap letter as separate queue items, not flat booleans. ~3h.
+  4. send_back outcome (PRD §13 "planned"). Async path for 4506-C
+     tax-transcript fetch + applicant gap-letter request. ~3-4h.
+  5. EvidenceLink ObjectType + evidence_collation decision (EDMS
+     entity resolution from brainstorm 1; only the gap-demo
+     scenario has shipped). ~3-4h.
+  6. Real Anthropic persona path (one persona smoke with
+     cache_control on system block; journal side-by-side with
+     offline path). ~30min.
+  7. Real PullConnectors — TWN / Argyle / Plaid Income with
+     RecordedResponse fixtures. ~½ day each.
+  8. Real-backend verification — Postgres + Redis swap. Routine
+     `trig_013QhFbYJaViJfNybCbr3KUX` was scheduled May 3; status
+     not checked.
+  9. Async pass on `ui/views.py` — current sync `_records` walks
+     block the Postgres swap.
+
+---
+
 ### Session 10 — May 4 2026
 
 **What was built (PRD §23 Audit Engine, end to end):**

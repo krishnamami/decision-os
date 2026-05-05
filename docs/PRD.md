@@ -1,8 +1,17 @@
 # DECISION OS — PRODUCT REQUIREMENTS DOCUMENT
 
-**Version:** 0.11 &nbsp;·&nbsp; **Updated:** May 2026 &nbsp;·&nbsp; Source of truth for Claude Code every session.
+**Version:** 0.12 &nbsp;·&nbsp; **Updated:** May 2026 &nbsp;·&nbsp; Source of truth for Claude Code every session.
 
 > **Strategic note (Session 8):** the user committed to PATH C — full DecisionOS as system of record (12–18 month roadmap). See §19 for the tier breakdown that drives every following session.
+
+### Session 11 deltas (v0.11 → v0.12) — 4 commits · 351/351 tests
+
+- **PRD repair** (`723411c`) — Front-matter exploded H1 block collapsed to a single H1 + bullets; §23 prose blocks fenced; §23.8 stale TODOs replaced with ✅; 227 → 350 test count reconciled; §20 resume prompt rewritten to Session 10 reality; orphan §19 row removed.
+- **`employment_continuity/` seed scenario** (`d90930d`) — 8th scenario. Two `payroll_received` events disagree (TWN-style "ACME CORPORATION INC" @ $100k vs Argyle-style "Acme Corp" @ $92k). EDMS holds an unattached Beta Inc W-2 + a pending 2022 1099. `scripts/smoke_employment_continuity.py` enumerates every gap the system can't currently see.
+- **`VerificationAttempt` + `EmploymentRecord` ObjectTypes + `employment_reconciliation` decision** (`0febead`) — Multi-provider data is now preserved (one append-only row per provider call) instead of collapsed by IncomeProfile's last-write-wins merge. New decision joins attempts by canonical employer name + overlapping date ranges, computes 24-month continuity coverage + max gap + comp drift across providers + stated/verified drift, produces structured remediation flags (`manual_voe_required` / `gap_letter_required` / `tax_transcript_required`).
+- **Wire reconciliation upstream of `income_verification` + `mode_router` writeback fix** (`4f661b5`) — `employment_reconciliation` promoted shadow → recommend; `income_verification` is now `dependent` on it via `depends_on`. Persona refactored to read the reconciled timeline as primary signal; confidence anchored to `reconciliation_status`. Boundary clauses updated. Architectural fix in `core/decision_agents/mode_router.py`: `recommend` / `human_approval` modes now persist their decision output to the scoped store in addition to enqueueing — without this, downstream personas saw empty `upstream_outputs` because only `auto_execute + ALLOW` triggered writeback.
+- **Lending domain is now 13 decisions** (was 12). `employment_reconciliation` runs in `parallel_independent` alongside lead_scoring / credit_assessment / fraud_screening / compliance_check; `income_verification` moved into a new `sequential_dependent` wave that depends on it.
+- **Two architectural brainstorms recorded** in CONTEXT.md Session 11: (1) EDMS document collation — `EvidenceLink` ObjectType + `evidence_collation` decision (architecture defined, slice not shipped); (2) multi-source income verification — two-stage `VerificationAttempt` + reconciliation pattern (slices 1–3 shipped this session).
 
 ### Session 10 deltas (v0.10 → v0.11) — 22 commits · 350/350 tests
 
@@ -416,7 +425,7 @@ flowchart TD
 
 ---
 
-## 11. LENDING DOMAIN — 12 DECISIONS
+## 11. LENDING DOMAIN — 13 DECISIONS
 
 ### 11.1 End-to-end pipeline — lead to closing — Mermaid diagram
 
@@ -601,7 +610,7 @@ flowchart LR
     CONN --> NORM[normalize_event<br/>typed BaseEvent subclass]
     NORM --> ONT[Ontology hydration<br/>Applicant · Application · Property ·<br/>Loan · CreditProfile · IncomeProfile ·<br/>FraudProfile · ComplianceRecord]
 
-    ONT --> DEC[12 lending decisions]
+    ONT --> DEC[13 lending decisions]
     DEC --> CTX[ContextRecord<br/>append-only · versioned · lineage stamped]
 
     CTX --> BUS[Event bus<br/>publish record_updated]
@@ -898,7 +907,19 @@ decision-os/
 │       │   │                                  Anthropic mixin (cache_control on
 │       │   │                                  the system block)
 │       │   ├── lead_scoring.py    ✅ EXISTS — LeadQualificationAgent
-│       │   ├── income_verification.py     ✅ IncomeVerificationAgent
+│       │   ├── employment_reconciliation.py ✅ Session 11 —
+│       │   │                                  EmploymentReconciliationAgent.
+│       │   │                                  Joins VerificationAttempts by
+│       │   │                                  canonical employer + window.
+│       │   │                                  Produces reconciliation_status
+│       │   │                                  + employer_records[] +
+│       │   │                                  manual_voe / gap_letter /
+│       │   │                                  tax_transcript flags.
+│       │   ├── income_verification.py     ✅ IncomeVerificationAgent.
+│       │   │                                  Session 11: refactored to read
+│       │   │                                  upstream reconciled timeline as
+│       │   │                                  primary signal; confidence
+│       │   │                                  anchored to reconciliation_status.
 │       │   ├── credit_assessment.py       ✅ CreditRiskAgent
 │       │   ├── fraud_screening.py         ✅ FraudDetectionAgent
 │       │   ├── compliance_check.py        ✅ ComplianceAgent
@@ -923,9 +944,19 @@ decision-os/
 │           ├── fha/               ✅ Session 9 — FTHB FHA loan, exercises multi-
 │           │                       agency policy_chain on ltv_assessment
 │           ├── jumbo/             ✅ Session 9 — high-balance, no agency in chain
-│           └── va/                ✅ Session 9 — military, agency_chain helper
-│                                                returns [lender_overlay, va]
-│                                                (no VA overlay seeded yet)
+│           ├── va/                ✅ Session 9 — military, agency_chain helper
+│           │                                    returns [lender_overlay, va]
+│           │                                    (no VA overlay seeded yet)
+│           └── employment_continuity/ ✅ Session 11 — multi-source income-
+│                                                  verification gap demo. Two
+│                                                  payroll feeds disagree on
+│                                                  employer name + comp; EDMS
+│                                                  holds an unattached Beta Inc
+│                                                  W-2 + a pending 2022 1099.
+│                                                  Drives reconciliation →
+│                                                  RECOMMEND through the new
+│                                                  employment_reconciliation
+│                                                  decision.
 │       └── synthetic/              ✅ Session 10 — deterministic factory:
 │           ├── __init__.py                          build_synthetic_applicants(n,
 │           └── factory.py                           seed=42) + inject_into_platform.
@@ -1459,7 +1490,7 @@ Paste this prompt at the start of every Claude Code session:
 Read these files in this order before doing anything:
 1. docs/PRD.md                        ← architecture, principles, build sequence
 2. CONTEXT.md                         ← session history
-3. domains/lending/decisions.yaml     ← source of truth for all 12 decisions
+3. domains/lending/decisions.yaml     ← source of truth for all 13 decisions
 4. domains/lending/knowledge_base.json ← vocabulary, ontology, dependency graph
 
 Then verify what actually exists:
