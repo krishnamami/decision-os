@@ -1,0 +1,186 @@
+[
+  {
+    "entity_type": "Loan",
+    "entity_id": "loan_continuity",
+    "value": {
+      "loan_id": "loan_continuity",
+      "application_id": "app_continuity",
+      "loan_type": "conforming",
+      "principal_amount": 400000,
+      "term_months": 360,
+      "lock_period": 30,
+      "interest_rate": 0.065
+    }
+  },
+  {
+    "entity_type": "ComplianceRecord",
+    "entity_id": "comp_continuity",
+    "value": {
+      "compliance_record_id": "comp_continuity",
+      "application_id": "app_continuity",
+      "all_hmda_fields_complete": true,
+      "fair_lending_violation": false,
+      "missing_required_disclosures": false,
+      "state_rules_passed": true,
+      "cd_timing_compliant": true,
+      "regulatory_ambiguity": false,
+      "mixed_jurisdiction": false,
+      "final_conditions_checklist": {"all_cleared": true},
+      "insurance_binder": true
+    }
+  },
+  {
+    "entity_type": "Document",
+    "entity_id": "doc_continuity_acme_w2",
+    "value": {
+      "document_id": "doc_continuity_acme_w2",
+      "application_id": "app_continuity",
+      "applicant_id": "cust_continuity",
+      "doc_type": "w2",
+      "status": "verified",
+      "source_url": "edms://encompass/loans/app_continuity/income/w2_acme_2025.pdf",
+      "source_system": "encompass",
+      "uploaded_at": "2026-04-18T09:14:00",
+      "uploaded_by": "borrower:cust_continuity",
+      "verified_at": "2026-04-19T10:02:00",
+      "verified_by": "underwriter:bgoud",
+      "ocr_confidence": 0.93,
+      "page_count": 1,
+      "mime_type": "application/pdf"
+    }
+  },
+  {
+    "entity_type": "Document",
+    "entity_id": "doc_continuity_beta_w2",
+    "value": {
+      "document_id": "doc_continuity_beta_w2",
+      "application_id": null,
+      "applicant_id": null,
+      "doc_type": "w2",
+      "status": "ocr_extracted",
+      "source_url": "edms://encompass/inbound/unattached/w2_beta_2024.pdf",
+      "source_system": "encompass",
+      "uploaded_at": "2026-04-18T09:14:00",
+      "uploaded_by": "borrower:cust_continuity",
+      "ocr_confidence": 0.88,
+      "page_count": 1,
+      "mime_type": "application/pdf"
+    }
+  },
+  {
+    "entity_type": "Document",
+    "entity_id": "doc_continuity_acme_paystub",
+    "value": {
+      "document_id": "doc_continuity_acme_paystub",
+      "application_id": "app_continuity",
+      "applicant_id": "cust_continuity",
+      "doc_type": "paystub",
+      "status": "verified",
+      "source_url": "edms://encompass/loans/app_continuity/income/paystub_2026_04.pdf",
+      "source_system": "encompass",
+      "uploaded_at": "2026-04-18T09:18:00",
+      "uploaded_by": "borrower:cust_continuity",
+      "verified_at": "2026-04-19T10:05:00",
+      "verified_by": "underwriter:bgoud",
+      "ocr_confidence": 0.91,
+      "page_count": 2,
+      "mime_type": "application/pdf"
+    }
+  },
+  {
+    "entity_type": "Document",
+    "entity_id": "doc_continuity_1099_gig",
+    "value": {
+      "document_id": "doc_continuity_1099_gig",
+      "application_id": "app_continuity",
+      "applicant_id": "cust_continuity",
+      "doc_type": "1099_misc",
+      "status": "pending",
+      "source_url": "edms://encompass/loans/app_continuity/income/1099_2022.pdf",
+      "source_system": "encompass",
+      "uploaded_at": "2026-04-18T09:20:00",
+      "uploaded_by": "borrower:cust_continuity",
+      "ocr_confidence": 0.79,
+      "page_count": 1,
+      "mime_type": "application/pdf"
+    }
+  },
+  {
+    "entity_type": "Claim",
+    "entity_id": "claim_continuity_acme_employer",
+    "value": {
+      "claim_id": "claim_continuity_acme_employer",
+      "document_id": "doc_continuity_acme_w2",
+      "application_id": "app_continuity",
+      "applicant_id": "cust_continuity",
+      "field_name": "employer",
+      "field_value": "ACME CORPORATION INC",
+      "source_page": 1,
+      "extraction_method": "llm_extract",
+      "extraction_confidence": 0.97,
+      "status": "verified",
+      "verified_at": "2026-04-19T10:02:00",
+      "verified_by": "underwriter:bgoud",
+      "extracted_at": "2026-04-18T09:18:00",
+      "extracted_by": "core.knowledge.extractor"
+    }
+  },
+  {
+    "entity_type": "Claim",
+    "entity_id": "claim_continuity_acme_income",
+    "value": {
+      "claim_id": "claim_continuity_acme_income",
+      "document_id": "doc_continuity_acme_w2",
+      "application_id": "app_continuity",
+      "applicant_id": "cust_continuity",
+      "field_name": "verified_income",
+      "field_value": 100000,
+      "source_page": 1,
+      "extraction_method": "llm_extract",
+      "extraction_confidence": 0.94,
+      "status": "verified",
+      "verified_at": "2026-04-19T10:02:00",
+      "verified_by": "underwriter:bgoud",
+      "extracted_at": "2026-04-18T09:18:00",
+      "extracted_by": "core.knowledge.extractor"
+    }
+  },
+  {
+    "entity_type": "Claim",
+    "entity_id": "claim_continuity_acme_tenure_start",
+    "value": {
+      "claim_id": "claim_continuity_acme_tenure_start",
+      "document_id": "doc_continuity_acme_paystub",
+      "application_id": "app_continuity",
+      "applicant_id": "cust_continuity",
+      "field_name": "employment_start_date",
+      "field_value": "2024-06-15",
+      "source_page": 1,
+      "extraction_method": "llm_extract",
+      "extraction_confidence": 0.88,
+      "status": "verified",
+      "verified_at": "2026-04-19T10:05:00",
+      "verified_by": "underwriter:bgoud",
+      "extracted_at": "2026-04-18T09:22:00",
+      "extracted_by": "core.knowledge.extractor"
+    }
+  },
+  {
+    "entity_type": "Claim",
+    "entity_id": "claim_continuity_beta_employer",
+    "value": {
+      "claim_id": "claim_continuity_beta_employer",
+      "document_id": "doc_continuity_beta_w2",
+      "application_id": null,
+      "applicant_id": null,
+      "field_name": "employer",
+      "field_value": "Beta Inc",
+      "source_page": 1,
+      "extraction_method": "llm_extract",
+      "extraction_confidence": 0.84,
+      "status": "pending",
+      "extracted_at": "2026-04-18T09:24:00",
+      "extracted_by": "core.knowledge.extractor"
+    }
+  }
+]

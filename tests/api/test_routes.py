@@ -59,8 +59,8 @@ class HealthTests(_SeededAppMixin, unittest.TestCase):
         self.assertEqual(body["status"], "ok")
         self.assertEqual(body["domain"], "lending")
         self.assertEqual(body["agents"], "12")
-        # 7 seed scenarios = 7 applications.
-        self.assertEqual(body["applications"], "7")
+        # 8 seed scenarios = 8 applications.
+        self.assertEqual(body["applications"], "8")
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -368,8 +368,8 @@ class AuditRouteTests(_SeededAppMixin, unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         rows = r.text.splitlines()[1:]  # drop header
         # credit_assessment runs on every seed (no upstream blocks);
-        # 7 applications → 7 records.
-        self.assertEqual(len(rows), 7)
+        # 8 applications → 8 records.
+        self.assertEqual(len(rows), 8)
         for row in rows:
             self.assertIn("credit_assessment", row)
 
@@ -384,12 +384,12 @@ class AuditRouteTests(_SeededAppMixin, unittest.TestCase):
     def test_export_jsonl_yields_one_record_per_line(self):
         import json
 
-        # credit_assessment runs on every scenario — guaranteed 7.
+        # credit_assessment runs on every scenario — guaranteed 8.
         r = self.client.get("/audit/export.jsonl?decision_type=credit_assessment")
         self.assertEqual(r.status_code, 200)
         self.assertIn("ndjson", r.headers["content-type"])
         lines = [ln for ln in r.text.splitlines() if ln.strip()]
-        self.assertEqual(len(lines), 7)
+        self.assertEqual(len(lines), 8)
         for ln in lines:
             obj = json.loads(ln)
             self.assertEqual(obj["decision_type"], "credit_assessment")

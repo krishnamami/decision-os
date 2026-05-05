@@ -88,6 +88,24 @@ SCENARIOS: dict[str, dict[str, Any]] = {
         ),
         "expected_halt": False,
     },
+    "employment_continuity": {
+        "description": (
+            "Multi-source income verification gap demo. Two "
+            "PayrollReceived events arrive — one with employer "
+            "'ACME CORPORATION INC' / $100k (TWN-style), one with "
+            "'Acme Corp' / $92k (Argyle-style). EDMS holds an "
+            "unattached Beta Inc W-2 for prior employment plus a "
+            "pending 2022 1099. Today's hydrator collapses both "
+            "payroll events into one IncomeProfile row "
+            "(last-write-wins) and the income_verification persona "
+            "produces high confidence from incomplete data: "
+            "employer-name divergence, tenure mismatch, prior-employer "
+            "coverage, and gap years are all invisible to the trace. "
+            "Sets up STAGE B (employment_reconciliation as a DAG "
+            "node) per CONTEXT brainstorm."
+        ),
+        "expected_halt": False,
+    },
 }
 
 

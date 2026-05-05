@@ -1,0 +1,8 @@
+event_type,customer_id,application_id,lead_source,channel,session_behavior,loan_purpose,requested_amount,property_state,kyc_status,identity_match_confidence,stated_income,employment_type,employer,gross_amount,period_start,period_end,verified,address,appraised_value,purchase_price
+lead_received,cust_continuity,,web_form,digital,"{""pages_viewed"": 6, ""time_on_site_seconds"": 200}",,,,,,,,,,,,,,,
+application_submitted,cust_continuity,app_continuity,,,,purchase,400000,CA,,,,,,,,,,,,
+kyc_completed,cust_continuity,app_continuity,,,,,,,verified,0.95,,,,,,,,,,
+income_declared,cust_continuity,app_continuity,,,,,,,,,95000,salaried,,,,,,,,
+payroll_received,cust_continuity,app_continuity,,,,,,,,,,,ACME CORPORATION INC,100000,2024-06-15T00:00:00,2026-04-30T00:00:00,true,,,
+payroll_received,cust_continuity,app_continuity,,,,,,,,,,,Acme Corp,92000,2024-09-01T00:00:00,2026-04-30T00:00:00,true,,,
+property_appraised,cust_continuity,app_continuity,,,,,,,,,,,,,,,,"500 Capitol Mall, Sacramento, CA",520000,500000

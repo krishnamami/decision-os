@@ -42,6 +42,7 @@ APPLICATION_IDS: dict[str, str] = {
     "fha":             "app_fha",
     "jumbo":           "app_jumbo",
     "va":              "app_va",
+    "employment_continuity": "app_continuity",
 }
 
 

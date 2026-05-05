@@ -33,6 +33,7 @@ DEFAULT_DEMO_SCENARIOS: tuple[str, ...] = (
     "fha",
     "jumbo",
     "va",
+    "employment_continuity",
 )
 
 
@@ -48,6 +49,7 @@ SCENARIO_TIME_OFFSETS_MIN: dict[str, int] = {
     "fha":             25,
     "jumbo":           60,
     "va":              8,
+    "employment_continuity": 15,
 }
 
 
