@@ -26,7 +26,10 @@
       "Bash(git commit *)",
       "Bash(python -X utf8 scripts/smoke_audit_reports.py)",
       "Bash(python -m pytest tests/ -v --tb=short)",
-      "Bash(python -m pytest tests/ --tb=short)"
+      "Bash(python -m pytest tests/ --tb=short)",
+      "Bash(grep *)",
+      "Bash(python *)",
+      "Bash(git push *)"
     ]
   }
 }
