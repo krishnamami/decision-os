@@ -24,7 +24,9 @@
       "Bash(uvicorn api.main:get_app --factory --port 8000 --host 127.0.0.1)",
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(python -X utf8 scripts/smoke_audit_reports.py)"
+      "Bash(python -X utf8 scripts/smoke_audit_reports.py)",
+      "Bash(python -m pytest tests/ -v --tb=short)",
+      "Bash(python -m pytest tests/ --tb=short)"
     ]
   }
 }
