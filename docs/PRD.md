@@ -1,87 +1,37 @@
 # DECISION OS — PRODUCT REQUIREMENTS DOCUMENT
-# Version: 0.11 | Updated: May 2026 | Source of truth for Claude Code every session
-#
-# Strategic note (Session 8): the user committed to PATH C — full
-# DecisionOS as system of record (12-18 month roadmap). See §19 for
-# the tier breakdown that drives every following session.
-#
-# Session 10 deltas (v0.10 → v0.11) [22 commits, 350/350 tests]:
-#   - PRD §23 Audit Engine landed end-to-end:
-#     - core/audit/{schema,engine,store,alerts,pii_log}.py + 4 checkers
-#       (compliance, security, ethics, fairness)
-#     - schema.sql (audit_records / audit_access_log / audit_flags)
-#       + PostgresAuditStore class (tests stay on InMemory)
-#     - atomic_tool gate: AuditRecord written between trace_write and
-#       mode_route — PRD §23.9 audit_record_required_before_writeback
-#     - System-wide audit input reads (Applicant + ComplianceRecord
-#       fetched via resolver, not bundle, so consent + protected attrs
-#       are visible to every decision regardless of read perms)
-#     - Alert sink: AlertSink Protocol + InMemoryAlertSink +
-#       LoggingAlertSink. AuditEngine fires synchronously on FAIL.
-#       PRD §23.9 audit_fail_alerts_compliance_immediately ✓
-#     - Store-level PII logging: LendingContextStore.get() instrumented
-#       with PIIAccessLog. PRD §23.9 pii_access_always_logged ✓
-#   - core/audit/reports/ — six generators per PRD §23.7
-#     (hmda monthly, fair_lending quarterly with EEOC 4/5,
-#     ai_trail weekly, security daily, bias weekly, overrides weekly)
-#   - core/audit/adverse_action.py — ECOA / FCRA §615 notice generator
-#     with 13 canonical reason codes. GET /audit/{id}/adverse-action.
-#     PRD §19 TIER 4 ✓
-#   - core/audit/export.py — streaming CSV (34-col frozen header) +
-#     JSONL. GET /audit/export.csv + /audit/export.jsonl. PRD §19 TIER 4 ✓
-#   - core/trace/outcome_tracker.py — STEP 12 closed. OutcomeType (7
-#     canonical), OutcomeRecord append-only, DecisionOutcomeCorrelation
-#     + correlate(). POST /outcomes + GET .../correlate API.
-#   - UI: /ui/audit/flags index + /ui/audit/{id} detail with rose
-#     adverse-action alert. Embedded audit panel on decision detail
-#     and persona workbench focused-app right column.
-#   - domains/lending/synthetic/ — deterministic factory generating
-#     diverse applicants (4 segments, 7 states, 4 loan types) with
-#     audit-violation overlays (consent_missing / protected_attr_leak /
-#     no_disclosure). Field names aligned with personas' bundle reads.
-#     Smoke (scripts/smoke_audit_reports.py) shows realistic outcome
-#     distribution across 24 synthetic applicants.
-#   - Tests: 350/350 (~9s) covering audit engine, store, alerts, PII
-#     log, reports, adverse action, export, outcome tracker, UI panels.
-#
-# Session 9 deltas (v0.8 → v0.10):
-#   - STREAM C phase 1+2+3 — Policy / PolicyVersion Type-2 ObjectTypes,
-#     PolicyStore facade, decisions.yaml seeder, FHA demo overlay,
-#     async PolicyEvaluator with policy_version_id stamping,
-#     agency_chain derivation from loan_type. Every trace now stamps
-#     policy_version_id + policy_chain.
-#   - STREAM A — Per-persona workbench UI live (12 routes, KPI strip,
-#     queue/recently-completed split with outcome+queued+risk pills,
-#     Approve/Decline/Request-evidence with queue dequeue).
-#   - STREAM B — 7 seed scenarios (4 hard-rule + FHA + jumbo + VA;
-#     FHA produces 2-entry policy_chain end-to-end).
-#   - STREAM E v0 — Knowledge Context Layer landed: Document + Claim
-#     ObjectTypes, KnowledgeStore facade, Retriever Protocol +
-#     MetadataRetriever, doc_type matrix in knowledge_base.json,
-#     bundle.claims wired through ContextBuilder + AtomicTool,
-#     DecisionTrace.claim_provenance frozen evidence chain.
-#     Architecture rationale (locked): EDMS + claim extraction is
-#     enough at any scale for per-loan retrieval; vectors are STREAM E2
-#     for cross-corpus workloads only.
-#   - UI surfacing: /ui/policies (index + version detail with boundary
-#     clauses), /ui/applications/{id}/documents + /ui/documents/{id}
-#     (per-app + single-doc inspection), /ui/claims/pending (verify/
-#     reject queue), /ui/queue (open + resolved this session).
-#     Clickable policy_version_id and source_doc_id throughout.
-#   - HumanQueue.resolve() + HumanQueueResolution — Approve/Decline
-#     now dequeue with audit receipts. PRD §19 TIER 3 item complete.
-#   - TIER 1 tests/ — 227 stdlib-only tests across 13 modules:
-#     core (policy_engine + decision_agents + trace + knowledge +
-#     simulation + context_store), api/, ui/, domains/lending/.
-#     Run via scripts/run_tests.py (~2.6s).
-#   - Resolver bug fix — _default_resolver now filters Applicant-bound
-#     entities (FraudProfile/CreditProfile/IncomeProfile/Applicant)
-#     by applicant_id derived from the Application; previously leaked
-#     across applications when scenarios shared a Platform.
-#   - PolicyEvaluator hard-rule ordering fix — fraud_block_stops_pipeline
-#     and compliance_block_stops_closing now check before the generic
-#     upstream_block_propagates_to_dependents, so trace.policy_reasons
-#     names the specific PRD §5 rule.
+
+**Version:** 0.11 &nbsp;·&nbsp; **Updated:** May 2026 &nbsp;·&nbsp; Source of truth for Claude Code every session.
+
+> **Strategic note (Session 8):** the user committed to PATH C — full DecisionOS as system of record (12–18 month roadmap). See §19 for the tier breakdown that drives every following session.
+
+### Session 10 deltas (v0.10 → v0.11) — 22 commits · 350/350 tests
+
+- **PRD §23 Audit Engine landed end-to-end:**
+  - `core/audit/{schema,engine,store,alerts,pii_log}.py` + 4 checkers (compliance, security, ethics, fairness).
+  - `schema.sql` (`audit_records` / `audit_access_log` / `audit_flags`) + `PostgresAuditStore` class (tests stay on InMemory).
+  - `atomic_tool` gate: `AuditRecord` written between `trace_write` and `mode_route` — PRD §23.9 `audit_record_required_before_writeback`.
+  - System-wide audit input reads (`Applicant` + `ComplianceRecord` fetched via resolver, not bundle, so consent + protected attrs are visible to every decision regardless of read perms).
+  - Alert sink: `AlertSink` Protocol + `InMemoryAlertSink` + `LoggingAlertSink`. `AuditEngine` fires synchronously on FAIL. PRD §23.9 `audit_fail_alerts_compliance_immediately` ✓.
+  - Store-level PII logging: `LendingContextStore.get()` instrumented with `PIIAccessLog`. PRD §23.9 `pii_access_always_logged` ✓.
+- `core/audit/reports/` — six generators per PRD §23.7 (HMDA monthly, fair_lending quarterly with EEOC 4/5, ai_trail weekly, security daily, bias weekly, overrides weekly).
+- `core/audit/adverse_action.py` — ECOA / FCRA §615 notice generator with 13 canonical reason codes. `GET /audit/{id}/adverse-action`. PRD §19 TIER 4 ✓.
+- `core/audit/export.py` — streaming CSV (34-col frozen header) + JSONL. `GET /audit/export.csv` + `/audit/export.jsonl`. PRD §19 TIER 4 ✓.
+- `core/trace/outcome_tracker.py` — STEP 12 closed. `OutcomeType` (7 canonical), `OutcomeRecord` append-only, `DecisionOutcomeCorrelation` + `correlate()`. `POST /outcomes` + `GET .../correlate` API.
+- UI: `/ui/audit/flags` index + `/ui/audit/{id}` detail with rose adverse-action alert. Embedded audit panel on decision detail and persona workbench focused-app right column.
+- `domains/lending/synthetic/` — deterministic factory generating diverse applicants (4 segments, 7 states, 4 loan types) with audit-violation overlays (`consent_missing` / `protected_attr_leak` / `no_disclosure`). Field names aligned with personas' bundle reads. Smoke (`scripts/smoke_audit_reports.py`) shows realistic outcome distribution across 24 synthetic applicants.
+- **Tests: 350/350 (~6s)** across 20 modules covering audit engine, store, alerts, PII log, reports, adverse action, export, outcome tracker, UI panels.
+
+### Session 9 deltas (v0.8 → v0.10)
+
+- STREAM C phase 1+2+3 — `Policy` / `PolicyVersion` Type-2 ObjectTypes, `PolicyStore` facade, `decisions.yaml` seeder, FHA demo overlay, async `PolicyEvaluator` with `policy_version_id` stamping, `agency_chain` derivation from `loan_type`. Every trace now stamps `policy_version_id` + `policy_chain`.
+- STREAM A — Per-persona workbench UI live (12 routes, KPI strip, queue/recently-completed split with outcome+queued+risk pills, Approve/Decline/Request-evidence with queue dequeue).
+- STREAM B — 7 seed scenarios (4 hard-rule + FHA + jumbo + VA; FHA produces 2-entry `policy_chain` end-to-end).
+- STREAM E v0 — Knowledge Context Layer landed: `Document` + `Claim` ObjectTypes, `KnowledgeStore` facade, `Retriever` Protocol + `MetadataRetriever`, `doc_type` matrix in `knowledge_base.json`, `bundle.claims` wired through `ContextBuilder` + `AtomicTool`, `DecisionTrace.claim_provenance` frozen evidence chain. Architecture rationale (locked): EDMS + claim extraction is enough at any scale for per-loan retrieval; vectors are STREAM E2 for cross-corpus workloads only.
+- UI surfacing: `/ui/policies` (index + version detail with boundary clauses), `/ui/applications/{id}/documents` + `/ui/documents/{id}` (per-app + single-doc inspection), `/ui/claims/pending` (verify/reject queue), `/ui/queue` (open + resolved this session). Clickable `policy_version_id` and `source_doc_id` throughout.
+- `HumanQueue.resolve()` + `HumanQueueResolution` — Approve/Decline now dequeue with audit receipts. PRD §19 TIER 3 item complete.
+- TIER 1 `tests/` — landed 227 stdlib-only tests across 13 modules; Session 10 grew this to **350 across 20 modules**. Run via `scripts/run_tests.py`.
+- Resolver bug fix — `_default_resolver` now filters Applicant-bound entities (`FraudProfile` / `CreditProfile` / `IncomeProfile` / `Applicant`) by `applicant_id` derived from the Application; previously leaked across applications when scenarios shared a Platform.
+- `PolicyEvaluator` hard-rule ordering fix — `fraud_block_stops_pipeline` and `compliance_block_stops_closing` now check before the generic `upstream_block_propagates_to_dependents`, so `trace.policy_reasons` names the specific PRD §5 rule.
 
 ---
 
@@ -836,6 +786,24 @@ decision-os/
 │   │   │                                       PostgresAuditStore.
 │   │   │                                       Append-only; duplicate
 │   │   │                                       audit_id raises.
+│   │   ├── alerts.py              ✅ EXISTS — AlertSink Protocol +
+│   │   │                                       InMemoryAlertSink +
+│   │   │                                       LoggingAlertSink. Fires
+│   │   │                                       synchronously on FAIL.
+│   │   ├── pii_log.py             ✅ EXISTS — PII_FIELDS + PIIAccessEntry +
+│   │   │                                       PIIAccessLog Protocol +
+│   │   │                                       InMemoryPIIAccessLog +
+│   │   │                                       detect_pii_fields. Wires into
+│   │   │                                       LendingContextStore.get().
+│   │   ├── adverse_action.py      ✅ EXISTS — ECOA / FCRA §615 notice
+│   │   │                                       generator. 13 canonical
+│   │   │                                       reason codes,
+│   │   │                                       is_adverse_action() gate,
+│   │   │                                       generate_notice().
+│   │   ├── export.py              ✅ EXISTS — streaming CSV (34-col frozen
+│   │   │                                       header) + JSONL. Filters by
+│   │   │                                       decision_type / status /
+│   │   │                                       after / before.
 │   │   ├── schema.sql             ✅ EXISTS — audit_records (append-only,
 │   │   │                                       supersedes_audit_id self-
 │   │   │                                       FK), audit_access_log,
@@ -958,6 +926,16 @@ decision-os/
 │           └── va/                ✅ Session 9 — military, agency_chain helper
 │                                                returns [lender_overlay, va]
 │                                                (no VA overlay seeded yet)
+│       └── synthetic/              ✅ Session 10 — deterministic factory:
+│           ├── __init__.py                          build_synthetic_applicants(n,
+│           └── factory.py                           seed=42) + inject_into_platform.
+│                                                    4 segments × 7 states × 4 loan
+│                                                    types + audit-violation overlays
+│                                                    (consent_missing /
+│                                                    protected_attr_leak /
+│                                                    no_disclosure). 5 EDMS docs
+│                                                    per profile (W-2, paystub,
+│                                                    1040, ID, appraisal).
 │
 ├── docs/
 │   └── PRD.md                     ✅ EXISTS — this file
@@ -1042,11 +1020,11 @@ decision-os/
 │   │                                              2-entry policy_chain on ltv;
 │   │                                              jumbo/va also exercise the chain
 │   └── run_tests.py               ✅ Session 9 — TIER 1 unittest runner.
-│                                                  227 tests across 13 modules,
-│                                                  ~2.6s. Stdlib-only. Add new
+│                                                  350 tests across 20 modules,
+│                                                  ~6s. Stdlib-only. Add new
 │                                                  modules to TEST_MODULES.
 
-├── tests/                         ✅ Session 9 — TIER 1 first wave done
+├── tests/                         ✅ TIER 1 — 350/350 (Sessions 9–10)
 │   ├── core/
 │   │   ├── context_store/test_in_memory.py     (9)
 │   │   ├── policy_engine/
@@ -1055,15 +1033,23 @@ decision-os/
 │   │   │   ├── test_seeder.py                   (10)
 │   │   │   └── test_evaluator.py                (17)
 │   │   ├── decision_agents/test_atomic_tool.py  (15+3)
-│   │   ├── trace/test_reflection.py             (14)
+│   │   ├── trace/
+│   │   │   ├── test_reflection.py               (14)
+│   │   │   └── test_outcome_tracker.py          (Session 10)
 │   │   ├── knowledge/
 │   │   │   ├── test_store.py                    (16)
 │   │   │   └── test_retriever.py                (10)
+│   │   ├── audit/                                ✅ Session 10
+│   │   │   ├── test_engine.py                   (29)
+│   │   │   ├── test_reports.py                  (14)
+│   │   │   ├── test_adverse_action.py
+│   │   │   └── test_pii_log.py
 │   │   └── simulation/test_replayer.py          (17)
-│   ├── api/test_routes.py                       (13)
-│   ├── ui/test_views.py                         (40)
+│   ├── api/test_routes.py                       (13 + 9 audit)
+│   ├── ui/test_views.py                         (40 + 4 audit)
 │   └── domains/lending/
-│       ├── test_seed_scenarios.py               (15)
+│       ├── test_seed_scenarios.py               (15 + 4 audit)
+│       ├── test_synthetic.py                    (10) ✅ Session 10
 │       └── personas/test_personas_offline.py    (14)
 │
 ├── CONTEXT.md                     ✅ EXISTS — session history
@@ -1178,7 +1164,8 @@ decision-os/
                                           downstream-impact)
 
      SESSION 9 — STREAMs A, B (7 scenarios), C (all 3 phases), E v0 + UI surface,
-                  TIER 1 tests (227 tests / 13 modules)
+                  TIER 1 tests first wave (227 tests / 13 modules; Session 10
+                  grew to 350/20)
         STREAM A — Per-persona workbench
           ui/routes.py                — /ui/personas index + per-decision route
           ui/templates/persona_*.html — header tabs + KPI strip + queue or
@@ -1217,8 +1204,10 @@ decision-os/
             Human queue / Pending claims / Health / API docs.
         HumanQueue.resolve() + HumanQueueResolution + find_open —
           PRD §19 TIER 3 item complete (was flagged for that tier).
-        TIER 1 tests/ — 227 stdlib-only tests across 13 modules.
-          Run via scripts/run_tests.py (~2.6s).
+        TIER 1 tests/ — 227 stdlib-only tests across 13 modules at end
+          of Session 9. Session 10 added audit + outcome_tracker +
+          synthetic suites bringing it to 350/350 across 20 modules.
+          Run via scripts/run_tests.py (~6s).
           Bug-catchers landed during writing:
             - PolicyEvaluator hard-rule ordering (specific rules before
               generic upstream_block_propagates).
@@ -1243,21 +1232,24 @@ decision-os/
     ~4-6 weeks of work; complete a tier before opening the next.
   ─────────────────────────────────────────────────────────────────
 
-  TIER 1 — FOUNDATION (227 tests landed; this tier substantially complete)
-    14  tests/  ✅ DONE                227 tests across 13 modules:
+  TIER 1 — FOUNDATION (350/350 tests landed; this tier substantially complete)
+    14  tests/  ✅ DONE                350 tests across 20 modules:
                                        - core (context_store, policy_engine,
                                          decision_agents, trace, knowledge,
-                                         simulation): 142 tests
-                                       - api/test_routes.py: 13
-                                       - ui/test_views.py: 40
+                                         simulation, audit): grew to 240+
+                                         after Session 10 audit suites.
+                                       - api/test_routes.py: 13 + 9 audit
+                                       - ui/test_views.py: 40 + 4 audit
                                        - domains/lending: 29 (seed_scenarios
-                                         + 12-persona offline)
-                                       Run: scripts/run_tests.py (~2.6s).
-                                       Stdlib-only unittest. Two bug-catchers
+                                         + 12-persona offline) + 10 synthetic
+                                         + 4 audit-gate scenario assertions.
+                                       Run: scripts/run_tests.py (~6s).
+                                       Stdlib-only unittest. Bug-catchers
                                        fired during writing — PolicyEvaluator
                                        hard-rule ordering + resolver applicant-
-                                       id filter — both fixed and locked down
-                                       by tests.
+                                       id filter + HMDA data-source default +
+                                       protected-attr scan scope — all fixed
+                                       and locked down by tests.
         Real-backend verification    Check status of routine
                                      trig_013QhFbYJaViJfNybCbr3KUX (May 3
                                      scheduled run). If the PR landed,
@@ -1455,8 +1447,6 @@ decision-os/
       SelfReviewError can never fire
     - Borrower portal: separate frontend project consuming the API,
       not in this repo
-
-  8  core/audit/  ✅ DONE Session 10. AuditEngine + 4 checkers + schema.sql + AuditStore (InMemory + Postgres). atomic_tool gate enforces audit_record_required_before_writeback. /audit API + /ui/audit/* surface + 6 reports per §23.7. Synthetic factory drives 24-applicant smoke for reports validation.
 ```
 
 ---
@@ -1480,72 +1470,74 @@ Do not assume anything else exists.
 Do not ask what the project is.
 Read the files and know.
 
-STEPS 1-11 are complete (sessions 3, 4, 5, 6):
-  ✅ STEP 1  core/normalizer/models.py
-  ✅ STEP 2  core/ontology/object_types.py
-  ✅ STEP 3  core/context_store/{base,lending,redis_cache,postgres_store,
-             context_builder}.py + schema.sql
-  ✅ STEP 4  core/connectors/{base,mock_csv,mock_http}.py
-             + correlation_id / request_id on BaseEvent
-  ✅ STEP 5  core/decision_agents/{base,atomic_tool,mode_router}.py
-             + core/trace/trace_writer.py
-  ✅ STEP 6  core/execution/dag_executor.py
-  ✅ STEP 7  api/{deps,ingest,routes,main}.py
-  ✅ STEP 8  core/trace/reflection.py
-             — AgentLearning + LearningStore + ReflectionService.capture/recall
-             — TraceWriter.attach_human_review side-channel
-  ✅ STEP 9  domains/lending/personas/ (12 concrete DecisionAgent subclasses)
-  ✅ STEP 10 domains/lending/seed_events/{happy_path,fraud_block,
-             contamination,compliance_block}/ + runner.py
-  ✅ STEP 11 ui/{__init__.py,views.py,routes.py,templates/}
-             — local FastAPI + Jinja2 + HTMX + Tailwind via CDN
-             — mounted at / by api/main.py via mount_ui flag
-             — lifespan auto-replays 4 scenarios on boot when seed_demo_data=True
-             — 5 GET routes + HTMX-driven override
-             — run: `uvicorn api.main:get_app --factory --reload`
-  ✅ ALSO   core/policy_engine/loader.py (DecisionsSpec)
+End of Session 10 — repo state (350/350 tests, ~6s):
 
-Verified end-to-end (in-memory backends):
-  - All 4 seed scenarios replay via MockCSVConnector + MockHTTPConnector,
-    DAG runs all 12 decisions, hard rules fire correctly:
-      happy_path        — full pipeline runs (recommend on human-approval modes
-                          since no human is in the loop in tests).
-      fraud_block       — fraud_screening BLOCK halts pipeline,
-                          7 dependents skipped with fraud_block_stops_pipeline.
-      contamination     — income_verification confidence 0.50 below 0.75
-                          → contamination_guard fires on dti_calculation.
-      compliance_block  — compliance_check BLOCK propagates to closing_readiness
-                          via compliance_block_stops_closing.
-  - POST /override (API) and /ui/.../override (HTMX) both call
-    ReflectionService.capture and produce identical AgentLearning records.
-  - UI smoke (TestClient): / lists 4 apps, /ui/applications/{id} renders
-    12-decision DAG, decision detail shows bundle + journal + policy + critic
-    + override workbench, /ui/queue lists 16 queued items, override POST
-    returns AgentLearning swap, reload shows attached review, same-outcome
-    submission renders inline error.
+  Core platform (STEPS 1–13 + 14 + STEP 12):
+    ✅ STEP 1  core/normalizer/                    typed events + entities
+    ✅ STEP 2  core/ontology/object_types.py       12 object types incl. Policy /
+                                                   PolicyVersion / Document / Claim
+    ✅ STEP 3  core/context_store/                 Redis + Postgres + ContextBuilder
+    ✅ STEP 4  core/connectors/                    push/pull split + mock fixtures
+    ✅ STEP 5  core/decision_agents/               atomic_tool + mode_router
+    ✅ STEP 6  core/execution/dag_executor.py      wave executor + InMemoryEventBus
+    ✅ STEP 7  api/                                FastAPI surface incl. /audit/*
+    ✅ STEP 8  core/trace/reflection.py            AgentLearning + recall
+    ✅ STEP 9  domains/lending/personas/           12 concrete DecisionAgent subclasses
+    ✅ STEP 10 domains/lending/seed_events/        7 scenarios (4 hard-rule + FHA/
+                                                   jumbo/VA loan-type)
+    ✅ STEP 11 ui/                                 FastAPI + Jinja2 + HTMX + Tailwind
+    ✅ STEP 12 core/trace/outcome_tracker.py       OutcomeType + correlate()
+    ✅ STEP 13 core/simulation/replayer.py         point-in-time replay
+    ✅ STEP 14 tests/                              350 tests across 20 modules
 
-Real-backend verification (STEPS 4-6 only) was scheduled for
-Sun May 3 2026 9am PT (routine trig_013QhFbYJaViJfNybCbr3KUX). If that
-PR has landed, review it; otherwise check the routine status link.
-STEPS 7-11 are NOT in scope of that scheduled run — separate
-verification needed when ready.
+  Audit Engine (PRD §23, Session 10):
+    ✅ core/audit/{schema,engine,store,alerts,pii_log,
+                   compliance_checker,security_checker,
+                   ethics_checker,fairness_checker,
+                   adverse_action,export}.py + reports/
+    ✅ atomic_tool gate: AuditRecord written between trace_write and mode_route
+    ✅ /audit API + /ui/audit/* surface
+    ✅ Six §23.7 reports: HMDA / fair_lending (EEOC 4/5) / ai_trail / security /
+       bias / overrides
+    ✅ ECOA / FCRA §615 adverse-action notice generator
+    ✅ CSV (34-col frozen) + JSONL streaming export
 
-Build next, in this order:
-  STEP 14 tests/                    Persistent test suite — only
-                                    context_store has scaffolding today;
-                                    cover api/, personas/, seed_events,
-                                    ui/ view-models. Three bugs in the
-                                    last two sessions would have been
-                                    single failing tests.
-  --      real Anthropic calls      Personas have the path
-                                    (use_anthropic=True, cache_control on
-                                    system block) but unproven. Boot the UI
-                                    with one persona on the LLM path, see
-                                    journal side-by-side with offline path.
-  STEP 12 core/trace/outcome_tracker.py   Post-decision outcome scoring +
-                                    live A/B comparisons.
-  STEP 13 core/simulation/replayer.py     Replay traces at point-in-time
-                                    for backtesting personas.
+  Policies as Type-2 SCD (Session 9):
+    ✅ Policy + PolicyVersion ObjectTypes; PolicyStore facade; decisions.yaml seeder
+    ✅ Async PolicyEvaluator stamps policy_version_id + policy_chain on every trace
+    ✅ FHA demo overlay produces 2-entry chain end-to-end on ltv_assessment
+
+  Knowledge Context Layer v0 (Session 9):
+    ✅ Document + Claim ObjectTypes; KnowledgeStore facade
+    ✅ Retriever Protocol + MetadataRetriever (doc_type matrix in knowledge_base.json)
+    ✅ ContextBundle.claims wired through ContextBuilder + AtomicTool
+    ✅ DecisionTrace.claim_provenance frozen at decision time
+
+  Real-backend verification (Postgres + Redis) — schema + classes exist; tests stay
+  on InMemory. Routine trig_013QhFbYJaViJfNybCbr3KUX (May 3 2026) was scheduled —
+  check status before doing it manually.
+
+Build next — pick from PRD §19 by tier:
+  TIER 1 remainders   Real-backend swap; async pass on ui/views.py;
+                      Postgres-aware resolver; quarterly FFIEC submission scheduling.
+  TIER 2              First real PushConnector (borrower portal) +
+                      PullConnector (Experian) + Encompass/Blend writeback skeleton.
+  TIER 2.5 STREAM E2  Real EDMS adapter + OCR (Textract/Document AI/Claude Vision) +
+                      claim extractor + document upload UI + pgvector retriever.
+  TIER 3              API auth (OIDC/OAuth2/API key) + multi-tenancy + dual-control.
+  TIER 5              Real critic agent (Anthropic-backed) + observability + DR.
+  TIER 6              Real Anthropic persona calls; send_back outcome;
+                      core/semantic_layer/flow.py.
+
+How to run locally:
+  uvicorn api.main:get_app --factory --reload --port 8000
+  → http://127.0.0.1:8000/ui/workbench   (primary entry)
+
+How to run tests + smokes:
+  python -X utf8 scripts/run_tests.py
+  python -X utf8 scripts/smoke_replayer.py
+  python -X utf8 scripts/smoke_audit_reports.py
+  python -X utf8 scripts/smoke_persona_workbench.py
 ```
 
 ---
@@ -1582,7 +1574,7 @@ Build next, in this order:
 
 ---
 
-## 23. Audit Engine
+## 23. AUDIT ENGINE
 
 ### 23.1 What it is
 
@@ -1590,6 +1582,7 @@ Every decision that passes through the pipeline is automatically evaluated by th
 
 ### 23.2 Pipeline position
 
+```
 DecisionTrace
      │
      ▼
@@ -1606,9 +1599,11 @@ Append-only. Never deleted.
                ▼
 Audit Reports + Dashboards
 Underwriter workbench · Compliance reports · Scheduled exports · Regulator submissions
+```
 
 ### 23.3 AuditRecord schema
 
+```
 AuditRecord {
 
   DECISION BLOCK
@@ -1652,9 +1647,11 @@ AuditRecord {
   disparate_impact_flag:   bool        true if decision rate diverges by segment
   human_reviewed:          bool        whether a human reviewed AI reasoning before action
 }
+```
 
 ### 23.4 Four audit checks
 
+```
 CHECK 1 — COMPLIANCE
   Evaluates: regulation_tags, consent_status, disclosure timing, data source permissions
   Fails if:  consent missing, required disclosure not sent, unpermitted data source used
@@ -1677,52 +1674,69 @@ CHECK 4 — FAIRNESS
   Evaluates: approval rates across credit bands, geographies, product types
   Flags if:  any segment deviates > 15% from overall rate without credit-based explanation
   Produces:  fairness_flags[] + disparate_impact_flag
+```
 
 ### 23.5 Audit check outcomes
 
+```
 pass  → AuditRecord written. No action required.
 warn  → AuditRecord written. Flagged for compliance team review.
 fail  → AuditRecord written. Decision flagged. Compliance team alerted immediately.
+```
 
 ### 23.6 Audit Store tables
 
+```
 audit_records      One row per decision. Append-only. Never deleted.
 audit_access_log   Every access to an audit record. Who, when, why.
 audit_flags        Active warnings and failures. Resolved when cleared by compliance.
 audit_reports      Generated report metadata + S3 key to stored report file.
 audit_schedules    Report generation schedules + distribution lists.
+```
 
 ### 23.7 Report types
 
+```
 HMDA compliance report        Monthly    All HMDA fields + decision rates by geography
 Fair lending analysis         Quarterly  ECOA/FHA disparate impact across protected classes
 AI decision audit trail       Weekly     Every automated decision with full context + policy
 Security access report        Daily      PII access log, permissions used, anomalies flagged
 Bias and fairness report      Weekly     Bias scores, fairness flags, disparate impact rates
 Override and rollback report  Weekly     Human overrides, reason codes, agent learning log
+```
 
 ### 23.8 File structure
 
+All files below shipped in Session 10 (PRD §17 has the full annotated tree).
+
+```
 core/audit/
   __init__.py
-  engine.py              TODO — orchestrates 4 checks in parallel, writes AuditRecord
-  compliance_checker.py  TODO — regulation tags, consent, disclosure timing
-  security_checker.py    TODO — access log, anomaly detection, velocity check
-  ethics_checker.py      TODO — bias score, protected attribute exclusion log
-  fairness_checker.py    TODO — disparate impact, segment approval rate analysis
-  schema.py              TODO — AuditRecord Pydantic v2 model + all sub-models
-  store.py               TODO — writes to audit_records Postgres table
-  schema.sql             TODO — audit_records, audit_flags, audit_access_log tables
+  engine.py              ✅ orchestrates 4 checks in parallel, writes AuditRecord
+  compliance_checker.py  ✅ regulation tags, consent, disclosure timing
+  security_checker.py    ✅ access log, anomaly detection, velocity check
+  ethics_checker.py      ✅ bias score, protected attribute exclusion log
+  fairness_checker.py    ✅ disparate impact, segment approval rate analysis
+  schema.py              ✅ AuditRecord Pydantic v2 model + all sub-models
+  store.py               ✅ InMemoryAuditStore + PostgresAuditStore
+  alerts.py              ✅ AlertSink Protocol + InMemory + Logging variants
+  pii_log.py             ✅ PII_FIELDS + PIIAccessLog instrumented on store.get()
+  adverse_action.py      ✅ ECOA / FCRA §615 notice generator (13 reason codes)
+  export.py              ✅ streaming CSV (34-col frozen) + JSONL
+  schema.sql             ✅ audit_records / audit_access_log / audit_flags
   reports/
-    hmda.py              TODO
-    fair_lending.py      TODO
-    ai_trail.py          TODO
-    security.py          TODO
-    bias.py              TODO
-    overrides.py         TODO
+    base.py              ✅ Report model + filter_by_window
+    hmda.py              ✅ Monthly. by outcome / state / decision_type
+    fair_lending.py      ✅ Quarterly. EEOC 4/5 ratio for disparate impact
+    ai_trail.py          ✅ Weekly. Per-decision listing
+    security.py          ✅ Daily. PII counts + anomalies
+    bias.py              ✅ Weekly. Score distribution + fairness flags
+    overrides.py         ✅ Weekly. human_reviewed roster + review rate
+```
 
 ### 23.9 Hard rules — Audit Engine
 
+```
 audit_record_required_before_writeback
   No decision result written to any external system until AuditRecord is created.
   Enforced in execution layer — same gate as trace_required. Non-negotiable.
@@ -1743,6 +1757,7 @@ protected_attributes_excluded_by_default
   race, sex, national_origin, religion, marital_status, age are excluded from all
   agent context unless explicitly permitted by compliance policy and logged in
   protected_attrs_used field of the AuditRecord.
+```
 
 ---
 
