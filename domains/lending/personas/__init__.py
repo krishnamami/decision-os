@@ -10,6 +10,7 @@ from .closing_readiness import ClosingAgent
 from .compliance_check import ComplianceAgent
 from .credit_assessment import CreditRiskAgent
 from .dti_calculation import DTICalculationAgent
+from .employment_reconciliation import EmploymentReconciliationAgent
 from .fraud_screening import FraudDetectionAgent
 from .income_verification import IncomeVerificationAgent
 from .lead_scoring import LeadQualificationAgent
@@ -22,18 +23,19 @@ from .underwriting_decision import SeniorUnderwritingAgent
 # decision_id → persona class. Registered alongside decisions.yaml so a
 # missing persona is loud.
 LENDING_PERSONA_CLASSES: dict[str, type[LendingPersona]] = {
-    "lead_scoring":          LeadQualificationAgent,
-    "income_verification":   IncomeVerificationAgent,
-    "credit_assessment":     CreditRiskAgent,
-    "fraud_screening":       FraudDetectionAgent,
-    "compliance_check":      ComplianceAgent,
-    "dti_calculation":       DTICalculationAgent,
-    "ltv_assessment":        LTVAssessmentAgent,
-    "product_eligibility":   ProductEligibilityAgent,
-    "rate_pricing":          PricingAgent,
-    "underwriting_decision": SeniorUnderwritingAgent,
-    "approval_routing":      WorkflowRoutingAgent,
-    "closing_readiness":     ClosingAgent,
+    "lead_scoring":              LeadQualificationAgent,
+    "employment_reconciliation": EmploymentReconciliationAgent,
+    "income_verification":       IncomeVerificationAgent,
+    "credit_assessment":         CreditRiskAgent,
+    "fraud_screening":           FraudDetectionAgent,
+    "compliance_check":          ComplianceAgent,
+    "dti_calculation":           DTICalculationAgent,
+    "ltv_assessment":            LTVAssessmentAgent,
+    "product_eligibility":       ProductEligibilityAgent,
+    "rate_pricing":              PricingAgent,
+    "underwriting_decision":     SeniorUnderwritingAgent,
+    "approval_routing":          WorkflowRoutingAgent,
+    "closing_readiness":         ClosingAgent,
 }
 
 
@@ -80,6 +82,7 @@ __all__ = [
     "ComplianceAgent",
     "CreditRiskAgent",
     "DTICalculationAgent",
+    "EmploymentReconciliationAgent",
     "FraudDetectionAgent",
     "IncomeVerificationAgent",
     "LeadQualificationAgent",

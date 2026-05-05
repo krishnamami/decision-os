@@ -71,6 +71,51 @@ decisions:
     sla_seconds: 5
     trace_required: true
 
+  - id: employment_reconciliation
+    name: Employment reconciliation
+    atomic_tool: employment_reconciliation_tool
+    context_window_days: 730     # 24-month continuity window
+    type: independent
+    description: >
+      Joins multi-source verification attempts (TWN, Argyle, Plaid,
+      payroll feeds, manual VOE, tax transcripts) into a continuous
+      employment timeline for the applicant. Produces
+      reconciliation_status (auto_verified | partial | conflict |
+      missing) plus per-employer EmploymentRecord projections.
+      Detects employer-name divergence across providers, comp drift
+      vs stated, tenure mismatch vs stated, and continuity-coverage
+      gaps. Manual VOE / tax transcript pull / gap letter all queue
+      from this decision when reconciliation falls short of policy.
+      Initially shadow mode — runs alongside income_verification so
+      the gap surfaces in traces without changing the existing
+      auto-decision flow.
+    own_data:
+      - verification_attempts
+    shared_data:
+      - application_record
+      - customer_profile
+    persona: employment_reconciliation_agent
+    mode: shadow
+    risk_level: medium
+    owner_team: underwriting
+    boundary:
+      automate_if:
+        - reconciliation_status == auto_verified
+        - continuity_coverage_pct >= 0.95
+        - max_gap_days <= 30
+        - employer_name_match_confidence >= 0.90
+        - stated_vs_verified_drift_pct <= 0.10
+      recommend_if:
+        - reconciliation_status == partial
+        - continuity_coverage_pct >= 0.80
+      escalate_if:
+        - reconciliation_status == conflict
+        - continuity_coverage_pct < 0.80
+      block_if:
+        - employer_on_watchlist == true
+    sla_seconds: 60
+    trace_required: true
+
   - id: income_verification
     name: Income verification
     atomic_tool: income_verification_tool
@@ -518,6 +563,7 @@ decisions:
 execution_order:
   parallel_independent:
     - lead_scoring
+    - employment_reconciliation
     - income_verification
     - credit_assessment
     - fraud_screening

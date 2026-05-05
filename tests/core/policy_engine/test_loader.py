@@ -52,8 +52,8 @@ class DecisionsSpecValidationTests(unittest.TestCase):
         path = PROJECT_ROOT / "domains" / "lending" / "decisions.yaml"
         spec = load_spec(path)
         self.assertEqual(spec.domain, "lending")
-        self.assertEqual(len(spec.decisions), 12)
-        self.assertEqual(len(spec.decision_index), 12)
+        self.assertEqual(len(spec.decisions), 13)
+        self.assertEqual(len(spec.decision_index), 13)
         # Every lending decision listed in execution_order.
         seen_in_waves = {d for wave in spec.execution_waves for d in wave}
         self.assertEqual(seen_in_waves, set(spec.decision_index.keys()))

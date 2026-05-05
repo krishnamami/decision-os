@@ -234,7 +234,40 @@ class EntityHydrator:
             "verified_at": event.received_at.isoformat(),
         }
         await self._write_shared("IncomeProfile", income_id, value, event, merge=True)
-        return [f"IncomeProfile:{income_id}"]
+
+        # Append-only VerificationAttempt — preserves multi-provider data
+        # that the IncomeProfile merge collapses (last-write-wins). Each
+        # PayrollReceivedEvent carries a unique event_id; key off it so
+        # two feeds land as two distinct rows.
+        attempt_id = f"verify:{applicant_id}:{event.event_id}"
+        attempt_value = {
+            "verification_attempt_id": attempt_id,
+            "applicant_id": applicant_id,
+            "application_id": event.application_id,
+            "source": "payroll_feed",
+            "source_request_id": (
+                str(event.request_id) if event.request_id is not None else None
+            ),
+            "source_correlation_id": (
+                str(event.correlation_id)
+                if event.correlation_id is not None
+                else None
+            ),
+            "status": "succeeded" if event.verified else "partial",
+            "employer_name_raw": event.employer,
+            "gross_amount": event.gross_amount,
+            "period_start": event.period_start.isoformat(),
+            "period_end": event.period_end.isoformat(),
+            "verified": event.verified,
+            "received_at": event.received_at.isoformat(),
+        }
+        await self._write_shared(
+            "VerificationAttempt", attempt_id, attempt_value, event
+        )
+        return [
+            f"IncomeProfile:{income_id}",
+            f"VerificationAttempt:{attempt_id}",
+        ]
 
     async def _hydrate_credit(
         self, event: BaseEvent, applicant_id: Optional[str]

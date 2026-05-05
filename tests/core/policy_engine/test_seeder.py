@@ -72,11 +72,11 @@ class YamlSeederTests(unittest.IsolatedAsyncioTestCase):
 
         policies, versions = await seed_policies_from_yaml(spec, store)
 
-        self.assertEqual(len(policies), 12)
-        self.assertEqual(len(versions), 12)
-        self.assertEqual(_count_active(durable, POLICY_ENTITY_TYPE), 12)
+        self.assertEqual(len(policies), 13)
+        self.assertEqual(len(versions), 13)
+        self.assertEqual(_count_active(durable, POLICY_ENTITY_TYPE), 13)
         self.assertEqual(
-            _count_active(durable, POLICY_VERSION_ENTITY_TYPE), 12
+            _count_active(durable, POLICY_VERSION_ENTITY_TYPE), 13
         )
 
     async def test_every_decision_gets_lender_overlay_policy(self):

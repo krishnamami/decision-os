@@ -58,7 +58,7 @@ class HealthTests(_SeededAppMixin, unittest.TestCase):
         body = r.json()
         self.assertEqual(body["status"], "ok")
         self.assertEqual(body["domain"], "lending")
-        self.assertEqual(body["agents"], "12")
+        self.assertEqual(body["agents"], "13")
         # 8 seed scenarios = 8 applications.
         self.assertEqual(body["applications"], "8")
 
@@ -119,11 +119,11 @@ class TraceReadTests(_SeededAppMixin, unittest.TestCase):
         self.assertEqual(r.status_code, 404)
 
     def test_list_traces_for_known_application(self):
-        # happy_path produces 12 traces.
+        # happy_path produces 13 traces (12 lending + employment_reconciliation).
         r = self.client.get("/applications/app_happy/traces")
         self.assertEqual(r.status_code, 200)
         traces = r.json()
-        self.assertEqual(len(traces), 12)
+        self.assertEqual(len(traces), 13)
 
     def test_get_trace_round_trip(self):
         # Pick any trace from the list endpoint, then GET it by id.
@@ -263,7 +263,7 @@ class RunApplicationTests(_SeededAppMixin, unittest.TestCase):
         body = r.json()
         self.assertEqual(body["application_id"], "app_happy")
         self.assertFalse(body["halted"])
-        self.assertEqual(len(body["completed"]), 12)
+        self.assertEqual(len(body["completed"]), 13)
 
 
 class AuditRouteTests(_SeededAppMixin, unittest.TestCase):
@@ -275,8 +275,8 @@ class AuditRouteTests(_SeededAppMixin, unittest.TestCase):
         r = self.client.get("/audit/application/app_happy")
         self.assertEqual(r.status_code, 200, r.text)
         records = r.json()
-        # 12 decisions → 12 audit records.
-        self.assertEqual(len(records), 12)
+        # 13 decisions → 13 audit records (12 lending + employment_reconciliation).
+        self.assertEqual(len(records), 13)
         decision_types = {r["decision_type"] for r in records}
         for did in (
             "lead_scoring", "credit_assessment", "fraud_screening",

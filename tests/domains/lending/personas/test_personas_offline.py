@@ -107,6 +107,7 @@ def _bundle(decision_id: str, **overrides) -> ContextBundle:
                 "applicant_id":     "cust_test",
                 "application_id":   "app_test",
                 "stated_income":    120000,
+                "stated_employer":  "BigCo",
                 "verified_income":  120000,
                 "employment_type":  "salaried",
                 "payroll_verified": True,
@@ -143,6 +144,38 @@ def _bundle(decision_id: str, **overrides) -> ContextBundle:
                 "title_clear":      True,
                 "final_conditions_checklist": {"all_cleared": True},
                 "insurance_binder": True,
+            },
+        },
+        # employment_reconciliation needs at least one VerificationAttempt
+        # in the bundle to produce a non-"missing" status. Two attempts
+        # with matching employer name + window so the offline path
+        # produces a clean auto_verified outcome.
+        "VerificationAttempt": {
+            "verify_test_twn": {
+                "verification_attempt_id": "verify_test_twn",
+                "applicant_id":   "cust_test",
+                "application_id": "app_test",
+                "source":         "twn",
+                "status":         "succeeded",
+                "employer_name_raw": "BIGCO INC",
+                "gross_amount":   120000,
+                "period_start":   "2024-04-01T00:00:00",
+                "period_end":     "2026-04-01T00:00:00",
+                "verified":       True,
+                "received_at":    datetime(2026, 4, 1).isoformat(),
+            },
+            "verify_test_argyle": {
+                "verification_attempt_id": "verify_test_argyle",
+                "applicant_id":   "cust_test",
+                "application_id": "app_test",
+                "source":         "argyle",
+                "status":         "succeeded",
+                "employer_name_raw": "BigCo",
+                "gross_amount":   120000,
+                "period_start":   "2024-04-01T00:00:00",
+                "period_end":     "2026-04-01T00:00:00",
+                "verified":       True,
+                "received_at":    datetime(2026, 4, 1).isoformat(),
             },
         },
     }
@@ -278,6 +311,12 @@ def _bundle(decision_id: str, **overrides) -> ContextBundle:
 _HAPPY_PATH_EXPECTATIONS: dict[str, dict] = {
     "lead_scoring":          {"keys": ["intent_score"],
                               "outcomes": {DecisionOutcome.ALLOW, DecisionOutcome.RECOMMEND}},
+    "employment_reconciliation": {
+        "keys": ["reconciliation_status", "continuity_coverage_pct",
+                 "employer_records"],
+        "outcomes": {DecisionOutcome.ALLOW, DecisionOutcome.RECOMMEND,
+                     DecisionOutcome.ESCALATE},
+    },
     "income_verification":   {"keys": ["verified_income", "income_confidence_score"],
                               "outcomes": {DecisionOutcome.ALLOW, DecisionOutcome.RECOMMEND}},
     "credit_assessment":     {"keys": ["credit_score", "credit_band"],
@@ -339,6 +378,7 @@ class PersonaOfflineHappyPathTests(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_lead_scoring(self):           await self._exercise("lead_scoring")
+    async def test_employment_reconciliation(self): await self._exercise("employment_reconciliation")
     async def test_income_verification(self):    await self._exercise("income_verification")
     async def test_credit_assessment(self):      await self._exercise("credit_assessment")
     async def test_fraud_screening(self):        await self._exercise("fraud_screening")
@@ -354,8 +394,9 @@ class PersonaOfflineHappyPathTests(unittest.IsolatedAsyncioTestCase):
 
 class PersonaRegistryTests(unittest.TestCase):
 
-    def test_registry_has_12_personas(self):
-        self.assertEqual(len(LENDING_PERSONA_CLASSES), 12)
+    def test_registry_has_13_personas(self):
+        # 12 lending decisions + employment_reconciliation (Session 11).
+        self.assertEqual(len(LENDING_PERSONA_CLASSES), 13)
 
     def test_each_persona_class_has_decision_id_match(self):
         for decision_id, cls in LENDING_PERSONA_CLASSES.items():

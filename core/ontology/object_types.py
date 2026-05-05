@@ -777,6 +777,135 @@ class Claim(ObjectType):
     ])
 
 
+class VerificationAttempt(ObjectType):
+    """One verification call to an income / employment provider.
+
+    Append-only. Belongs to the Applicant. Captures what a single
+    provider returned at a single point in time — TWN payroll feed,
+    Argyle paystub, Plaid Income deposits, manual VOE letter, tax
+    transcript, etc. The `employment_reconciliation` decision joins
+    multiple attempts into an EmploymentTimeline.
+
+    Critical: a multi-source pipeline must preserve disagreement
+    between providers, not collapse it. IncomeProfile's last-write-wins
+    merge buries that signal; VerificationAttempt is the record that
+    survives the collapse."""
+
+    object_type_id: str = "VerificationAttempt"
+    semantic_definition: str = (
+        "Append-only record of a single verification call to one provider "
+        "(TWN, Argyle, Plaid Income, payroll feed, manual VOE, tax "
+        "transcript). Belongs to the Applicant. The reconciliation "
+        "decision joins these into a continuity timeline."
+    )
+    primary_key: str = "verification_attempt_id"
+    properties: dict[str, str] = Field(default_factory=lambda: {
+        "verification_attempt_id": "string",
+        "applicant_id": "string",
+        "application_id": "string",
+        "source": "enum<twn|argyle|plaid_income|payroll_feed|manual_voe|tax_transcript|bank_deposits|other>",
+        "source_request_id": "string",
+        "source_correlation_id": "string",
+        "status": "enum<succeeded|partial|empty|failed|pending>",
+        "employer_name_raw": "string",
+        "gross_amount": "float",
+        "pay_frequency": "enum<weekly|biweekly|semimonthly|monthly|annual|unknown>",
+        "period_start": "datetime",
+        "period_end": "datetime",
+        "verified": "boolean",
+        "received_at": "datetime",
+        "raw_payload": "object",
+        "error_message": "string",
+    })
+    links: list[Link] = Field(default_factory=lambda: [
+        Link(
+            name="belongs_to",
+            target="Applicant",
+            cardinality=Cardinality.MANY_TO_ONE,
+            direction=LinkDirection.INBOUND,
+            semantic_meaning="The applicant whose employment this attempt verifies.",
+        ),
+        Link(
+            name="scoped_to",
+            target="Application",
+            cardinality=Cardinality.MANY_TO_ONE,
+            direction=LinkDirection.OUTBOUND,
+            semantic_meaning="Application that triggered this verification (for trace, not ownership).",
+        ),
+    ])
+    decisions_that_read_it: list[str] = Field(default_factory=lambda: [
+        "employment_reconciliation",
+        "income_verification",
+        "underwriting_decision",
+    ])
+
+
+class EmploymentRecord(ObjectType):
+    """One employer-employee relationship across a window of time.
+
+    Output of the employment_reconciliation decision. Joins one or
+    more VerificationAttempts that agree on the (employer, applicant,
+    window). Carries a normalized employer name, the corroborating
+    sources, the matched window, and a confidence score.
+
+    Multiple EmploymentRecords per Applicant — current employer + each
+    prior employer, plus self-employment / gig periods. The continuity
+    of these records across a policy-defined window (typically 24
+    months) is what auto-verification depends on."""
+
+    object_type_id: str = "EmploymentRecord"
+    semantic_definition: str = (
+        "Reconciled employer-employee window for an Applicant. Joins "
+        "VerificationAttempts that agree on (employer, applicant, dates) "
+        "and carries the normalized employer name, corroborating sources, "
+        "and match confidence. Multiple records per applicant cover "
+        "current + prior + gig periods."
+    )
+    primary_key: str = "employment_record_id"
+    properties: dict[str, str] = Field(default_factory=lambda: {
+        "employment_record_id": "string",
+        "applicant_id": "string",
+        "application_id": "string",
+        "employer_name_canonical": "string",
+        "employer_name_aliases": "list<string>",
+        "employment_type": "enum<salaried|self_employed|contractor|retired|unemployed|gig|other>",
+        "start_date": "date",
+        "end_date": "date",
+        "is_current": "boolean",
+        "monthly_gross_amount": "float",
+        "annual_gross_amount": "float",
+        "corroborating_sources": "list<string>",
+        "corroborating_attempt_ids": "list<string>",
+        "employer_name_match_confidence": "float",
+        "comp_drift_pct": "float",
+        "tenure_months": "int",
+        "reconciled_at": "datetime",
+        "reconciled_by": "string",
+    })
+    links: list[Link] = Field(default_factory=lambda: [
+        Link(
+            name="belongs_to",
+            target="Applicant",
+            cardinality=Cardinality.MANY_TO_ONE,
+            direction=LinkDirection.INBOUND,
+            semantic_meaning="The applicant who held this employment.",
+        ),
+        Link(
+            name="derived_from",
+            target="VerificationAttempt",
+            cardinality=Cardinality.ONE_TO_MANY,
+            direction=LinkDirection.OUTBOUND,
+            semantic_meaning="Attempts that corroborate this employer-window.",
+        ),
+    ])
+    decisions_that_read_it: list[str] = Field(default_factory=lambda: [
+        "employment_reconciliation",
+        "income_verification",
+        "dti_calculation",
+        "underwriting_decision",
+    ])
+
+
 LENDING_OBJECT_TYPES: dict[str, ObjectType] = {
     cls().object_type_id: cls()
     for cls in (
@@ -792,5 +921,7 @@ LENDING_OBJECT_TYPES: dict[str, ObjectType] = {
         PolicyVersion,
         Document,
         Claim,
+        VerificationAttempt,
+        EmploymentRecord,
     )
 }

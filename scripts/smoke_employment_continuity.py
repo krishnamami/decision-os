@@ -58,8 +58,8 @@ async def main() -> int:
 
     failures += _ok("scenario completed", result.execution is not None)
     failures += _ok(
-        "12 decisions executed",
-        len(result.execution.results) == 12,
+        "13 decisions executed (12 lending + employment_reconciliation)",
+        len(result.execution.results) == 13,
     )
 
     # ── Phase 2: how many PayrollReceived events fired ──────────────────
@@ -150,6 +150,37 @@ async def main() -> int:
         failures += _ok(
             "trace mentions no employer-name discrepancy",
             "employer" not in text_blob,
+        )
+
+    # ── Phase 4b: employment_reconciliation surfaces what IV missed ────
+    print("\n[4b] employment_reconciliation trace — multi-source view")
+    er_traces = [t for t in all_app_traces if t.decision_id == "employment_reconciliation"]
+    failures += _ok("employment_reconciliation trace exists", len(er_traces) == 1)
+    if er_traces:
+        er = er_traces[0]
+        out = er.output_payload or {}
+        print(f"     proposed_outcome              : {er.outcome.value}")
+        print(f"     reconciliation_status         : {out.get('reconciliation_status')}")
+        print(f"     verification_attempts_count   : {out.get('verification_attempts_count')}")
+        print(f"     employer_windows              : {len(out.get('employer_records') or [])}")
+        print(f"     continuity_coverage_pct       : {out.get('continuity_coverage_pct')}")
+        print(f"     max_gap_days                  : {out.get('max_gap_days')}")
+        print(f"     employer_name_match_confidence: {out.get('employer_name_match_confidence')}")
+        print(f"     comp_drift_pct                : {out.get('comp_drift_pct')}")
+        print(f"     manual_voe_required           : {out.get('manual_voe_required')}")
+        # The whole point: with two providers disagreeing on comp, the
+        # reconciliation status should NOT be auto_verified.
+        failures += _ok(
+            "reconciliation_status is partial or conflict (not auto_verified)",
+            out.get("reconciliation_status") in ("partial", "conflict"),
+        )
+        failures += _ok(
+            "two VerificationAttempt rows preserved (multi-provider survives)",
+            (out.get("verification_attempts_count") or 0) >= 2,
+        )
+        failures += _ok(
+            "comp_drift_pct surfaces the $100k vs $92k disagreement (>0)",
+            (out.get("comp_drift_pct") or 0) > 0,
         )
 
     # ── Phase 5: EDMS contains evidence the system can't yet leverage ───
@@ -261,20 +292,27 @@ async def main() -> int:
         "today: silent."
     )
 
-    # ── Phase 7: architectural moves the gap demands ───────────────────
-    print("\n[7] What this scenario justifies (next slices)")
-    print("  1. EmploymentRecord ObjectType — per-employer per-applicant, "
-          "with start/end + source list, replacing the single IncomeProfile blob.")
-    print("  2. VerificationAttempt ObjectType — append-only per (provider, "
-          "applicant, time) so TWN $100k and Argyle $92k both survive.")
-    print("  3. employment_reconciliation decision — DAG node before "
-          "income_verification. Joins attempts into a timeline, produces a "
-          "reconciliation_status, queues manual VOE on partial coverage.")
-    print("  4. PolicyVersion clauses for continuity_coverage_pct, "
-          "max_gap_days, min_corroborating_sources, "
-          "stated_vs_verified_drift_max — auto bar lives in policy.")
-    print("  5. send_back outcome — async path for 4506-C tax transcript "
-          "fetch and applicant gap-letter request.")
+    # ── Phase 7: where we are vs what's still ahead ────────────────────
+    print("\n[7] Where this scenario sits")
+    print("  ✅ VerificationAttempt ObjectType — multi-provider data preserved")
+    print("     (TWN $100k + Argyle $92k both survive as separate rows).")
+    print("  ✅ EmploymentRecord ObjectType — defined; reconciliation produces")
+    print("     per-employer projections in output_payload (SHARED writeback")
+    print("     in a future commit).")
+    print("  ✅ employment_reconciliation decision — runs in shadow mode")
+    print("     alongside income_verification. Status reflects the gap;")
+    print("     gates nothing yet.")
+    print("")
+    print("  Still ahead:")
+    print("  - Promote employment_reconciliation from shadow → recommend, then")
+    print("    add it as upstream of income_verification (depends_on).")
+    print("  - Refactor income_verification to consume the reconciled timeline")
+    print("    instead of the IncomeProfile blob.")
+    print("  - Extend IncomeDeclared event to carry stated_employer so the")
+    print("    employer_name_match_confidence stops reading 0.0.")
+    print("  - HumanQueue sub-task structure: manual VOE / tax transcript /")
+    print("    gap letter as separate queue items.")
+    print("  - send_back outcome (PRD §13) for the async 4506-C path.")
 
     print("\n" + "=" * 72)
     print(f"failures: {failures}")

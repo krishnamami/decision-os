@@ -72,8 +72,8 @@ async def main() -> int:
     res = await run_scenario(p, "fha")
     failures += _ok("scenario completed without halt", not res.execution.halted)
     failures += _ok(
-        "all 12 decisions ran",
-        len(res.execution.completed_decisions) == 12,
+        "all 13 decisions ran",
+        len(res.execution.completed_decisions) == 13,
     )
 
     traces = list(p.trace_writer._traces.values())  # type: ignore[attr-defined]
@@ -156,8 +156,8 @@ async def main() -> int:
         await seed_fha_demo_policies(p_other.policy_store)
         res = await run_scenario(p_other, scenario)
         failures += _ok(
-            f"{scenario} scenario completes (12 decisions ran)",
-            len(res.execution.completed_decisions) == 12 and not res.execution.halted,
+            f"{scenario} scenario completes (13 decisions ran)",
+            len(res.execution.completed_decisions) == 13 and not res.execution.halted,
         )
         traces = list(p_other.trace_writer._traces.values())  # type: ignore[attr-defined]
         ltv = next(

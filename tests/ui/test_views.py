@@ -414,11 +414,11 @@ class ListPersonaWorkbenchesTests(unittest.TestCase):
     def setUpClass(cls):
         cls.platform = _PlatformFixture.setup()
 
-    def test_lists_all_12_personas(self):
+    def test_lists_all_13_personas(self):
         rows = list_persona_workbenches(self.platform)
-        self.assertEqual(len(rows), 12)
+        self.assertEqual(len(rows), 13)
         ids = {r["decision_id"] for r in rows}
-        self.assertEqual(len(ids), 12)
+        self.assertEqual(len(ids), 13)
 
 
 class ListWorkbenchesTests(unittest.TestCase):
@@ -433,10 +433,12 @@ class ListWorkbenchesTests(unittest.TestCase):
         # 9 owner teams in decisions.yaml.
         self.assertEqual(len(teams), 9)
 
-    def test_underwriting_workbench_owns_4(self):
+    def test_underwriting_workbench_owns_5(self):
+        # employment_reconciliation joined the underwriting team in the
+        # employment_reconciliation slice — 5 owned decisions now.
         view = workbench_view(self.platform, "underwriting")
         self.assertIsNotNone(view)
-        self.assertEqual(len(view["owned_decisions"]), 4)
+        self.assertEqual(len(view["owned_decisions"]), 5)
 
 
 class AuditViewTests(unittest.TestCase):
@@ -450,7 +452,7 @@ class AuditViewTests(unittest.TestCase):
     def test_list_audit_for_application_returns_per_decision_rows(self):
         view = list_audit_for_application(self.platform, "app_happy")
         self.assertEqual(view["application_id"], "app_happy")
-        self.assertEqual(view["decision_count"], 12)
+        self.assertEqual(view["decision_count"], 13)
         decision_types = {r["decision_type"] for r in view["records"]}
         self.assertIn("credit_assessment", decision_types)
         self.assertIn("closing_readiness", decision_types)

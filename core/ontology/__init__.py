@@ -6,6 +6,7 @@ from .object_types import (
     ComplianceRecord,
     CreditProfile,
     Document,
+    EmploymentRecord,
     FraudProfile,
     IncomeProfile,
     LENDING_OBJECT_TYPES,
@@ -16,6 +17,7 @@ from .object_types import (
     Policy,
     PolicyVersion,
     Property,
+    VerificationAttempt,
 )
 
 __all__ = [
@@ -26,6 +28,7 @@ __all__ = [
     "ComplianceRecord",
     "CreditProfile",
     "Document",
+    "EmploymentRecord",
     "FraudProfile",
     "IncomeProfile",
     "LENDING_OBJECT_TYPES",
@@ -36,4 +39,5 @@ __all__ = [
     "Policy",
     "PolicyVersion",
     "Property",
+    "VerificationAttempt",
 ]
