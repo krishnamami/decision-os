@@ -182,6 +182,34 @@ def _bundle(decision_id: str, **overrides) -> ContextBundle:
     objects.update(overrides.get("objects_override", {}))
 
     upstream_outputs = {
+        "employment_reconciliation": {
+            "decision_id": "employment_reconciliation",
+            "outcome":     "allow",
+            "confidence":  0.92,
+            "payload": {
+                "reconciliation_status": "auto_verified",
+                "continuity_coverage_pct": 1.0,
+                "max_gap_days": 0,
+                "employer_name_match_confidence": 1.0,
+                "comp_drift_pct": 0.0,
+                "stated_vs_verified_drift_pct": 0.0,
+                "verification_attempts_count": 2,
+                "employer_records": [
+                    {
+                        "employer_name_canonical": "bigco",
+                        "start_date": "2024-04-01",
+                        "end_date": "2026-04-01",
+                        "tenure_months": 24,
+                        "monthly_gross_estimate": 10000,
+                        "corroborating_sources": ["twn", "argyle"],
+                        "corroborating_attempt_ids": ["verify_test_twn", "verify_test_argyle"],
+                    },
+                ],
+                "manual_voe_required": False,
+                "gap_letter_required": False,
+                "tax_transcript_required": False,
+            },
+        },
         "income_verification": {
             "decision_id": "income_verification",
             "outcome":     "allow",

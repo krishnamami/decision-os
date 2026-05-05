@@ -235,11 +235,31 @@ class ModeRouter:
                     reasons=reasons,
                 )
             )
+            # Persist the agent's proposed output to the scoped store
+            # so downstream decisions can read it as upstream context
+            # while the human review is still pending. A later human
+            # override updates the trace via attach_human_review; the
+            # scoped record stays as the agent's proposal.
+            #
+            # Without this, a recommend/human_approval mode upstream
+            # leaves dependents with empty bundle.upstream_outputs —
+            # forcing every downstream persona to fall back to entity
+            # reads, which loses the structured upstream payload.
+            record_id = await self._writeback(
+                agent_id=agent_id,
+                decision_id=decision_id,
+                application_id=application_id,
+                outcome=outcome,
+                confidence=confidence,
+                output_payload=output_payload,
+                bundle=bundle,
+            )
             return RoutedDecision(
                 action=RouteAction.QUEUE_HUMAN,
                 final_outcome=outcome,
                 mode=mode,
                 queue_item_id=qid,
+                decision_record_id=record_id,
                 notes=reasons + [f"queued for human review ({mode.value})"],
             )
 

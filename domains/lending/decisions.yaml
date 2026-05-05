@@ -86,16 +86,16 @@ decisions:
       vs stated, tenure mismatch vs stated, and continuity-coverage
       gaps. Manual VOE / tax transcript pull / gap letter all queue
       from this decision when reconciliation falls short of policy.
-      Initially shadow mode — runs alongside income_verification so
-      the gap surfaces in traces without changing the existing
-      auto-decision flow.
+      Now wired upstream of income_verification — its output drives
+      income_verification's outcome rather than running in parallel
+      shadow mode.
     own_data:
       - verification_attempts
     shared_data:
       - application_record
       - customer_profile
     persona: employment_reconciliation_agent
-    mode: shadow
+    mode: recommend
     risk_level: medium
     owner_team: underwriting
     boundary:
@@ -120,11 +120,17 @@ decisions:
     name: Income verification
     atomic_tool: income_verification_tool
     context_window_days: 90
-    type: independent
+    type: dependent
     description: >
-      Validates stated income against payroll data, tax records,
-      and bank statements. Critical upstream input for DTI
-      and product eligibility decisions.
+      Validates stated income against the reconciled employment
+      timeline produced by employment_reconciliation. Reads
+      reconciliation_status, employer_records, and aggregated
+      gross_amount from the upstream output. Critical input for
+      DTI and product eligibility downstream.
+    depends_on:
+      - decision: employment_reconciliation
+        required_output: reconciliation_status
+        inherit_context: true
     own_data:
       - stated_income
       - employment_type
@@ -143,14 +149,19 @@ decisions:
         - income_confidence_score >= 0.9
         - employment_type == salaried
         - payroll_verified == true
+        - reconciliation_status in [auto_verified, partial]
       recommend_if:
         - income_confidence_score >= 0.75
-        - employment_type in [self_employed, contractor]
+        - reconciliation_status in [auto_verified, partial]
       block_if:
         - income_discrepancy_pct > 0.25
       escalate_if:
-        - multiple_income_sources == true
-        - foreign_income == true
+        # rule grammar is AND-only within a clause. Conflict/missing
+        # reconciliation is the dominant escalate trigger; multi-source
+        # + foreign-income trigger separately via the persona's
+        # proposed_outcome (atomic_tool routes ESCALATE outcomes even
+        # when the boundary doesn't match an escalate clause).
+        - reconciliation_status in [conflict, missing]
     sla_seconds: 120
     trace_required: true
 
@@ -564,11 +575,11 @@ execution_order:
   parallel_independent:
     - lead_scoring
     - employment_reconciliation
-    - income_verification
     - credit_assessment
     - fraud_screening
     - compliance_check
   sequential_dependent:
+    - [income_verification]       # needs: employment_reconciliation
     - [dti_calculation]           # needs: income_verification
     - [ltv_assessment]            # needs: credit_assessment
     - [product_eligibility]       # needs: dti + ltv

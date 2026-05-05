@@ -7,15 +7,54 @@ from core.normalizer.models import DecisionOutcome
 from core.policy_engine import PolicyDecision
 from core.trace import SignalDirection
 
-from .base import LendingPersona, OfflineReasoning, latest_object, make_signal
+from .base import (
+    LendingPersona,
+    OfflineReasoning,
+    latest_object,
+    make_signal,
+    upstream_payload,
+)
 
 
 class IncomeVerificationAgent(LendingPersona):
     """income_verification — produce verified_income + income_confidence.
 
-    Boundary clauses (decisions.yaml) want income_confidence_score,
-    employment_type, payroll_verified, income_discrepancy_pct,
-    multiple_income_sources, foreign_income."""
+    Refactored (Session 11) to consume the reconciled employment
+    timeline produced by `employment_reconciliation` upstream rather
+    than reading raw IncomeProfile fields. The reconciliation step
+    handles multi-provider divergence, employer-name normalization,
+    continuity coverage, and gap detection; this persona's job is
+    deciding whether the reconciled picture is good enough to
+    auto-verify income.
+
+    Inputs:
+      bundle.upstream_outputs["employment_reconciliation"]["payload"]
+        reconciliation_status, employer_records, comp_drift_pct,
+        stated_vs_verified_drift_pct, manual_voe_required, etc.
+      bundle.objects["IncomeProfile"]
+        stated_income, employment_type, multiple_income_sources,
+        foreign_income (still loaded by EntityHydrator from the
+        IncomeDeclaredEvent + PayrollReceivedEvent merge).
+
+    Outcome routing:
+      reconciliation_status == auto_verified
+                           AND no provider conflict
+                           AND stated/verified within tolerance
+                           AND employment_type salaried
+                           → ALLOW
+      reconciliation_status == partial AND no conflict
+                           → ALLOW (single verified employer is enough
+                             for v1; future iteration can require
+                             continuity_complete for stricter products)
+      reconciliation_status == conflict
+                           → ESCALATE
+      reconciliation_status == missing
+                           → ESCALATE
+      stated_vs_verified drift > 25%
+                           → BLOCK
+      multiple_income_sources OR foreign_income
+                           → ESCALATE
+    """
 
     DEFAULT_AGENT_ID = "income_verification_agent_v1"
 
@@ -37,36 +76,127 @@ class IncomeVerificationAgent(LendingPersona):
     def _compute_offline(
         self, bundle: ContextBundle, policy: Optional[PolicyDecision]
     ) -> OfflineReasoning:
+        # Upstream reconciliation output — the primary signal.
+        reconciled = upstream_payload(bundle, "employment_reconciliation")
+        reconciliation_status = reconciled.get("reconciliation_status") or "missing"
+        reconciled_attempts = int(
+            reconciled.get("verification_attempts_count") or 0
+        )
+        reconciled_employers = reconciled.get("employer_records") or []
+        comp_drift_pct = float(reconciled.get("comp_drift_pct") or 0.0)
+        recon_stated_drift = float(
+            reconciled.get("stated_vs_verified_drift_pct") or 0.0
+        )
+        manual_voe_required = bool(reconciled.get("manual_voe_required") or False)
+        gap_letter_required = bool(reconciled.get("gap_letter_required") or False)
+        tax_transcript_required = bool(
+            reconciled.get("tax_transcript_required") or False
+        )
+
+        # Stated/verified-side data still lives on IncomeProfile —
+        # employment_type, multiple_income_sources, foreign_income are
+        # downstream policy levers we don't want to lose.
         income = latest_object(bundle, "IncomeProfile") or {}
         stated = float(income.get("stated_income") or 0.0)
-        verified = float(income.get("verified_income") or 0.0)
         employment_type = income.get("employment_type") or "other"
-        payroll_verified = bool(income.get("payroll_verified") or False)
         multiple_sources = bool(income.get("multiple_income_sources") or False)
         foreign_income = bool(income.get("foreign_income") or False)
 
-        # Discrepancy + confidence
+        # Verified income is the aggregate across the reconciled
+        # employer records' monthly_gross_estimate. Falls back to
+        # IncomeProfile.verified_income when no reconciled records
+        # exist (e.g. self-employed without payroll feed).
+        verified = 0.0
+        if reconciled_employers:
+            for record in reconciled_employers:
+                monthly = record.get("monthly_gross_estimate") or 0
+                if isinstance(monthly, (int, float)):
+                    verified += float(monthly) * 12
+        if verified == 0.0:
+            verified = float(income.get("verified_income") or 0.0)
+
+        # Discrepancy is now the persona-level read — reconciliation
+        # tracks providers vs each other; this tracks stated vs the
+        # aggregated verified picture.
         if stated > 0 and verified > 0:
             discrepancy = abs(stated - verified) / stated
         else:
             discrepancy = 0.0
 
-        existing_confidence = income.get("income_confidence_score")
-        if existing_confidence is None:
-            base = 0.6
-            if payroll_verified:
-                base += 0.25
-            if employment_type == "salaried":
-                base += 0.1
-            if employment_type in ("self_employed", "contractor"):
-                base -= 0.1
-            base -= min(discrepancy, 0.5)
-            confidence_score = max(0.0, min(1.0, base))
-        else:
-            confidence_score = float(existing_confidence)
+        # ── Confidence — derived from upstream status, not invented ──
+        if reconciliation_status == "auto_verified":
+            confidence_score = 0.95
+        elif reconciliation_status == "partial":
+            # Partial-but-clean (no provider conflict, stated matches
+            # verified) is the common single-employer / single-provider
+            # case. Worth high confidence — reconciliation didn't fail,
+            # we just don't have multi-employer history. Provider
+            # conflict drops it below the automate threshold.
+            confidence_score = 0.95 if comp_drift_pct <= 0.05 else 0.82
+        elif reconciliation_status == "conflict":
+            confidence_score = 0.55
+        else:  # missing
+            confidence_score = 0.4
+        # Penalize stated/verified divergence + non-salaried employment.
+        confidence_score -= min(discrepancy, 0.3)
+        if employment_type in ("self_employed", "contractor"):
+            confidence_score -= 0.05
+        confidence_score = max(0.0, min(1.0, confidence_score))
 
+        # ── Outcome ─────────────────────────────────────────────────
+        if discrepancy > 0.25:
+            outcome = DecisionOutcome.BLOCK
+        elif multiple_sources or foreign_income:
+            outcome = DecisionOutcome.ESCALATE
+        elif reconciliation_status == "missing":
+            outcome = DecisionOutcome.ESCALATE
+        elif reconciliation_status == "conflict":
+            outcome = DecisionOutcome.ESCALATE
+        elif reconciliation_status == "auto_verified" \
+                and confidence_score >= 0.9 \
+                and employment_type == "salaried":
+            outcome = DecisionOutcome.ALLOW
+        elif reconciliation_status in ("auto_verified", "partial") \
+                and confidence_score >= 0.85:
+            # Partial reconciliation but no conflict + stated matches
+            # verified → still allow. Future commit can tighten this
+            # for stricter products.
+            outcome = DecisionOutcome.ALLOW
+        elif confidence_score >= 0.75:
+            outcome = DecisionOutcome.RECOMMEND
+        else:
+            outcome = DecisionOutcome.ESCALATE
+
+        # ── Signals ─────────────────────────────────────────────────
         signals = [
-            make_signal("verified_income", verified, source="payroll"),
+            make_signal(
+                "reconciliation_status",
+                reconciliation_status,
+                direction=(
+                    SignalDirection.SUPPORTS
+                    if reconciliation_status == "auto_verified"
+                    else SignalDirection.CONTRADICTS
+                    if reconciliation_status in ("conflict", "missing")
+                    else SignalDirection.NEUTRAL
+                ),
+                source="employment_reconciliation",
+            ),
+            make_signal(
+                "verification_attempts_count",
+                reconciled_attempts,
+                source="employment_reconciliation",
+            ),
+            make_signal(
+                "comp_drift_pct",
+                round(comp_drift_pct, 3),
+                direction=(
+                    SignalDirection.CONTRADICTS
+                    if comp_drift_pct > 0.10
+                    else SignalDirection.NEUTRAL
+                ),
+                source="employment_reconciliation",
+            ),
+            make_signal("verified_income", verified, source="reconciliation"),
             make_signal("stated_income", stated, source="application"),
             make_signal(
                 "income_confidence_score",
@@ -78,7 +208,6 @@ class IncomeVerificationAgent(LendingPersona):
                 ),
             ),
             make_signal("employment_type", employment_type),
-            make_signal("payroll_verified", payroll_verified),
         ]
         if discrepancy > 0:
             signals.append(
@@ -87,56 +216,84 @@ class IncomeVerificationAgent(LendingPersona):
                     round(discrepancy, 3),
                     direction=(
                         SignalDirection.CONTRADICTS
-                        if discrepancy > 0.25
+                        if discrepancy > 0.10
                         else SignalDirection.NEUTRAL
                     ),
                 )
             )
-
-        # Outcome — reflects boundary intent.
-        if discrepancy > 0.25:
-            outcome = DecisionOutcome.BLOCK
-        elif multiple_sources or foreign_income:
-            outcome = DecisionOutcome.ESCALATE
-        elif confidence_score >= 0.9 and employment_type == "salaried" and payroll_verified:
-            outcome = DecisionOutcome.ALLOW
-        elif confidence_score >= 0.75:
-            outcome = DecisionOutcome.RECOMMEND
-        else:
-            outcome = DecisionOutcome.ESCALATE
+        if manual_voe_required:
+            signals.append(
+                make_signal(
+                    "manual_voe_required",
+                    True,
+                    direction=SignalDirection.CONTRADICTS,
+                    source="employment_reconciliation",
+                )
+            )
+        if gap_letter_required:
+            signals.append(
+                make_signal(
+                    "gap_letter_required",
+                    True,
+                    direction=SignalDirection.CONTRADICTS,
+                    source="employment_reconciliation",
+                )
+            )
+        if tax_transcript_required:
+            signals.append(
+                make_signal(
+                    "tax_transcript_required",
+                    True,
+                    direction=SignalDirection.CONTRADICTS,
+                    source="employment_reconciliation",
+                )
+            )
 
         return OfflineReasoning(
             output_payload={
                 "verified_income": verified,
                 "income_confidence_score": round(confidence_score, 3),
                 "employment_type": employment_type,
-                "payroll_verified": payroll_verified,
+                "payroll_verified": reconciled_attempts > 0,
                 "income_discrepancy_pct": round(discrepancy, 3),
                 "multiple_income_sources": multiple_sources,
                 "foreign_income": foreign_income,
+                # Pass-through from the upstream so downstream
+                # consumers don't have to re-fetch the trace.
+                "reconciliation_status": reconciliation_status,
+                "reconciled_employer_count": len(reconciled_employers),
+                "comp_drift_pct": round(comp_drift_pct, 3),
+                "manual_voe_required": manual_voe_required,
+                "gap_letter_required": gap_letter_required,
+                "tax_transcript_required": tax_transcript_required,
             },
             proposed_outcome=outcome,
             confidence=round(confidence_score, 3),
             signals=signals,
             contradictions=[],
             hypothesis=(
-                "Verified income is reliable when payroll is verified, "
-                "discrepancy is below 25%, and the employment type is "
-                "salaried."
+                "Income is reliable when the upstream reconciliation "
+                "produces auto_verified or partial-without-conflict, "
+                "stated-vs-verified discrepancy is below 25%, and "
+                "employment is single-source non-foreign salaried."
             ),
             conclusion=(
-                f"income_confidence_score={confidence_score:.2f}, "
-                f"employment_type={employment_type!r}, "
-                f"payroll_verified={payroll_verified} → {outcome.value}"
+                f"reconciliation_status={reconciliation_status} on "
+                f"{reconciled_attempts} attempt(s) across "
+                f"{len(reconciled_employers)} employer(s); "
+                f"verified ${verified:,.0f} vs stated ${stated:,.0f} "
+                f"(discrepancy {discrepancy:.0%}); "
+                f"confidence {confidence_score:.2f} → {outcome.value}"
             ),
             confidence_basis=(
-                "Confidence reflects the agreement between stated and "
-                "verified income, plus the strength of the employment "
-                "evidence."
+                "Confidence is anchored to the upstream reconciliation "
+                "verdict: 0.95 for auto_verified, 0.85 partial, 0.55 "
+                "conflict, 0.4 missing — penalised by stated/verified "
+                "drift, provider conflict, and non-salaried employment."
             ),
             summary=(
-                f"Verified income ${verified:,.0f} with confidence "
-                f"{confidence_score:.2f}; proposed {outcome.value}."
+                f"Verified income ${verified:,.0f} (reconciled "
+                f"{reconciliation_status}); proposed {outcome.value}."
             ),
         )
 

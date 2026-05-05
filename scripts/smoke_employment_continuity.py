@@ -118,8 +118,8 @@ async def main() -> int:
             "source" not in income and "provider" not in income,
         )
 
-    # ── Phase 4: income_verification trace — high confidence anyway ─────
-    print("\n[4] income_verification trace — confidence from incomplete picture")
+    # ── Phase 4: income_verification trace — wired through reconciliation ──
+    print("\n[4] income_verification trace — now consumes reconciled timeline")
     all_app_traces = await p.trace_writer.list_for_application("app_continuity")
     iv_traces = [t for t in all_app_traces if t.decision_id == "income_verification"]
     failures += _ok("income_verification trace exists", len(iv_traces) == 1)
@@ -128,28 +128,26 @@ async def main() -> int:
         iv = iv_traces[0]
         out = iv.output_payload or {}
         confidence = out.get("income_confidence_score") or iv.confidence
-        print(f"     proposed_outcome     : {iv.outcome.value}")
-        print(f"     verified_income      : ${out.get('verified_income', 0):,.0f}")
-        print(f"     income_confidence    : {confidence}")
-        # The persona happily produces >= 0.85 from one provider's data.
-        # That's the gap.
+        print(f"     proposed_outcome      : {iv.outcome.value}")
+        print(f"     verified_income       : ${out.get('verified_income', 0):,.0f}")
+        print(f"     income_confidence     : {confidence}")
+        print(f"     reconciliation_status : {out.get('reconciliation_status')}")
+        print(f"     comp_drift_pct        : {out.get('comp_drift_pct')}")
+        # After the wiring: the persona reads the reconciliation status
+        # and DOES NOT produce auto-allow when providers disagree on
+        # comp. Confidence drops below the automate threshold; outcome
+        # routes to RECOMMEND or ESCALATE.
         failures += _ok(
-            "persona produced >= 0.85 confidence DESPITE multi-provider conflict",
-            (confidence or 0) >= 0.85,
+            "persona no longer auto-allows on multi-provider conflict",
+            iv.outcome.value in ("recommend", "escalate"),
         )
-        # Quick scan — does any field on the trace mention "employer"?
-        # output_payload + WorkJournalEntry text. Today the answer is no
-        # because the persona has no employer concept.
-        text_blob = " ".join(
-            [
-                str(out),
-                str(iv.reasoning.model_dump() if iv.reasoning else {}),
-                str(iv.policy_reasons or []),
-            ]
-        ).lower()
         failures += _ok(
-            "trace mentions no employer-name discrepancy",
-            "employer" not in text_blob,
+            "income_verification consumes upstream reconciliation_status",
+            out.get("reconciliation_status") in ("partial", "conflict", "missing"),
+        )
+        failures += _ok(
+            "comp_drift surfaced on income_verification output",
+            (out.get("comp_drift_pct") or 0) > 0,
         )
 
     # ── Phase 4b: employment_reconciliation surfaces what IV missed ────
@@ -294,25 +292,27 @@ async def main() -> int:
 
     # ── Phase 7: where we are vs what's still ahead ────────────────────
     print("\n[7] Where this scenario sits")
-    print("  ✅ VerificationAttempt ObjectType — multi-provider data preserved")
-    print("     (TWN $100k + Argyle $92k both survive as separate rows).")
+    print("  ✅ VerificationAttempt ObjectType — multi-provider data preserved.")
     print("  ✅ EmploymentRecord ObjectType — defined; reconciliation produces")
-    print("     per-employer projections in output_payload (SHARED writeback")
-    print("     in a future commit).")
-    print("  ✅ employment_reconciliation decision — runs in shadow mode")
-    print("     alongside income_verification. Status reflects the gap;")
-    print("     gates nothing yet.")
+    print("     per-employer projections in output_payload.")
+    print("  ✅ employment_reconciliation as a recommend-mode DAG node, upstream")
+    print("     of income_verification via depends_on.")
+    print("  ✅ income_verification refactored to consume reconciled timeline;")
+    print("     no longer auto-allows when providers disagree on comp.")
+    print("  ✅ mode_router writeback fix — recommend / human_approval modes")
+    print("     now persist their decision output to the scoped store so")
+    print("     dependents can read it as upstream context.")
     print("")
     print("  Still ahead:")
-    print("  - Promote employment_reconciliation from shadow → recommend, then")
-    print("    add it as upstream of income_verification (depends_on).")
-    print("  - Refactor income_verification to consume the reconciled timeline")
-    print("    instead of the IncomeProfile blob.")
-    print("  - Extend IncomeDeclared event to carry stated_employer so the")
-    print("    employer_name_match_confidence stops reading 0.0.")
+    print("  - Persist EmploymentRecord rows to SHARED store (today they")
+    print("    live only in output_payload).")
+    print("  - Extend IncomeDeclaredEvent to carry stated_employer so")
+    print("    employer_name_match_confidence stops reading 0.0 in real data.")
     print("  - HumanQueue sub-task structure: manual VOE / tax transcript /")
     print("    gap letter as separate queue items.")
     print("  - send_back outcome (PRD §13) for the async 4506-C path.")
+    print("  - EDMS entity resolution (first brainstorm) — link unattached")
+    print("    Beta Inc W-2 to the applicant via name+DOB+SSN-last-4.")
 
     print("\n" + "=" * 72)
     print(f"failures: {failures}")
