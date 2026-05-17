@@ -1,0 +1,56 @@
+{% extends "base_edms.html" %}
+{% set active_nav = 'queue' %}
+{% block title %}Review Queue{% endblock %}
+{% block content %}
+<header class="mb-6 flex items-end justify-between">
+  <div>
+    <h1 class="text-2xl font-semibold tracking-tight">Review Queue</h1>
+    <p class="text-sm text-slate-500 mt-1">
+      Decisions awaiting human action — grouped by persona, ordered by wave.
+    </p>
+  </div>
+  <div class="text-sm text-slate-600">
+    Total pending: <span class="font-semibold text-slate-900">{{ total_pending }}</span>
+  </div>
+</header>
+
+{% for w in waves %}
+  <section class="mb-6">
+    <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
+      Wave {{ w.wave }}
+    </h2>
+    <div class="grid grid-cols-3 gap-4">
+      {% for p in w.personas %}
+        {% set risk_color = 'rose' if p.risk == 'high' else ('amber' if p.risk == 'medium' else 'slate') %}
+        <a href="/workbench/queue/{{ p.decision_id }}"
+           class="bg-white border border-slate-200 rounded-lg p-5 hover:shadow-md hover:border-slate-300 transition block">
+          <div class="flex items-start justify-between">
+            <div>
+              <div class="text-sm font-semibold text-slate-900">{{ p.label }}</div>
+              <div class="mono text-xs text-slate-400 mt-0.5">{{ p.decision_id }}</div>
+            </div>
+            <span class="text-xs px-2 py-0.5 rounded bg-{{ risk_color }}-100 text-{{ risk_color }}-700">
+              {{ p.risk }}
+            </span>
+          </div>
+          <div class="mt-4 flex items-baseline gap-3">
+            <span class="text-3xl font-semibold text-slate-900">{{ p.pending }}</span>
+            <span class="text-xs text-slate-500">pending</span>
+          </div>
+          <div class="mt-3 flex items-center gap-3 text-xs text-slate-500">
+            {% if p.human_approval %}<span class="px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded">{{ p.human_approval }} approval</span>{% endif %}
+            {% if p.recommend %}<span class="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded">{{ p.recommend }} recommend</span>{% endif %}
+          </div>
+          <div class="mt-3 text-xs text-slate-400">
+            Oldest pending {{ p.oldest | humanize_age }}
+          </div>
+        </a>
+      {% endfor %}
+    </div>
+  </section>
+{% else %}
+  <div class="bg-white border border-slate-200 rounded-lg p-10 text-center text-slate-400">
+    Nothing waiting on a human reviewer — every decision is auto-cleared or already acted on.
+  </div>
+{% endfor %}
+{% endblock %}

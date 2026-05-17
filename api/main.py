@@ -174,6 +174,18 @@ def create_app(
         from ui import router as ui_router
         app.include_router(ui_router)
 
+        # EDMS workbench — sibling router that reads from EDMS PG via
+        # DATABASE_URL (decoupled from the in-memory Platform). Mounted
+        # under /workbench so it never collides with the in-memory /ui
+        # routes. Import is wrapped because the routes module reaches
+        # for asyncpg / dotenv at request time; we don't want a missing
+        # optional dep to take down the rest of the app.
+        try:
+            from ui.edms_routes import router as edms_router
+            app.include_router(edms_router)
+        except Exception as err:  # pragma: no cover — visible in dev only
+            print(f"[edms] workbench router not mounted: {err}")
+
     @app.get("/health", tags=["meta"])
     async def health() -> dict[str, str]:
         return {

@@ -1,0 +1,17 @@
+{% extends "base_edms.html" %}
+{% block title %}DATABASE_URL not configured{% endblock %}
+{% block content %}
+<div class="bg-amber-50 border border-amber-200 rounded-lg p-8 max-w-2xl">
+  <h1 class="text-xl font-semibold text-amber-900">DATABASE_URL not configured</h1>
+  <p class="mt-3 text-sm text-amber-800">
+    The EDMS workbench reads from a PostgreSQL instance. Set
+    <code class="mono bg-amber-100 px-1 rounded">DATABASE_URL</code> in your
+    environment (typically via <code class="mono bg-amber-100 px-1 rounded">.env</code>)
+    and restart the server.
+  </p>
+  <p class="mt-4 text-sm text-amber-800">
+    The legacy in-memory UI at <a href="/" class="underline">/</a> still works
+    without a database.
+  </p>
+</div>
+{% endblock %}

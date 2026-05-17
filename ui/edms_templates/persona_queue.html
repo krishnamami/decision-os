@@ -1,0 +1,62 @@
+{% extends "base_edms.html" %}
+{% set active_nav = 'queue' %}
+{% block title %}Queue · {{ decision_label }}{% endblock %}
+{% block content %}
+<nav class="text-xs text-slate-500 mb-3">
+  <a href="/workbench/queue" class="hover:underline">Review Queue</a>
+  <span class="mx-1">›</span>
+  <span class="text-slate-900">{{ decision_label }}</span>
+</nav>
+
+<header class="mb-6 flex items-end justify-between">
+  <div>
+    <h1 class="text-2xl font-semibold tracking-tight">{{ decision_label }}</h1>
+    <p class="text-sm text-slate-500 mt-1">
+      Wave {{ wave }} · risk {{ risk }} · {{ applications | length }} pending (oldest first)
+    </p>
+  </div>
+</header>
+
+<section class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+  <table class="min-w-full text-sm">
+    <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+      <tr>
+        <th class="text-left px-4 py-2.5">Application</th>
+        <th class="text-left px-4 py-2.5">Credit</th>
+        <th class="text-left px-4 py-2.5">LTV</th>
+        <th class="text-left px-4 py-2.5">DTI</th>
+        <th class="text-left px-4 py-2.5">Loan</th>
+        <th class="text-left px-4 py-2.5">Proposed</th>
+        <th class="text-left px-4 py-2.5">Conf.</th>
+        <th class="text-left px-4 py-2.5">Mode</th>
+        <th class="text-left px-4 py-2.5">Age</th>
+        <th class="text-left px-4 py-2.5">Status</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-100">
+      {% for app in applications %}
+        {% set color = app.outcome | outcome_color %}
+        <tr class="hover:bg-slate-50 cursor-pointer"
+            onclick="window.location='/workbench/review/{{ app.application_id }}/{{ decision_id }}'">
+          <td class="px-4 py-2.5 mono text-xs">{{ app.application_id }}</td>
+          <td class="px-4 py-2.5">{{ app.mid_credit_score | fmt_value }}</td>
+          <td class="px-4 py-2.5">{{ app.ltv | fmt_pct }}</td>
+          <td class="px-4 py-2.5">{{ app.dti_back | fmt_pct }}</td>
+          <td class="px-4 py-2.5">{{ app.loan_amount | fmt_money }}</td>
+          <td class="px-4 py-2.5">
+            <span class="text-xs px-2 py-0.5 rounded bg-{{ color }}-100 text-{{ color }}-700 font-medium">{{ app.outcome }}</span>
+          </td>
+          <td class="px-4 py-2.5 mono text-xs">{{ '%.2f' % (app.confidence or 0) }}</td>
+          <td class="px-4 py-2.5 text-xs text-slate-500">{{ app.mode }}</td>
+          <td class="px-4 py-2.5 text-xs text-slate-500">{{ app.decided_at | humanize_age }}</td>
+          <td class="px-4 py-2.5 text-xs text-slate-500">{{ app.status or '—' }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="10" class="px-4 py-10 text-center text-slate-400">
+          Nothing pending for this persona.
+        </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
