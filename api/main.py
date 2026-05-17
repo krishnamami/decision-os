@@ -152,9 +152,15 @@ def create_app(
         # DATABASE_URL is set; otherwise the legacy in-memory backends
         # serve every read.
         if platform.edms_store is not None:
-            print("[startup] EDMS PostgreSQL mode — /workbench reads from EDMS")
+            print(
+                "[startup] EDMS PostgreSQL mode — /workbench reads from EDMS",
+                flush=True,
+            )
         else:
-            print("[startup] In-memory mode — DATABASE_URL not set")
+            print(
+                "[startup] In-memory mode — DATABASE_URL not set",
+                flush=True,
+            )
         if seed_demo_data:
             await _bootstrap_demo(platform)
         yield
