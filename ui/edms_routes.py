@@ -1194,11 +1194,105 @@ async def governance_export():
 # ─────────────────────────────────────────────────────────────────────
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Date range filter — drives every persona workbench query.
+#
+# Sidebar queue badges, the In-Queue KPI card, and home-page metrics
+# stay UNFILTERED (they reflect work waiting right now); everything
+# else on the persona workbench page narrows to the selected window.
+# ─────────────────────────────────────────────────────────────────────
+
+
+RANGE_KEYS: tuple[str, ...] = (
+    "today", "this_week", "this_month", "this_quarter",
+    "this_year", "all_time", "custom",
+)
+RANGE_LABELS: dict[str, str] = {
+    "today":        "today",
+    "this_week":    "this week",
+    "this_month":   "this month",
+    "this_quarter": "this quarter",
+    "this_year":    "this year",
+    "all_time":     "all time",
+    "custom":       "custom range",
+}
+
+
+def _date_range(
+    range_key: str,
+    from_str: Optional[str],
+    to_str: Optional[str],
+) -> tuple[Optional[datetime], Optional[datetime], str, Optional[str], Optional[str]]:
+    """Resolve (start, end, normalized_key, from_str, to_str).
+
+    Returns tz-aware UTC datetimes. ``start`` is inclusive, ``end`` is
+    exclusive (matches ``decided_at >= start AND decided_at < end``).
+    For ``all_time`` both bounds are None."""
+    from datetime import date as _date, timedelta as _td
+
+    if range_key not in RANGE_KEYS:
+        range_key = "this_month"
+
+    now = datetime.now(timezone.utc)
+    today = now.date()
+
+    def _at(d: _date) -> datetime:
+        return datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
+
+    if range_key == "today":
+        start, end = _at(today), _at(today + _td(days=1))
+    elif range_key == "this_week":
+        monday = today - _td(days=today.weekday())
+        start, end = _at(monday), _at(monday + _td(days=7))
+    elif range_key == "this_month":
+        first = today.replace(day=1)
+        if first.month == 12:
+            next_first = first.replace(year=first.year + 1, month=1)
+        else:
+            next_first = first.replace(month=first.month + 1)
+        start, end = _at(first), _at(next_first)
+    elif range_key == "this_quarter":
+        q_start_month = ((today.month - 1) // 3) * 3 + 1
+        q_start = today.replace(month=q_start_month, day=1)
+        end_month = q_start_month + 3
+        if end_month > 12:
+            q_end = q_start.replace(year=q_start.year + 1, month=end_month - 12)
+        else:
+            q_end = q_start.replace(month=end_month)
+        start, end = _at(q_start), _at(q_end)
+    elif range_key == "this_year":
+        start = _at(today.replace(month=1, day=1))
+        end = _at(today.replace(year=today.year + 1, month=1, day=1))
+    elif range_key == "all_time":
+        return (None, None, "all_time", None, None)
+    else:
+        # custom: parse from/to strings; either may be missing
+        f = None
+        t = None
+        try:
+            if from_str:
+                fd = datetime.strptime(from_str, "%Y-%m-%d").date()
+                f = _at(fd)
+            if to_str:
+                td = datetime.strptime(to_str, "%Y-%m-%d").date()
+                # Inclusive end-of-day → exclusive next-day midnight.
+                t = _at(td + _td(days=1))
+        except ValueError:
+            # bad date string → fall through to this_month default
+            return _date_range("this_month", None, None)
+        return (f, t, "custom", from_str, to_str)
+
+    return (start, end, range_key, None, None)
+
+
 @router.get("/workbench/{persona_slug}", response_class=HTMLResponse)
 async def persona_workbench(
     request: Request,
     persona_slug: str,
     tab: str = Query("queue"),
+    range: str = Query("this_month"),  # noqa: A002 — query param name
+    date_from: Optional[str] = Query(None, alias="from"),
+    date_to: Optional[str] = Query(None, alias="to"),
 ):
     if not DATABASE_URL:
         return _not_configured(request)
@@ -1210,21 +1304,46 @@ async def persona_workbench(
     mode = persona["mode"]
     pool = await _get_pool()
 
-    # ── KPI strip (always rendered) ──
-    metrics_all = await _persona_metrics()
-    kpi = metrics_all.get(persona_slug, {})
+    start, end, range_key, date_from_str, date_to_str = _date_range(
+        range, date_from, date_to
+    )
+    # decided_at filter fragment + extra args (always positioned after
+    # the leading $1 = decision_id). Building the string is the
+    # cleanest way to keep the bind-arg count consistent across the
+    # 4 tabs without per-tab branches.
+    date_clause = ""
+    date_args: list[Any] = []
+    if start is not None:
+        date_args.append(start)
+        date_clause += f" AND dout.decided_at >= ${len(date_args) + 1}"
+    if end is not None:
+        date_args.append(end)
+        date_clause += f" AND dout.decided_at < ${len(date_args) + 1}"
+    # Variant without the `dout.` alias for queries that read
+    # decision_outputs without aliasing.
+    date_clause_plain = date_clause.replace("dout.", "")
 
     tab = tab if tab in ("queue", "completed", "auto", "analytics") else "queue"
     payload: dict[str, Any] = {}
-
     summary_fields = persona["summary_fields"]
+
+    # ── KPI strip — In-Queue is always current; the rest narrow to range
+    in_queue_total = await _persona_in_queue_count(decision_id, mode)
+    kpi_window = await _persona_kpi_window(decision_id, start, end)
+    kpi = {
+        "in_queue": in_queue_total,
+        "completed": kpi_window["completed"],
+        "auto_pct": kpi_window["auto_pct"],
+        "avg_review_sec": kpi_window["avg_review_sec"],
+    }
 
     if tab == "queue":
         if mode == "auto_execute":
-            # Apps not yet decided.
+            # Apps not yet decided. Date filter doesn't apply to
+            # "no decision row yet" — show all undecided.
             async with pool.acquire() as conn:
                 rows = await conn.fetch(
-                    f"""
+                    """
                     SELECT es.application_id,
                            es.mid_credit_score, es.ltv, es.dti_back,
                            es.loan_amount, es.status
@@ -1253,89 +1372,62 @@ async def persona_workbench(
                 for r in rows
             ]
         else:
+            sql = f"""
+                SELECT dout.application_id, dout.outcome,
+                       dout.confidence, dout.decided_at,
+                       dout.boundary_rule,
+                       es.mid_credit_score, es.ltv, es.dti_back,
+                       es.loan_amount, es.status
+                FROM decision_outputs dout
+                LEFT JOIN entity_states es
+                       ON es.application_id = dout.application_id
+                      AND es.tenant_id = dout.tenant_id
+                WHERE dout.decision_id = $1
+                  AND dout.mode IN ('human_approval', 'recommend')
+                  AND dout.human_action IS NULL
+                  AND dout.version = (
+                      SELECT MAX(version) FROM decision_outputs d2
+                      WHERE d2.application_id = dout.application_id
+                        AND d2.decision_id = dout.decision_id
+                  ){date_clause}
+                ORDER BY dout.decided_at ASC
+                LIMIT 200
+            """
             async with pool.acquire() as conn:
-                rows = await conn.fetch(
-                    """
-                    SELECT dout.application_id, dout.outcome,
-                           dout.confidence, dout.decided_at,
-                           dout.boundary_rule,
-                           es.mid_credit_score, es.ltv, es.dti_back,
-                           es.loan_amount, es.status
-                    FROM decision_outputs dout
-                    LEFT JOIN entity_states es
-                           ON es.application_id = dout.application_id
-                          AND es.tenant_id = dout.tenant_id
-                    WHERE dout.decision_id = $1
-                      AND dout.mode IN ('human_approval', 'recommend')
-                      AND dout.human_action IS NULL
-                      AND dout.version = (
-                          SELECT MAX(version) FROM decision_outputs d2
-                          WHERE d2.application_id = dout.application_id
-                            AND d2.decision_id = dout.decision_id
-                      )
-                    ORDER BY dout.decided_at ASC
-                    LIMIT 200
-                    """,
-                    decision_id,
-                )
+                rows = await conn.fetch(sql, decision_id, *date_args)
             queue_rows = [dict(r) for r in rows]
         payload = {"queue_rows": queue_rows}
 
     elif tab in ("completed", "auto"):
         only_auto = tab == "auto"
+        mode_predicate = (
+            "dout.mode = 'auto_execute'"
+            if only_auto
+            else "(dout.mode = 'auto_execute' OR dout.human_action IS NOT NULL)"
+        )
+        sql = f"""
+            SELECT dout.application_id, dout.outcome, dout.mode,
+                   dout.confidence, dout.decided_at, dout.acted_at,
+                   dout.human_action, dout.human_reviewer,
+                   dout.human_override_reason,
+                   dout.boundary_rule, dout.reasoning,
+                   es.mid_credit_score, es.ltv, es.dti_back
+            FROM decision_outputs dout
+            LEFT JOIN entity_states es
+                   ON es.application_id = dout.application_id
+                  AND es.tenant_id = dout.tenant_id
+            WHERE dout.decision_id = $1
+              AND {mode_predicate}
+              AND dout.version = (
+                  SELECT MAX(version) FROM decision_outputs d2
+                  WHERE d2.application_id = dout.application_id
+                    AND d2.decision_id = dout.decision_id
+              ){date_clause}
+            ORDER BY dout.decided_at DESC
+            LIMIT 200
+        """
         async with pool.acquire() as conn:
-            if only_auto:
-                rows = await conn.fetch(
-                    """
-                    SELECT dout.application_id, dout.outcome, dout.mode,
-                           dout.confidence, dout.decided_at, dout.acted_at,
-                           dout.human_action, dout.human_reviewer,
-                           dout.boundary_rule, dout.reasoning,
-                           es.mid_credit_score, es.ltv, es.dti_back
-                    FROM decision_outputs dout
-                    LEFT JOIN entity_states es
-                           ON es.application_id = dout.application_id
-                          AND es.tenant_id = dout.tenant_id
-                    WHERE dout.decision_id = $1
-                      AND dout.mode = 'auto_execute'
-                      AND dout.version = (
-                          SELECT MAX(version) FROM decision_outputs d2
-                          WHERE d2.application_id = dout.application_id
-                            AND d2.decision_id = dout.decision_id
-                      )
-                    ORDER BY dout.decided_at DESC
-                    LIMIT 200
-                    """,
-                    decision_id,
-                )
-            else:
-                rows = await conn.fetch(
-                    """
-                    SELECT dout.application_id, dout.outcome, dout.mode,
-                           dout.confidence, dout.decided_at, dout.acted_at,
-                           dout.human_action, dout.human_reviewer,
-                           dout.human_override_reason,
-                           dout.boundary_rule, dout.reasoning,
-                           es.mid_credit_score, es.ltv, es.dti_back
-                    FROM decision_outputs dout
-                    LEFT JOIN entity_states es
-                           ON es.application_id = dout.application_id
-                          AND es.tenant_id = dout.tenant_id
-                    WHERE dout.decision_id = $1
-                      AND (
-                          dout.mode = 'auto_execute'
-                          OR dout.human_action IS NOT NULL
-                      )
-                      AND dout.version = (
-                          SELECT MAX(version) FROM decision_outputs d2
-                          WHERE d2.application_id = dout.application_id
-                            AND d2.decision_id = dout.decision_id
-                      )
-                    ORDER BY dout.decided_at DESC
-                    LIMIT 200
-                    """,
-                    decision_id,
-                )
+            rows = await conn.fetch(sql, decision_id, *date_args)
         completed_rows = []
         for r in rows:
             d = dict(r)
@@ -1344,70 +1436,62 @@ async def persona_workbench(
         payload = {"completed_rows": completed_rows}
 
     elif tab == "analytics":
+        outcome_sql = f"""
+            SELECT outcome, COUNT(*) AS n FROM decision_outputs dout
+            WHERE decision_id = $1
+              AND version = (
+                  SELECT MAX(version) FROM decision_outputs d2
+                  WHERE d2.application_id = dout.application_id
+                    AND d2.decision_id = dout.decision_id
+              ){date_clause}
+            GROUP BY outcome
+        """
+        agg_sql = f"""
+            SELECT COUNT(*) AS total,
+                   AVG(confidence) AS avg_conf,
+                   AVG(actual_seconds) AS avg_sec,
+                   COUNT(*) FILTER (WHERE mode = 'auto_execute') AS auto,
+                   COUNT(*) FILTER (
+                       WHERE human_action = 'overridden'
+                   ) AS overrides,
+                   COUNT(*) FILTER (
+                       WHERE human_action IS NOT NULL
+                   ) AS reviewed
+            FROM decision_outputs dout
+            WHERE decision_id = $1
+              AND version = (
+                  SELECT MAX(version) FROM decision_outputs d2
+                  WHERE d2.application_id = dout.application_id
+                    AND d2.decision_id = dout.decision_id
+              ){date_clause}
+        """
+        rules_sql = f"""
+            SELECT COALESCE(boundary_rule, '(no rule)') AS rule,
+                   COUNT(*) AS n
+            FROM decision_outputs dout
+            WHERE decision_id = $1
+              AND version = (
+                  SELECT MAX(version) FROM decision_outputs d2
+                  WHERE d2.application_id = dout.application_id
+                    AND d2.decision_id = dout.decision_id
+              ){date_clause}
+            GROUP BY rule
+            ORDER BY n DESC
+            LIMIT 5
+        """
+        review_sql = f"""
+            SELECT AVG(EXTRACT(EPOCH FROM (acted_at - decided_at)))
+            FROM decision_outputs dout
+            WHERE decision_id = $1
+              AND human_action IS NOT NULL
+              AND acted_at IS NOT NULL{date_clause}
+        """
         async with pool.acquire() as conn:
-            outcome_dist = await conn.fetch(
-                """
-                SELECT outcome, COUNT(*) AS n FROM decision_outputs
-                WHERE decision_id = $1
-                  AND version = (
-                      SELECT MAX(version) FROM decision_outputs d2
-                      WHERE d2.application_id = decision_outputs.application_id
-                        AND d2.decision_id = decision_outputs.decision_id
-                  )
-                GROUP BY outcome
-                """,
-                decision_id,
-            )
-            agg = await conn.fetchrow(
-                """
-                SELECT COUNT(*) AS total,
-                       AVG(confidence) AS avg_conf,
-                       AVG(actual_seconds) AS avg_sec,
-                       COUNT(*) FILTER (
-                           WHERE mode = 'auto_execute'
-                       ) AS auto,
-                       COUNT(*) FILTER (
-                           WHERE human_action = 'overridden'
-                       ) AS overrides,
-                       COUNT(*) FILTER (
-                           WHERE human_action IS NOT NULL
-                       ) AS reviewed
-                FROM decision_outputs
-                WHERE decision_id = $1
-                  AND version = (
-                      SELECT MAX(version) FROM decision_outputs d2
-                      WHERE d2.application_id = decision_outputs.application_id
-                        AND d2.decision_id = decision_outputs.decision_id
-                  )
-                """,
-                decision_id,
-            )
-            top_rules = await conn.fetch(
-                """
-                SELECT COALESCE(boundary_rule, '(no rule)') AS rule,
-                       COUNT(*) AS n
-                FROM decision_outputs
-                WHERE decision_id = $1
-                  AND version = (
-                      SELECT MAX(version) FROM decision_outputs d2
-                      WHERE d2.application_id = decision_outputs.application_id
-                        AND d2.decision_id = decision_outputs.decision_id
-                  )
-                GROUP BY rule
-                ORDER BY n DESC
-                LIMIT 5
-                """,
-                decision_id,
-            )
+            outcome_dist = await conn.fetch(outcome_sql, decision_id, *date_args)
+            agg = await conn.fetchrow(agg_sql, decision_id, *date_args)
+            top_rules = await conn.fetch(rules_sql, decision_id, *date_args)
             avg_review = await conn.fetchval(
-                """
-                SELECT AVG(EXTRACT(EPOCH FROM (acted_at - decided_at)))
-                FROM decision_outputs
-                WHERE decision_id = $1
-                  AND human_action IS NOT NULL
-                  AND acted_at IS NOT NULL
-                """,
-                decision_id,
+                review_sql, decision_id, *date_args
             )
         total = int(agg["total"] or 0) if agg else 0
         reviewed = int(agg["reviewed"] or 0) if agg else 0
@@ -1431,6 +1515,16 @@ async def persona_workbench(
             }
         }
 
+    # Pre-baked query suffix the template uses on tab links so the
+    # selected range survives a tab switch.
+    qs_parts = [f"range={range_key}"]
+    if range_key == "custom":
+        if date_from_str:
+            qs_parts.append(f"from={date_from_str}")
+        if date_to_str:
+            qs_parts.append(f"to={date_to_str}")
+    range_query_suffix = "&" + "&".join(qs_parts)
+
     return templates.TemplateResponse(
         "persona_workbench.html",
         {
@@ -1441,9 +1535,107 @@ async def persona_workbench(
             "kpi": kpi,
             "summary_fields": summary_fields,
             "total_decisions": await _total_decisions(),
+            "range_key": range_key,
+            "range_label": RANGE_LABELS[range_key],
+            "range_options": [
+                (k, RANGE_LABELS[k].capitalize()) for k in RANGE_KEYS
+            ],
+            "date_from_str": date_from_str,
+            "date_to_str": date_to_str,
+            "range_query_suffix": range_query_suffix,
             **payload,
         },
     )
+
+
+async def _persona_in_queue_count(decision_id: str, mode: str) -> int:
+    """Current pending count for the In-Queue KPI card.
+
+    For human personas: decision_outputs WHERE human_action IS NULL.
+    For auto_execute: apps in entity_states without a decision row."""
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        if mode == "auto_execute":
+            decided = await conn.fetchval(
+                """
+                SELECT COUNT(*) FROM decision_outputs
+                WHERE decision_id = $1
+                  AND version = (
+                      SELECT MAX(version) FROM decision_outputs d2
+                      WHERE d2.application_id = decision_outputs.application_id
+                        AND d2.decision_id = decision_outputs.decision_id
+                  )
+                """,
+                decision_id,
+            )
+            total = await conn.fetchval(
+                "SELECT COUNT(*) FROM entity_states"
+            )
+            return max(0, int(total or 0) - int(decided or 0))
+        n = await conn.fetchval(
+            """
+            SELECT COUNT(*) FROM decision_outputs
+            WHERE decision_id = $1
+              AND mode IN ('human_approval', 'recommend')
+              AND human_action IS NULL
+              AND version = (
+                  SELECT MAX(version) FROM decision_outputs d2
+                  WHERE d2.application_id = decision_outputs.application_id
+                    AND d2.decision_id = decision_outputs.decision_id
+              )
+            """,
+            decision_id,
+        )
+    return int(n or 0)
+
+
+async def _persona_kpi_window(
+    decision_id: str,
+    start: Optional[datetime],
+    end: Optional[datetime],
+) -> dict[str, Any]:
+    """Date-bounded KPI numbers: completed count, auto-decided %, avg
+    human-review time. ``In Queue`` is computed separately and stays
+    unfiltered."""
+    pool = await _get_pool()
+    date_clause = ""
+    date_args: list[Any] = []
+    if start is not None:
+        date_args.append(start)
+        date_clause += f" AND dout.decided_at >= ${len(date_args) + 1}"
+    if end is not None:
+        date_args.append(end)
+        date_clause += f" AND dout.decided_at < ${len(date_args) + 1}"
+
+    sql = f"""
+        SELECT COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE mode = 'auto_execute') AS auto,
+               AVG(
+                   CASE WHEN acted_at IS NOT NULL AND decided_at IS NOT NULL
+                        THEN EXTRACT(EPOCH FROM (acted_at - decided_at))
+                   END
+               ) AS avg_review_sec
+        FROM decision_outputs dout
+        WHERE decision_id = $1
+          AND version = (
+              SELECT MAX(version) FROM decision_outputs d2
+              WHERE d2.application_id = dout.application_id
+                AND d2.decision_id = dout.decision_id
+          ){date_clause}
+    """
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(sql, decision_id, *date_args)
+
+    total = int(row["total"] or 0) if row else 0
+    auto = int(row["auto"] or 0) if row else 0
+    return {
+        "completed": total,
+        "auto_pct": round(auto * 100 / total, 1) if total else 0.0,
+        "avg_review_sec": (
+            float(row["avg_review_sec"]) if row and row["avg_review_sec"] is not None
+            else 0.0
+        ),
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────

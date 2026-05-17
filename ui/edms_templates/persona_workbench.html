@@ -15,22 +15,55 @@
   </div>
 </header>
 
+<div class="flex items-end justify-between mb-3">
+  <div class="text-xs text-slate-500">
+    Showing data for <span class="font-medium text-slate-700">{{ range_label }}</span>
+  </div>
+  <form method="get" action="/workbench/{{ persona.slug }}"
+        class="flex items-center gap-2">
+    <input type="hidden" name="tab" value="{{ tab }}" />
+    <label class="text-xs text-slate-500">Range</label>
+    <select name="range"
+            onchange="if (this.value !== 'custom') { this.form.submit(); }"
+            class="text-sm border border-slate-300 rounded px-2 py-1 bg-white">
+      {% for k, label in range_options %}
+        <option value="{{ k }}" {% if range_key == k %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    {% if range_key == 'custom' %}
+      <input type="date" name="from" value="{{ date_from_str or '' }}"
+             class="text-xs border border-slate-300 rounded px-2 py-1" />
+      <span class="text-xs text-slate-400">→</span>
+      <input type="date" name="to" value="{{ date_to_str or '' }}"
+             class="text-xs border border-slate-300 rounded px-2 py-1" />
+      <button type="submit"
+              class="text-xs px-3 py-1 bg-slate-800 hover:bg-slate-900 text-white rounded">
+        Apply
+      </button>
+    {% endif %}
+  </form>
+</div>
+
 <section class="grid grid-cols-4 gap-3 mb-5">
   <div class="bg-white border border-slate-200 rounded p-4">
     <div class="text-[11px] uppercase tracking-wider text-slate-500">In queue</div>
     <div class="mt-1 text-2xl font-semibold {% if kpi.in_queue and kpi.in_queue > 0 %}text-orange-600{% else %}text-slate-400{% endif %}">{{ kpi.in_queue or 0 }}</div>
+    <div class="text-[10px] text-slate-400 mt-1">current</div>
   </div>
   <div class="bg-white border border-slate-200 rounded p-4">
     <div class="text-[11px] uppercase tracking-wider text-slate-500">Completed</div>
     <div class="mt-1 text-2xl font-semibold text-slate-900">{{ kpi.completed or 0 }}</div>
+    <div class="text-[10px] text-slate-400 mt-1">{{ range_label }}</div>
   </div>
   <div class="bg-white border border-slate-200 rounded p-4">
     <div class="text-[11px] uppercase tracking-wider text-slate-500">Auto cleared</div>
     <div class="mt-1 text-2xl font-semibold text-emerald-700">{{ kpi.auto_pct or 0 }}%</div>
+    <div class="text-[10px] text-slate-400 mt-1">{{ range_label }}</div>
   </div>
   <div class="bg-white border border-slate-200 rounded p-4">
     <div class="text-[11px] uppercase tracking-wider text-slate-500">Avg review time</div>
     <div class="mt-1 text-2xl font-semibold text-slate-700">{{ kpi.avg_review_sec | fmt_seconds }}</div>
+    <div class="text-[10px] text-slate-400 mt-1">{{ range_label }}</div>
   </div>
 </section>
 
@@ -42,7 +75,7 @@
     ('analytics', 'Analytics'),
   ] %}
   {% for slug, label in tabs %}
-    <a href="/workbench/{{ persona.slug }}?tab={{ slug }}"
+    <a href="/workbench/{{ persona.slug }}?tab={{ slug }}{{ range_query_suffix }}"
        class="px-4 py-2 text-sm border-b-2
               {% if tab == slug %}border-{{ persona.color }}-500 text-slate-900 font-medium{% else %}border-transparent text-slate-500 hover:text-slate-800{% endif %}">
       {{ label }}
