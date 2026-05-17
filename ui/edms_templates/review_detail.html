@@ -1,36 +1,26 @@
-{% extends "base_edms.html" %}
-{% set active_nav = 'queue' %}
-{% block title %}Review · {{ decision_label }} · {{ application_id }}{% endblock %}
+{% extends "base_workbench.html" %}
+{% block title %}Review · {{ persona.title }} · {{ application_id }}{% endblock %}
 {% block content %}
 <nav class="text-xs text-slate-500 mb-3">
-  <a href="/workbench/queue" class="hover:underline">Review Queue</a>
+  <a href="/workbench" class="hover:underline">Home</a>
   <span class="mx-1">›</span>
-  <a href="/workbench/queue/{{ decision_id }}" class="hover:underline">{{ decision_label }}</a>
+  <a href="/workbench/{{ persona.slug }}" class="hover:underline">{{ persona.title }}</a>
   <span class="mx-1">›</span>
   <span class="text-slate-900 mono">{{ application_id }}</span>
 </nav>
 
-<header class="mb-6 flex items-end justify-between">
-  <div>
-    <h1 class="text-2xl font-semibold tracking-tight">
-      {{ decision_label }}
+<header class="mb-5 flex items-start gap-4">
+  <span class="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-{{ persona.color }}-100 text-{{ persona.color }}-700 text-sm font-semibold">{{ persona.icon }}</span>
+  <div class="flex-1 min-w-0">
+    <h1 class="text-xl font-semibold tracking-tight">
+      {{ persona.title }}
       <span class="mono text-sm text-slate-400 font-normal ml-2">{{ application_id }}</span>
     </h1>
-    <p class="text-sm text-slate-500 mt-1">
-      Wave {{ wave }} · risk {{ risk }}
-      {% if entity %}
-        · credit {{ entity.mid_credit_score | fmt_value }}
-        · LTV {{ entity.ltv | fmt_pct }}
-        · DTI {{ entity.dti_back | fmt_pct }}
-        · {{ entity.loan_amount | fmt_money }}
-      {% endif %}
-    </p>
+    <p class="text-xs text-slate-500 mt-0.5">{{ persona.description }}</p>
   </div>
-  <div class="text-xs text-slate-500">
+  <div class="text-right text-xs text-slate-500">
     {% if queue_position %}
-      {{ queue_position }} of {{ queue_total }} in queue
-    {% else %}
-      {{ queue_total }} pending
+      <div><span class="font-semibold text-slate-900">{{ queue_position }}</span> of {{ queue_total }} in queue</div>
     {% endif %}
   </div>
 </header>
@@ -41,158 +31,157 @@
   </div>
 {% else %}
 
-<div class="grid grid-cols-12 gap-6">
+<div class="grid grid-cols-12 gap-5">
+  <section class="col-span-7 space-y-4">
 
-  <!-- LEFT: CONTEXT -->
-  <section class="col-span-5 space-y-4">
+    <!-- Loan summary strip -->
+    {% if entity %}
+      <div class="bg-white border border-slate-200 rounded-lg px-5 py-3">
+        <div class="grid grid-cols-6 gap-3 text-xs">
+          <div><div class="text-slate-500">Application</div><div class="mono mt-0.5">{{ entity.application_id }}</div></div>
+          <div><div class="text-slate-500">Mid credit</div>
+            {% set cc = entity.mid_credit_score | credit_color %}
+            <div class="mt-0.5 font-semibold text-{{ cc }}-700">{{ entity.mid_credit_score | fmt_value }}</div>
+          </div>
+          <div><div class="text-slate-500">LTV</div><div class="mt-0.5 font-medium">{{ entity.ltv | fmt_pct }}</div></div>
+          <div><div class="text-slate-500">DTI</div><div class="mt-0.5 font-medium">{{ entity.dti_back | fmt_pct }}</div></div>
+          <div><div class="text-slate-500">Loan</div><div class="mt-0.5 font-medium">{{ entity.loan_amount | fmt_money }}</div></div>
+          <div><div class="text-slate-500">Status</div><div class="mt-0.5">{{ entity.status or '—' }}</div></div>
+        </div>
+      </div>
+    {% endif %}
+
+    <!-- Context card -->
     <div class="bg-white border border-slate-200 rounded-lg p-5">
       <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
-        Context — {{ decision_label }}
+        Context — {{ persona.title }}
       </div>
-      {% if context_groups %}
-        {% for grp in context_groups %}
-          <div class="mb-4 last:mb-0">
-            <div class="text-xs font-medium text-slate-600 mb-2">
-              {{ grp.object_type }}
-              <span class="mono text-slate-400 ml-1">{{ grp.entity_id }}</span>
-            </div>
-            <dl class="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
-              {% for f in grp.fields %}
-                {% set sc = f.key | signal_color %}
-                <dt class="text-slate-500 font-medium">{{ f.key }}</dt>
-                <dd class="text-{{ sc }}-700 mono">{{ f.value | fmt_value }}</dd>
-              {% endfor %}
-            </dl>
-          </div>
+      <dl class="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+        {% for f in key_field_rows %}
+          <dt class="text-slate-500">{{ f.key }}</dt>
+          <dd class="text-slate-800">
+            {% if f.value is boolean %}
+              {% if f.value %}
+                <span class="text-emerald-700 font-medium">✓ yes</span>
+              {% else %}
+                <span class="text-rose-700 font-medium">✗ no</span>
+              {% endif %}
+            {% elif 'credit_score' in f.key %}
+              {% set cc = f.value | credit_color %}
+              <span class="text-{{ cc }}-700 font-medium">{{ f.value | fmt_value }}</span>
+            {% else %}
+              {{ f.key | fmt_field(f.value) if false else f.value | fmt_value }}
+            {% endif %}
+          </dd>
         {% endfor %}
-      {% else %}
-        <div class="text-xs text-slate-400">
-          No context rows in <code class="mono">vw_{{ decision_id }}_context</code> for this application.
-        </div>
-      {% endif %}
+      </dl>
     </div>
+
+    <!-- Upstream decisions -->
+    {% if upstreams %}
+      <div class="bg-white border border-slate-200 rounded-lg p-5">
+        <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
+          Upstream decisions
+        </div>
+        <table class="min-w-full text-sm">
+          <thead class="text-xs text-slate-500">
+            <tr><th class="text-left py-1.5">Decision</th><th class="text-left">Persona</th><th class="text-left">Outcome</th><th class="text-right">Confidence</th></tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            {% for u in upstreams %}
+              {% set oc = u.outcome | outcome_color %}
+              <tr>
+                <td class="py-1.5 mono text-xs text-slate-600">{{ u.decision_id }}</td>
+                <td class="py-1.5">
+                  {% if u.persona_slug %}
+                    <a href="/workbench/{{ u.persona_slug }}" class="text-{{ u.persona_color }}-700 hover:underline">{{ u.persona_title }}</a>
+                  {% else %}
+                    {{ u.persona_title }}
+                  {% endif %}
+                </td>
+                <td class="py-1.5"><span class="text-xs px-2 py-0.5 rounded bg-{{ oc }}-100 text-{{ oc }}-700 font-medium">{{ u.outcome }}</span></td>
+                <td class="py-1.5 text-right mono">{{ '%.2f' % (u.confidence or 0) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+
   </section>
 
-  <!-- MIDDLE: PROPOSED DECISION -->
-  <section class="col-span-4 space-y-4">
+  <!-- RIGHT column: decision + actions -->
+  <aside class="col-span-5 space-y-4">
+
     <div class="bg-white border border-slate-200 rounded-lg p-5">
-      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
-        Proposed Decision
-      </div>
+      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Proposed Decision</div>
       {% set color = decision.outcome | outcome_color %}
       <div class="flex items-center gap-3 mb-4">
-        <span class="px-3 py-1.5 rounded text-sm font-semibold bg-{{ color }}-100 text-{{ color }}-800 uppercase tracking-wider">
-          {{ decision.outcome }}
-        </span>
+        <span class="px-3 py-1.5 rounded text-sm font-semibold bg-{{ color }}-100 text-{{ color }}-800 uppercase tracking-wider">{{ decision.outcome }}</span>
         <span class="text-xs text-slate-500">mode {{ decision.mode }}</span>
       </div>
-
       <div class="mb-4">
         <div class="text-xs text-slate-500 mb-1">Confidence</div>
         <div class="flex items-center gap-2">
           <div class="flex-1 bg-slate-200 rounded h-1.5">
-            <div class="h-1.5 bg-blue-600 rounded" style="width: {{ (decision.confidence or 0) * 100 }}%"></div>
+            <div class="h-1.5 bg-{{ persona.color }}-600 rounded" style="width: {{ (decision.confidence or 0) * 100 }}%"></div>
           </div>
-          <span class="mono text-xs text-slate-600">{{ '%.2f' % (decision.confidence or 0) }}</span>
+          <span class="mono text-xs text-slate-700">{{ '%.2f' % (decision.confidence or 0) }}</span>
         </div>
       </div>
-
-      {% if decision.boundary_matched %}
-        <div class="mb-3 text-xs">
-          <div class="text-slate-500">Boundary matched</div>
-          <div class="mono text-slate-800 mt-0.5">{{ decision.boundary_matched }}</div>
-        </div>
-      {% endif %}
       {% if decision.boundary_rule %}
-        <div class="mb-3 text-xs">
+        <div class="text-xs">
           <div class="text-slate-500">Boundary rule</div>
-          <div class="text-slate-700 mt-0.5">{{ decision.boundary_rule }}</div>
+          <div class="text-slate-800 mt-0.5">{{ decision.boundary_rule }}</div>
         </div>
       {% endif %}
+    </div>
 
-      {% if decision.reasoning %}
-        <div class="mt-4 pt-4 border-t border-slate-100 space-y-3 text-xs">
+    {% if decision.reasoning %}
+      <div class="bg-white border border-slate-200 rounded-lg p-5">
+        <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Reasoning</div>
+        <div class="space-y-3 text-xs">
           {% if decision.reasoning.hypothesis %}
-            <div>
-              <div class="text-slate-500 font-medium">Hypothesis</div>
-              <div class="text-slate-800 mt-0.5">{{ decision.reasoning.hypothesis }}</div>
-            </div>
+            <div><div class="text-slate-500 font-medium">Hypothesis</div><div class="text-slate-800 mt-0.5">{{ decision.reasoning.hypothesis }}</div></div>
           {% endif %}
           {% if decision.reasoning.conclusion %}
-            <div>
-              <div class="text-slate-500 font-medium">Conclusion</div>
-              <div class="text-slate-800 mt-0.5">{{ decision.reasoning.conclusion }}</div>
-            </div>
+            <div><div class="text-slate-500 font-medium">Conclusion</div><div class="text-slate-800 mt-0.5">{{ decision.reasoning.conclusion }}</div></div>
           {% endif %}
           {% if decision.reasoning.signals %}
             <div>
-              <div class="text-slate-500 font-medium">Signals</div>
-              <ul class="mt-1 space-y-0.5">
+              <div class="text-slate-500 font-medium mb-1">Signals</div>
+              <ul class="space-y-0.5">
                 {% for s in decision.reasoning.signals %}
                   <li class="flex items-center gap-2">
                     <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
                     <span class="mono text-slate-700">{{ s.name }}</span>
-                    <span class="text-slate-500 ml-auto mono">{{ s.value | fmt_value }}</span>
+                    <span class="ml-auto mono text-slate-500">{{ s.value | fmt_value }}</span>
                   </li>
                 {% endfor %}
               </ul>
             </div>
           {% endif %}
         </div>
-      {% endif %}
-    </div>
-
-    {% if decision.upstream_decisions %}
-      <div class="bg-white border border-slate-200 rounded-lg p-5">
-        <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
-          Upstream decisions
-        </div>
-        <table class="w-full text-xs">
-          {% for upid, val in decision.upstream_decisions.items() %}
-            <tr class="border-t border-slate-100 first:border-t-0">
-              <td class="py-1.5 mono text-slate-700">{{ upid }}</td>
-              <td class="py-1.5">
-                {% set uc = val.outcome | outcome_color %}
-                <span class="px-1.5 py-0.5 rounded bg-{{ uc }}-100 text-{{ uc }}-700">{{ val.outcome }}</span>
-              </td>
-              <td class="py-1.5 mono text-slate-500 text-right">{{ '%.2f' % (val.confidence or 0) }}</td>
-            </tr>
-          {% endfor %}
-        </table>
       </div>
     {% endif %}
-  </section>
 
-  <!-- RIGHT: ACTIONS -->
-  <section class="col-span-3 space-y-4">
     <div class="bg-white border border-slate-200 rounded-lg p-5">
-      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
-        Review Actions
-      </div>
+      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Actions</div>
 
       {% if decision.human_action %}
         <div class="rounded bg-emerald-50 border border-emerald-200 p-3 text-xs">
           <div class="font-semibold text-emerald-900">{{ decision.human_action }}</div>
-          {% if decision.human_reviewer %}
-            <div class="text-emerald-700 mt-1">by {{ decision.human_reviewer }}</div>
-          {% endif %}
-          {% if decision.human_override_reason %}
-            <div class="text-emerald-700 mt-2">{{ decision.human_override_reason }}</div>
-          {% endif %}
+          {% if decision.human_reviewer %}<div class="text-emerald-700 mt-1">by {{ decision.human_reviewer }}</div>{% endif %}
+          {% if decision.human_override_reason %}<div class="text-emerald-700 mt-2">{{ decision.human_override_reason }}</div>{% endif %}
         </div>
       {% else %}
-        <form method="post"
-              action="/workbench/review/{{ application_id }}/{{ decision_id }}/approve"
-              class="space-y-3">
+        <form method="post" action="/workbench/{{ persona.slug }}/review/{{ application_id }}/approve" class="space-y-3">
           <div>
-            <label class="text-xs text-slate-600 block mb-1">Reviewer</label>
-            <input name="reviewer" type="text" required
-                   class="w-full text-sm border border-slate-300 rounded px-2 py-1.5"
-                   placeholder="your name" />
+            <label class="text-xs text-slate-600 block mb-1">Reviewer name</label>
+            <input name="reviewer" type="text" required class="w-full text-sm border border-slate-300 rounded px-2 py-1.5" placeholder="your name" />
           </div>
-          <button type="submit"
-                  class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium px-3 py-2 rounded">
-            Approve as {{ decision.outcome }}
+          <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-3 py-2 rounded">
+            {% if decision.outcome == 'allow' %}Approve{% else %}Approve as {{ decision.outcome }}{% endif %}
           </button>
         </form>
 
@@ -202,19 +191,14 @@
           <div class="flex-1 border-t border-slate-200"></div>
         </div>
 
-        <form method="post"
-              action="/workbench/review/{{ application_id }}/{{ decision_id }}/override"
-              class="space-y-3">
+        <form method="post" action="/workbench/{{ persona.slug }}/review/{{ application_id }}/override" class="space-y-3">
           <div>
-            <label class="text-xs text-slate-600 block mb-1">Reviewer</label>
-            <input name="reviewer" type="text" required
-                   class="w-full text-sm border border-slate-300 rounded px-2 py-1.5"
-                   placeholder="your name" />
+            <label class="text-xs text-slate-600 block mb-1">Reviewer name</label>
+            <input name="reviewer" type="text" required class="w-full text-sm border border-slate-300 rounded px-2 py-1.5" placeholder="your name" />
           </div>
           <div>
-            <label class="text-xs text-slate-600 block mb-1">New outcome</label>
-            <select name="new_outcome" required
-                    class="w-full text-sm border border-slate-300 rounded px-2 py-1.5">
+            <label class="text-xs text-slate-600 block mb-1">Override to</label>
+            <select name="new_outcome" required class="w-full text-sm border border-slate-300 rounded px-2 py-1.5">
               <option value="allow">allow</option>
               <option value="recommend">recommend</option>
               <option value="escalate">escalate</option>
@@ -222,13 +206,10 @@
             </select>
           </div>
           <div>
-            <label class="text-xs text-slate-600 block mb-1">Override reason</label>
-            <textarea name="override_reason" rows="3" required
-                      class="w-full text-sm border border-slate-300 rounded px-2 py-1.5"
-                      placeholder="why are you overriding the AI?"></textarea>
+            <label class="text-xs text-slate-600 block mb-1">Reason</label>
+            <textarea name="reason" rows="3" required class="w-full text-sm border border-slate-300 rounded px-2 py-1.5" placeholder="why are you overriding?"></textarea>
           </div>
-          <button type="submit"
-                  class="w-full bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium px-3 py-2 rounded">
+          <button type="submit" class="w-full bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold px-3 py-2 rounded">
             Submit Override
           </button>
         </form>
@@ -237,27 +218,20 @@
 
     <div class="bg-white border border-slate-200 rounded-lg p-3 flex items-center gap-2 text-xs">
       {% if prev_id %}
-        <a href="/workbench/review/{{ prev_id }}/{{ decision_id }}"
-           class="px-3 py-1.5 rounded border border-slate-200 hover:bg-slate-50">← Prev</a>
+        <a href="/workbench/{{ persona.slug }}/review/{{ prev_id }}" class="px-3 py-1.5 rounded border border-slate-200 hover:bg-slate-50">← Previous</a>
       {% else %}
-        <span class="px-3 py-1.5 rounded border border-slate-100 text-slate-300">← Prev</span>
+        <span class="px-3 py-1.5 rounded border border-slate-100 text-slate-300">← Previous</span>
       {% endif %}
-      <a href="/workbench/queue/{{ decision_id }}"
-         class="px-3 py-1.5 rounded border border-slate-200 hover:bg-slate-50">Queue</a>
+      <a href="/workbench/{{ persona.slug }}" class="px-3 py-1.5 rounded border border-slate-200 hover:bg-slate-50">Back to queue</a>
       {% if next_id %}
-        <a href="/workbench/review/{{ next_id }}/{{ decision_id }}"
-           class="ml-auto px-3 py-1.5 rounded border border-slate-200 hover:bg-slate-50">Next →</a>
+        <a href="/workbench/{{ persona.slug }}/review/{{ next_id }}" class="ml-auto px-3 py-1.5 rounded border border-slate-200 hover:bg-slate-50">Next →</a>
       {% else %}
         <span class="ml-auto px-3 py-1.5 rounded border border-slate-100 text-slate-300">Next →</span>
       {% endif %}
     </div>
 
-    <div class="text-xs text-slate-400 px-1">
-      <a href="/workbench/app/{{ application_id }}" class="hover:underline">View full app journey →</a>
-    </div>
-  </section>
+  </aside>
 </div>
 
 {% endif %}
-
 {% endblock %}

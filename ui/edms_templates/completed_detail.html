@@ -1,0 +1,162 @@
+{% extends "base_workbench.html" %}
+{% block title %}Completed · {{ persona.title }} · {{ application_id }}{% endblock %}
+{% block content %}
+<nav class="text-xs text-slate-500 mb-3">
+  <a href="/workbench" class="hover:underline">Home</a>
+  <span class="mx-1">›</span>
+  <a href="/workbench/{{ persona.slug }}?tab=completed" class="hover:underline">{{ persona.title }} — Completed</a>
+  <span class="mx-1">›</span>
+  <span class="text-slate-900 mono">{{ application_id }}</span>
+</nav>
+
+<div class="bg-slate-100 border border-slate-200 rounded-lg px-4 py-2 mb-4 text-sm text-slate-700 flex items-center gap-3">
+  <span class="font-semibold">Decision is final.</span>
+  {% if decision and decision.human_action %}
+    <span class="text-slate-500">
+      {{ decision.human_action }}{% if decision.human_reviewer %} by {{ decision.human_reviewer }}{% endif %}{% if decision.acted_at %} · {{ decision.acted_at | humanize_age }}{% endif %}
+    </span>
+  {% elif decision and decision.mode == 'auto_execute' %}
+    <span class="text-slate-500">Auto-cleared{% if decision.decided_at %} · {{ decision.decided_at | humanize_age }}{% endif %}</span>
+  {% endif %}
+  <a href="/workbench/audit/{{ application_id }}" class="ml-auto text-blue-700 hover:underline text-xs">Full audit trail →</a>
+</div>
+
+<header class="mb-5 flex items-start gap-4">
+  <span class="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-{{ persona.color }}-100 text-{{ persona.color }}-700 text-sm font-semibold">{{ persona.icon }}</span>
+  <div class="flex-1 min-w-0">
+    <h1 class="text-xl font-semibold tracking-tight">
+      {{ persona.title }}
+      <span class="mono text-sm text-slate-400 font-normal ml-2">{{ application_id }}</span>
+    </h1>
+    <p class="text-xs text-slate-500 mt-0.5">{{ persona.description }}</p>
+  </div>
+</header>
+
+{% if not decision %}
+  <div class="bg-amber-50 border border-amber-200 rounded p-4 text-sm text-amber-800">
+    No decision_outputs row for this (application, decision) pair.
+  </div>
+{% else %}
+
+<div class="grid grid-cols-12 gap-5">
+  <section class="col-span-7 space-y-4">
+
+    {% if entity %}
+      <div class="bg-white border border-slate-200 rounded-lg px-5 py-3">
+        <div class="grid grid-cols-6 gap-3 text-xs">
+          <div><div class="text-slate-500">Application</div><div class="mono mt-0.5">{{ entity.application_id }}</div></div>
+          <div><div class="text-slate-500">Mid credit</div>{% set cc = entity.mid_credit_score | credit_color %}<div class="mt-0.5 font-semibold text-{{ cc }}-700">{{ entity.mid_credit_score | fmt_value }}</div></div>
+          <div><div class="text-slate-500">LTV</div><div class="mt-0.5 font-medium">{{ entity.ltv | fmt_pct }}</div></div>
+          <div><div class="text-slate-500">DTI</div><div class="mt-0.5 font-medium">{{ entity.dti_back | fmt_pct }}</div></div>
+          <div><div class="text-slate-500">Loan</div><div class="mt-0.5 font-medium">{{ entity.loan_amount | fmt_money }}</div></div>
+          <div><div class="text-slate-500">Status</div><div class="mt-0.5">{{ entity.status or '—' }}</div></div>
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="bg-white border border-slate-200 rounded-lg p-5">
+      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Context — {{ persona.title }}</div>
+      <dl class="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+        {% for f in key_field_rows %}
+          <dt class="text-slate-500">{{ f.key }}</dt>
+          <dd class="text-slate-800">
+            {% if f.value is boolean %}
+              {% if f.value %}<span class="text-emerald-700 font-medium">✓ yes</span>{% else %}<span class="text-rose-700 font-medium">✗ no</span>{% endif %}
+            {% elif 'credit_score' in f.key %}
+              {% set cc = f.value | credit_color %}<span class="text-{{ cc }}-700 font-medium">{{ f.value | fmt_value }}</span>
+            {% else %}
+              {{ f.value | fmt_value }}
+            {% endif %}
+          </dd>
+        {% endfor %}
+      </dl>
+    </div>
+
+    {% if upstreams %}
+      <div class="bg-white border border-slate-200 rounded-lg p-5">
+        <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Upstream decisions</div>
+        <table class="min-w-full text-sm">
+          <tbody class="divide-y divide-slate-100">
+            {% for u in upstreams %}
+              {% set oc = u.outcome | outcome_color %}
+              <tr>
+                <td class="py-1.5">
+                  {% if u.persona_slug %}
+                    <a href="/workbench/{{ u.persona_slug }}/completed/{{ application_id }}" class="text-{{ u.persona_color }}-700 hover:underline">{{ u.persona_title }}</a>
+                  {% else %}{{ u.persona_title }}{% endif %}
+                </td>
+                <td class="py-1.5"><span class="text-xs px-2 py-0.5 rounded bg-{{ oc }}-100 text-{{ oc }}-700 font-medium">{{ u.outcome }}</span></td>
+                <td class="py-1.5 text-right mono">{{ '%.2f' % (u.confidence or 0) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+
+  </section>
+
+  <aside class="col-span-5 space-y-4">
+    <div class="bg-white border border-slate-200 rounded-lg p-5">
+      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Final Decision</div>
+      {% set color = decision.outcome | outcome_color %}
+      <div class="flex items-center gap-3 mb-4">
+        <span class="px-3 py-1.5 rounded text-sm font-semibold bg-{{ color }}-100 text-{{ color }}-800 uppercase tracking-wider">{{ decision.outcome }}</span>
+        <span class="text-xs text-slate-500">mode {{ decision.mode }}</span>
+      </div>
+      <div class="mb-3 text-xs">
+        <div class="text-slate-500">Confidence</div>
+        <div class="mt-1 flex items-center gap-2">
+          <div class="flex-1 bg-slate-200 rounded h-1.5"><div class="h-1.5 bg-{{ persona.color }}-600 rounded" style="width: {{ (decision.confidence or 0) * 100 }}%"></div></div>
+          <span class="mono">{{ '%.2f' % (decision.confidence or 0) }}</span>
+        </div>
+      </div>
+      {% if decision.boundary_rule %}
+        <div class="text-xs">
+          <div class="text-slate-500">Boundary rule</div>
+          <div class="text-slate-800 mt-0.5">{{ decision.boundary_rule }}</div>
+        </div>
+      {% endif %}
+    </div>
+
+    {% if decision.human_action %}
+      <div class="bg-white border border-slate-200 rounded-lg p-5">
+        <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Human action</div>
+        <dl class="text-xs space-y-1.5">
+          <div class="flex justify-between"><dt class="text-slate-500">Action</dt><dd class="font-semibold text-slate-900">{{ decision.human_action }}</dd></div>
+          <div class="flex justify-between"><dt class="text-slate-500">Reviewer</dt><dd class="font-medium text-slate-900">{{ decision.human_reviewer or '—' }}</dd></div>
+          <div class="flex justify-between"><dt class="text-slate-500">At</dt><dd>{{ decision.acted_at | humanize_age }}</dd></div>
+          {% if decision.human_override_reason %}
+            <div class="pt-2 border-t border-slate-100">
+              <dt class="text-slate-500">Reason</dt>
+              <dd class="text-slate-800 mt-1">{{ decision.human_override_reason }}</dd>
+            </div>
+          {% endif %}
+        </dl>
+      </div>
+    {% endif %}
+
+    {% if decision.reasoning %}
+      <div class="bg-white border border-slate-200 rounded-lg p-5">
+        <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Reasoning</div>
+        <div class="space-y-3 text-xs">
+          {% if decision.reasoning.hypothesis %}<div><div class="text-slate-500 font-medium">Hypothesis</div><div class="text-slate-800 mt-0.5">{{ decision.reasoning.hypothesis }}</div></div>{% endif %}
+          {% if decision.reasoning.conclusion %}<div><div class="text-slate-500 font-medium">Conclusion</div><div class="text-slate-800 mt-0.5">{{ decision.reasoning.conclusion }}</div></div>{% endif %}
+          {% if decision.reasoning.signals %}
+            <div>
+              <div class="text-slate-500 font-medium mb-1">Signals</div>
+              <ul class="space-y-0.5">
+                {% for s in decision.reasoning.signals %}
+                  <li class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span><span class="mono text-slate-700">{{ s.name }}</span><span class="ml-auto mono text-slate-500">{{ s.value | fmt_value }}</span></li>
+                {% endfor %}
+              </ul>
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    {% endif %}
+  </aside>
+</div>
+
+{% endif %}
+{% endblock %}

@@ -1,0 +1,110 @@
+{% extends "base_workbench.html" %}
+{% block title %}Governance{% endblock %}
+{% block content %}
+<header class="mb-5 flex items-end justify-between">
+  <div>
+    <h1 class="text-2xl font-semibold tracking-tight">Governance</h1>
+    <p class="text-sm text-slate-500 mt-1">Outcome distribution, override patterns, SLA compliance.</p>
+  </div>
+  <a href="/workbench/governance/export.csv"
+     class="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white text-xs font-medium rounded">
+    Export decision_outputs.csv
+  </a>
+</header>
+
+<section class="bg-white border border-slate-200 rounded-lg overflow-hidden mb-6">
+  <div class="px-5 pt-4 pb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Outcome distribution · persona × outcome</div>
+  <table class="min-w-full text-sm">
+    <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+      <tr>
+        <th class="text-left px-4 py-2">Persona</th>
+        <th class="text-right px-4 py-2">Allow</th>
+        <th class="text-right px-4 py-2">Recommend</th>
+        <th class="text-right px-4 py-2">Escalate</th>
+        <th class="text-right px-4 py-2">Block</th>
+        <th class="text-right px-4 py-2">Total</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-100">
+      {% for r in outcome_grid %}
+        <tr>
+          <td class="px-4 py-1.5">
+            {% if r.persona_slug %}
+              <a href="/workbench/{{ r.persona_slug }}" class="text-{{ r.persona_color }}-700 hover:underline">{{ r.persona_title }}</a>
+            {% else %}{{ r.persona_title }}{% endif %}
+          </td>
+          <td class="px-4 py-1.5 text-right text-emerald-700 mono">{{ r.allow }}</td>
+          <td class="px-4 py-1.5 text-right text-amber-700 mono">{{ r.recommend }}</td>
+          <td class="px-4 py-1.5 text-right text-orange-700 mono">{{ r.escalate }}</td>
+          <td class="px-4 py-1.5 text-right text-rose-700 mono">{{ r.block }}</td>
+          <td class="px-4 py-1.5 text-right font-semibold mono">{{ r.total }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="grid grid-cols-2 gap-5 mb-6">
+  <div class="bg-white border border-slate-200 rounded-lg p-5">
+    <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Overrides by reviewer</div>
+    {% if overrides_by_reviewer %}
+      <table class="min-w-full text-sm">
+        <thead class="text-xs text-slate-500"><tr><th class="text-left py-1.5">Reviewer</th><th class="text-right">Overrides</th><th class="text-right">Personas</th></tr></thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for r in overrides_by_reviewer %}
+            <tr><td class="py-1.5">{{ r.human_reviewer or '(anonymous)' }}</td><td class="py-1.5 text-right mono">{{ r.n }}</td><td class="py-1.5 text-right mono text-slate-500">{{ r.distinct_personas }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="text-sm text-slate-400">No overrides recorded yet.</div>
+    {% endif %}
+  </div>
+
+  <div class="bg-white border border-slate-200 rounded-lg p-5">
+    <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Overrides by reason</div>
+    {% if overrides_by_reason %}
+      <table class="min-w-full text-sm">
+        <thead class="text-xs text-slate-500"><tr><th class="text-left py-1.5">Reason</th><th class="text-right">Count</th></tr></thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for r in overrides_by_reason %}
+            <tr><td class="py-1.5 text-slate-700">{{ r.reason }}</td><td class="py-1.5 text-right mono">{{ r.n }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="text-sm text-slate-400">No override reasons recorded yet.</div>
+    {% endif %}
+  </div>
+</section>
+
+<section class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+  <div class="px-5 pt-4 pb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">SLA tracking</div>
+  <table class="min-w-full text-sm">
+    <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+      <tr>
+        <th class="text-left px-4 py-2">Persona</th>
+        <th class="text-right px-4 py-2">Within SLA</th>
+        <th class="text-right px-4 py-2">Total</th>
+        <th class="text-right px-4 py-2">SLA rate</th>
+        <th class="text-right px-4 py-2">Avg actual</th>
+        <th class="text-right px-4 py-2">Avg SLA target</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-100">
+      {% for r in sla %}
+        <tr>
+          <td class="px-4 py-1.5"><span class="text-{{ r.persona_color }}-700">{{ r.persona_title }}</span></td>
+          <td class="px-4 py-1.5 text-right mono">{{ r.within_sla }}</td>
+          <td class="px-4 py-1.5 text-right mono text-slate-500">{{ r.total }}</td>
+          <td class="px-4 py-1.5 text-right font-semibold {% if r.sla_pct >= 95 %}text-emerald-700{% elif r.sla_pct >= 80 %}text-amber-700{% else %}text-rose-700{% endif %}">{{ r.sla_pct }}%</td>
+          <td class="px-4 py-1.5 text-right mono">{{ r.avg_sec | fmt_seconds }}</td>
+          <td class="px-4 py-1.5 text-right mono text-slate-500">{{ r.avg_sla | fmt_seconds }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6" class="px-4 py-10 text-center text-slate-400">No SLA data recorded yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

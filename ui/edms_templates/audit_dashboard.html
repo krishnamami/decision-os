@@ -1,0 +1,95 @@
+{% extends "base_workbench.html" %}
+{% block title %}Audit{% endblock %}
+{% block content %}
+<header class="mb-5">
+  <h1 class="text-2xl font-semibold tracking-tight">Audit</h1>
+  <p class="text-sm text-slate-500 mt-1">Cross-cutting compliance and override view across every persona.</p>
+</header>
+
+<section class="grid grid-cols-5 gap-4 mb-6">
+  <div class="bg-white border border-slate-200 rounded p-4">
+    <div class="text-[11px] uppercase tracking-wider text-slate-500">Total decisions</div>
+    <div class="mt-1 text-2xl font-semibold">{{ totals.total or 0 }}</div>
+  </div>
+  <div class="bg-white border border-slate-200 rounded p-4">
+    <div class="text-[11px] uppercase tracking-wider text-slate-500">Blocks</div>
+    <div class="mt-1 text-2xl font-semibold text-rose-700">{{ totals.blocks or 0 }}</div>
+  </div>
+  <div class="bg-white border border-slate-200 rounded p-4">
+    <div class="text-[11px] uppercase tracking-wider text-slate-500">Escalations</div>
+    <div class="mt-1 text-2xl font-semibold text-orange-700">{{ totals.escalations or 0 }}</div>
+  </div>
+  <div class="bg-white border border-slate-200 rounded p-4">
+    <div class="text-[11px] uppercase tracking-wider text-slate-500">Overrides</div>
+    <div class="mt-1 text-2xl font-semibold text-violet-700">{{ totals.overrides or 0 }}</div>
+  </div>
+  <div class="bg-white border border-slate-200 rounded p-4">
+    <div class="text-[11px] uppercase tracking-wider text-slate-500">Auto cleared</div>
+    <div class="mt-1 text-2xl font-semibold text-emerald-700">{{ totals.auto or 0 }}</div>
+  </div>
+</section>
+
+<section class="grid grid-cols-3 gap-4 mb-6">
+  <div class="bg-white border border-slate-200 rounded-lg p-5 col-span-2">
+    <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Override rate by persona</div>
+    <table class="min-w-full text-sm">
+      <thead class="text-xs text-slate-500">
+        <tr><th class="text-left py-1.5">Persona</th><th class="text-right">Overrides</th><th class="text-right">Reviewed</th><th class="text-right">Rate</th></tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for r in overrides_table %}
+          <tr>
+            <td class="py-1.5">
+              {% if r.persona_slug %}
+                <a href="/workbench/{{ r.persona_slug }}" class="text-{{ r.persona_color }}-700 hover:underline">{{ r.persona_title }}</a>
+              {% else %}{{ r.persona_title }}{% endif %}
+            </td>
+            <td class="py-1.5 text-right mono">{{ r.overrides }}</td>
+            <td class="py-1.5 text-right mono text-slate-500">{{ r.reviewed }}</td>
+            <td class="py-1.5 text-right font-semibold {% if r.rate > 20 %}text-rose-700{% elif r.rate > 5 %}text-amber-700{% else %}text-slate-700{% endif %}">{{ r.rate }}%</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="bg-white border border-slate-200 rounded-lg p-5">
+    <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Compliance flags</div>
+    <dl class="space-y-2 text-sm">
+      <div class="flex justify-between"><dt class="text-slate-500">Fraud blocks</dt><dd class="font-semibold text-rose-700">{{ fraud_blocks }}</dd></div>
+      <div class="flex justify-between"><dt class="text-slate-500">Compliance blocks</dt><dd class="font-semibold text-rose-700">{{ compliance_blocks }}</dd></div>
+    </dl>
+    <div class="mt-4 pt-4 border-t border-slate-100 text-xs text-slate-500">
+      Both halt the pipeline. See blocked-application list below for details.
+    </div>
+  </div>
+</section>
+
+<section class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+  <div class="px-5 pt-4 pb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Blocked applications · most recent 100</div>
+  <table class="min-w-full text-sm">
+    <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+      <tr><th class="text-left px-4 py-2">Application</th><th class="text-left px-4 py-2">Persona</th><th class="text-left px-4 py-2">Reason</th><th class="text-right px-4 py-2">Confidence</th><th class="text-left px-4 py-2">When</th></tr>
+    </thead>
+    <tbody class="divide-y divide-slate-100">
+      {% for b in blocks %}
+        <tr class="hover:bg-slate-50">
+          <td class="px-4 py-1.5 mono text-xs">
+            <a href="/workbench/audit/{{ b.application_id }}" class="text-blue-700 hover:underline">{{ b.application_id }}</a>
+          </td>
+          <td class="px-4 py-1.5">
+            {% if b.persona_slug %}
+              <a href="/workbench/{{ b.persona_slug }}" class="hover:underline">{{ b.persona_title }}</a>
+            {% else %}{{ b.persona_title }}{% endif %}
+          </td>
+          <td class="px-4 py-1.5 text-xs text-slate-700">{{ b.boundary_rule or '—' }}</td>
+          <td class="px-4 py-1.5 text-right mono">{{ '%.2f' % (b.confidence or 0) }}</td>
+          <td class="px-4 py-1.5 text-xs text-slate-500">{{ b.decided_at | humanize_age }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="px-4 py-10 text-center text-slate-400">No blocked applications.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

@@ -1,40 +1,41 @@
-"""Human review workbench — reads from EDMS PostgreSQL.
+"""Persona-centric workbench — reads from EDMS PostgreSQL.
 
-Sibling to ``ui/routes.py``. The existing UI reads from the in-memory
-Platform (durable store + trace writer + human queue). These routes
-read from EDMS's PG schema:
+Each of the 11 lending personas is a real role in a mortgage shop
+(credit underwriter, fraud analyst, closer, ...). Each one has a
+queue, a review screen, a completed log, and per-persona analytics.
 
-  vw_pipeline_status            — dashboard rollup
-  decision_outputs              — per-decision result + review state
-  decision_timeline             — append-only state-transition log
-  vw_<decision_id>_context      — per-decision context projection
-  entity_states                 — applicant summary fields
+Sibling to the legacy in-memory ``ui/routes.py`` — neither side
+touches the other. DATABASE_URL is read from .env at import time.
 
-Writes (approve / override) land in ``decision_outputs.human_*`` columns
-and an append-only ``decision_timeline`` row with trigger
-``human_approve`` or ``human_override``.
+Tables / views read:
+  vw_pipeline_status                — application rollup
+  vw_<decision_id>_context          — per-decision projection
+  decision_outputs                  — proposed + finalized decisions
+  decision_timeline                 — append-only state transitions
+  entity_states                     — applicant + loan summary
 
-DATABASE_URL is read from the process env at import time. If it is
-empty the router still mounts but every route returns a friendly
-"DATABASE_URL not configured" page, so local dev without PG can still
-boot the app.
+Mutations:
+  decision_outputs                  — human_action + reviewer + outcome
+  decision_timeline                 — one row per human_approve /
+                                      human_override
 """
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import os
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Form, Query, Request
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 
-# Mirror core/cron/runner.py: load .env so DATABASE_URL is picked up
-# whether the app is launched via `uvicorn`, `python -m`, or a test
-# harness that doesn't export the variable manually.
+# Load DATABASE_URL from .env if present. Mirrors core/cron/runner.py
+# so the app picks it up under uvicorn, python -m, and TestClient.
 try:
     from dotenv import load_dotenv  # type: ignore
 
@@ -46,67 +47,258 @@ except ImportError:  # pragma: no cover — listed in requirements.txt
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 
 
+# ─────────────────────────────────────────────────────────────────────
+# PERSONA_CONFIG — the 11 lending roles. Order is presentation order
+# inside each stage group; STAGES below pins which group each persona
+# belongs to (Pre-underwriting → Underwriting → Decision → Post-decision).
+# ─────────────────────────────────────────────────────────────────────
+
+
+PERSONA_CONFIG: dict[str, dict[str, Any]] = {
+    "credit_underwriter": {
+        "decision_id": "credit_assessment",
+        "title": "Credit Underwriter",
+        "view": "vw_credit_assessment_context",
+        "description": "Reviews credit reports and determines creditworthiness",
+        "key_fields": [
+            "credit_score", "credit_band", "active_bankruptcy",
+            "foreclosure_last_36_months", "thin_file",
+            "no_derogatory_last_24_months", "derogatory_marks",
+            "open_tradelines", "credit_utilization",
+        ],
+        "summary_fields": ["credit_score", "credit_band"],
+        "mode": "recommend",
+        "icon": "CU",
+        "color": "blue",
+    },
+    "income_underwriter": {
+        "decision_id": "income_verification",
+        "title": "Income Underwriter",
+        "view": "vw_income_verification_context",
+        "description": "Verifies stated income against documentation",
+        "key_fields": [
+            "stated_income", "verified_income", "income_discrepancy_pct",
+            "employment_type", "payroll_verified", "income_confidence_score",
+            "income_stability", "income_trending", "multiple_income_sources",
+        ],
+        "summary_fields": ["verified_income", "income_discrepancy_pct"],
+        "mode": "recommend",
+        "icon": "IU",
+        "color": "emerald",
+    },
+    "employment_specialist": {
+        "decision_id": "employment_reconciliation",
+        "title": "Employment Specialist",
+        "view": "vw_employment_reconciliation_context",
+        "description": "Reconciles employment history across multiple sources",
+        "key_fields": [
+            "reconciliation_status", "continuity_coverage_pct", "max_gap_days",
+            "employer_name_match_confidence", "stated_vs_verified_drift_pct",
+            "employer_name", "stated_employer", "period_start", "period_end",
+            "gross_amount",
+        ],
+        "summary_fields": ["reconciliation_status", "continuity_coverage_pct"],
+        "mode": "recommend",
+        "icon": "ES",
+        "color": "teal",
+    },
+    "fraud_analyst": {
+        "decision_id": "fraud_screening",
+        "title": "Fraud Analyst",
+        "view": "vw_fraud_screening_context",
+        "description": "Screens for identity fraud, synthetic identity, and watchlist matches",
+        "key_fields": [
+            "fraud_score", "identity_match_confidence",
+            "document_authenticity_score", "watchlist_match",
+            "synthetic_identity_flag",
+        ],
+        "summary_fields": ["fraud_score", "identity_match_confidence"],
+        "mode": "human_approval",
+        "icon": "FA",
+        "color": "rose",
+    },
+    "compliance_officer": {
+        "decision_id": "compliance_check",
+        "title": "Compliance Officer",
+        "view": "vw_compliance_check_context",
+        "description": "Validates HMDA, fair lending, and regulatory requirements",
+        "key_fields": [
+            "all_hmda_fields_complete", "no_fair_lending_flags",
+            "state_rules_passed", "fair_lending_violation",
+            "missing_required_disclosures", "regulatory_ambiguity",
+            "mixed_jurisdiction",
+        ],
+        "summary_fields": ["all_hmda_fields_complete", "state_rules_passed"],
+        "mode": "human_approval",
+        "icon": "CO",
+        "color": "indigo",
+    },
+    "collateral_analyst": {
+        "decision_id": "ltv_assessment",
+        "title": "Collateral Analyst",
+        "view": "vw_ltv_assessment_context",
+        "description": "Reviews property valuation, LTV ratio, and appraisal",
+        "key_fields": [
+            "ltv", "appraised_value", "purchase_price", "down_payment",
+            "appraisal_disputed", "lien_dispute", "credit_band",
+        ],
+        "summary_fields": ["ltv", "appraised_value"],
+        "mode": "auto_execute",
+        "icon": "CA",
+        "color": "amber",
+    },
+    "product_specialist": {
+        "decision_id": "product_eligibility",
+        "title": "Product Specialist",
+        "view": "vw_product_eligibility_context",
+        "description": "Determines eligible loan products based on DTI, LTV, and credit",
+        "key_fields": [
+            "dti_ratio", "ltv_ratio", "credit_band", "credit_score",
+            "loan_type", "loan_amount", "loan_purpose",
+        ],
+        "summary_fields": ["loan_type", "credit_band"],
+        "mode": "recommend",
+        "icon": "PS",
+        "color": "cyan",
+    },
+    "pricing_analyst": {
+        "decision_id": "rate_pricing",
+        "title": "Pricing Analyst",
+        "view": "vw_rate_pricing_context",
+        "description": "Sets interest rate and LLPA adjustments",
+        "key_fields": [
+            "credit_score", "dti_ratio", "ltv_ratio", "interest_rate",
+            "loan_type", "llpa_adjustment", "rate_within_normal_band",
+            "concurrent_rate_lock_conflict", "loan_program",
+        ],
+        "summary_fields": ["interest_rate", "llpa_adjustment"],
+        "mode": "recommend",
+        "icon": "PA",
+        "color": "violet",
+    },
+    "senior_underwriter": {
+        "decision_id": "underwriting_decision",
+        "title": "Senior Underwriter",
+        "view": "vw_underwriting_decision_context",
+        "description": "Final underwriting decision — approve, conditional, or deny",
+        "key_fields": [
+            "mid_credit_score", "ltv", "dti_back", "dti_front",
+            "piti_monthly", "qualifying_monthly", "loan_amount",
+            "interest_rate", "appraised_value", "completeness_pct",
+            "status",
+        ],
+        "summary_fields": ["mid_credit_score", "ltv", "dti_back"],
+        "mode": "human_approval",
+        "icon": "SU",
+        "color": "purple",
+    },
+    "closer": {
+        "decision_id": "closing_readiness",
+        "title": "Closer",
+        "view": "vw_closing_readiness_context",
+        "description": "Final closing checklist — title, CD timing, conditions, insurance",
+        "key_fields": [
+            "all_conditions_cleared", "cd_timing_compliant", "title_clear",
+            "title_defect", "lien_dispute", "insurance_gap",
+            "insurance_binder", "closing_disclosure_sent_at",
+            "days_until_rate_lock_expiry",
+        ],
+        "summary_fields": ["title_clear", "cd_timing_compliant"],
+        "mode": "human_approval",
+        "icon": "CL",
+        "color": "orange",
+    },
+    "post_closer": {
+        "decision_id": "approval_routing",
+        "title": "Post-Closer",
+        "view": "vw_approval_routing_context",
+        "description": "Routes approved loans — notification, delivery, investor assignment",
+        "key_fields": ["applicant_id", "status", "completeness_pct"],
+        "summary_fields": ["status"],
+        "mode": "auto_execute",
+        "icon": "PC",
+        "color": "slate",
+    },
+}
+
+
+# Display order on the home page — workflow stage groups.
+STAGES: list[dict[str, Any]] = [
+    {
+        "name": "Pre-underwriting",
+        "slug": "pre_underwriting",
+        "personas": [
+            "credit_underwriter",
+            "fraud_analyst",
+            "compliance_officer",
+            "employment_specialist",
+        ],
+    },
+    {
+        "name": "Underwriting",
+        "slug": "underwriting",
+        "personas": [
+            "income_underwriter",
+            "collateral_analyst",
+            "product_specialist",
+            "pricing_analyst",
+        ],
+    },
+    {
+        "name": "Decision",
+        "slug": "decision",
+        "personas": ["senior_underwriter"],
+    },
+    {
+        "name": "Post-decision",
+        "slug": "post_decision",
+        "personas": ["closer", "post_closer"],
+    },
+]
+
+
+DECISION_TO_SLUG: dict[str, str] = {
+    cfg["decision_id"]: slug for slug, cfg in PERSONA_CONFIG.items()
+}
+
+
+# Upstream graph mirrors core/cron/runner.py WAVE_CONFIG so the review
+# detail can show "this decision depends on …".
+UPSTREAM: dict[str, list[str]] = {
+    "credit_assessment":         [],
+    "fraud_screening":           [],
+    "compliance_check":          [],
+    "employment_reconciliation": [],
+    "income_verification":       ["employment_reconciliation"],
+    "dti_calculation":           ["income_verification"],
+    "ltv_assessment":            ["credit_assessment"],
+    "product_eligibility":       ["dti_calculation", "ltv_assessment"],
+    "rate_pricing":              ["credit_assessment", "dti_calculation", "ltv_assessment"],
+    "underwriting_decision":     [
+        "income_verification", "credit_assessment", "fraud_screening",
+        "dti_calculation", "ltv_assessment", "product_eligibility",
+    ],
+    "approval_routing":          ["underwriting_decision"],
+    "closing_readiness":         ["underwriting_decision", "compliance_check"],
+}
+
+
+WAVE_FOR_DECISION: dict[str, int] = {
+    "credit_assessment": 1, "fraud_screening": 1, "compliance_check": 1,
+    "employment_reconciliation": 1,
+    "income_verification": 2, "dti_calculation": 2, "ltv_assessment": 2,
+    "product_eligibility": 3, "rate_pricing": 3,
+    "underwriting_decision": 4,
+    "approval_routing": 5, "closing_readiness": 5,
+}
+
+
 router = APIRouter(tags=["edms-workbench"])
 templates = Jinja2Templates(directory="ui/edms_templates")
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Wave + persona metadata. Mirrors core/cron/runner.py WAVE_CONFIG +
-# DECISION_DEFAULTS so the dashboard / review screens can label each
-# decision without a YAML parse. Keep in sync if a decision is added
-# or its wave changes.
-# ─────────────────────────────────────────────────────────────────────
-
-
-WAVE_FOR_DECISION: dict[str, int] = {
-    "credit_assessment": 1,
-    "fraud_screening": 1,
-    "compliance_check": 1,
-    "employment_reconciliation": 1,
-    "income_verification": 2,
-    "dti_calculation": 2,
-    "ltv_assessment": 2,
-    "product_eligibility": 3,
-    "rate_pricing": 3,
-    "underwriting_decision": 4,
-    "approval_routing": 5,
-    "closing_readiness": 5,
-}
-
-DECISION_LABELS: dict[str, str] = {
-    "credit_assessment": "Credit Assessment",
-    "fraud_screening": "Fraud Screening",
-    "compliance_check": "Compliance Check",
-    "employment_reconciliation": "Employment Reconciliation",
-    "income_verification": "Income Verification",
-    "dti_calculation": "DTI Calculation",
-    "ltv_assessment": "LTV Assessment",
-    "product_eligibility": "Product Eligibility",
-    "rate_pricing": "Rate Pricing",
-    "underwriting_decision": "Underwriting Decision",
-    "approval_routing": "Approval Routing",
-    "closing_readiness": "Closing Readiness",
-}
-
-RISK_BY_DECISION: dict[str, str] = {
-    "credit_assessment": "medium",
-    "fraud_screening": "high",
-    "compliance_check": "high",
-    "employment_reconciliation": "medium",
-    "income_verification": "medium",
-    "dti_calculation": "low",
-    "ltv_assessment": "low",
-    "product_eligibility": "medium",
-    "rate_pricing": "medium",
-    "underwriting_decision": "high",
-    "approval_routing": "low",
-    "closing_readiness": "high",
-}
-
-
-# ─────────────────────────────────────────────────────────────────────
-# Lazy resources — pool + EDMS store + decision store. Constructed on
-# first request so module import is cheap.
+# Lazy resources
 # ─────────────────────────────────────────────────────────────────────
 
 
@@ -144,12 +336,21 @@ def _get_decision_store() -> Any:
 
 def _not_configured(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
-        "not_configured.html", {"request": request}, status_code=503
+        "not_configured.html",
+        {"request": request, **_base_ctx(None)},
+        status_code=503,
     )
 
 
+def _persona_or_none(slug: str) -> Optional[dict[str, Any]]:
+    cfg = PERSONA_CONFIG.get(slug)
+    if cfg is None:
+        return None
+    return {**cfg, "slug": slug}
+
+
 # ─────────────────────────────────────────────────────────────────────
-# Jinja filters
+# Jinja filters / globals
 # ─────────────────────────────────────────────────────────────────────
 
 
@@ -160,8 +361,7 @@ def _humanize_age(dt: Any) -> str:
         return str(dt)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    delta = datetime.now(timezone.utc) - dt
-    secs = int(delta.total_seconds())
+    secs = int((datetime.now(timezone.utc) - dt).total_seconds())
     if secs < 0:
         return "just now"
     if secs < 60:
@@ -172,11 +372,10 @@ def _humanize_age(dt: Any) -> str:
     hours = mins // 60
     if hours < 48:
         return f"{hours}h ago"
-    days = hours // 24
-    return f"{days}d ago"
+    return f"{hours // 24}d ago"
 
 
-def _outcome_color(outcome: Optional[str]) -> str:
+def _outcome_color(outcome: Any) -> str:
     return {
         "allow": "emerald",
         "recommend": "amber",
@@ -184,15 +383,30 @@ def _outcome_color(outcome: Optional[str]) -> str:
         "block": "rose",
         "approved": "emerald",
         "overridden": "violet",
-        "pending": "slate",
-    }.get((outcome or "").lower(), "slate")
+        "auto_verified": "emerald",
+        "partial": "amber",
+        "conflict": "rose",
+        "missing": "slate",
+    }.get(str(outcome or "").lower(), "slate")
+
+
+def _credit_color(score: Any) -> str:
+    try:
+        s = int(score)
+    except (TypeError, ValueError):
+        return "slate"
+    if s >= 700:
+        return "emerald"
+    if s >= 620:
+        return "amber"
+    return "rose"
 
 
 def _fmt_value(val: Any) -> str:
     if val is None or val == "":
         return "—"
     if isinstance(val, bool):
-        return "true" if val else "false"
+        return "yes" if val else "no"
     if isinstance(val, float):
         return f"{val:.3f}".rstrip("0").rstrip(".") or "0"
     return str(val)
@@ -211,46 +425,208 @@ def _fmt_pct(val: Any) -> str:
     if val is None:
         return "—"
     try:
-        return f"{float(val) * 100:.1f}%" if float(val) <= 1 else f"{float(val):.1f}%"
+        f = float(val)
+        return f"{f * 100:.1f}%" if f <= 1.0 else f"{f:.1f}%"
     except (TypeError, ValueError):
         return str(val)
 
 
-def _signal_color(key: str) -> str:
-    """Crude positive/negative classification used by the context panel."""
-    risky = (
-        "block", "violation", "bankruptcy", "foreclosure", "dispute",
-        "watchlist", "synthetic", "thin_file", "defect", "gap",
-        "discrepancy", "drift", "missing", "fail",
-    )
-    safe = (
-        "verified", "complete", "clear", "passed", "approved",
-        "auto_verified", "match",
-    )
+def _fmt_field(key: str, val: Any) -> str:
+    """Pick a formatter based on field-name heuristics."""
+    if isinstance(val, bool) or val is None or val == "":
+        return _fmt_value(val)
     k = key.lower()
-    if any(r in k for r in risky):
-        return "rose"
-    if any(s in k for s in safe):
-        return "emerald"
-    return "slate"
+    if any(t in k for t in ("amount", "income", "payment", "value", "price")):
+        try:
+            return _fmt_money(val)
+        except Exception:
+            return _fmt_value(val)
+    if any(t in k for t in ("rate", "ltv", "dti", "ratio", "pct", "coverage", "confidence", "drift", "utilization")):
+        return _fmt_pct(val)
+    return _fmt_value(val)
+
+
+def _fmt_seconds(val: Any) -> str:
+    if val is None:
+        return "—"
+    try:
+        s = float(val)
+    except (TypeError, ValueError):
+        return str(val)
+    if s < 60:
+        return f"{s:.1f}s"
+    if s < 3600:
+        return f"{s / 60:.1f}m"
+    return f"{s / 3600:.1f}h"
 
 
 templates.env.filters["humanize_age"] = _humanize_age
 templates.env.filters["outcome_color"] = _outcome_color
+templates.env.filters["credit_color"] = _credit_color
 templates.env.filters["fmt_value"] = _fmt_value
 templates.env.filters["fmt_money"] = _fmt_money
 templates.env.filters["fmt_pct"] = _fmt_pct
-templates.env.filters["signal_color"] = _signal_color
-templates.env.globals["WAVE_FOR_DECISION"] = WAVE_FOR_DECISION
-templates.env.globals["DECISION_LABELS"] = DECISION_LABELS
+templates.env.filters["fmt_field"] = _fmt_field
+templates.env.filters["fmt_seconds"] = _fmt_seconds
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Routes
+# Per-request base context — drives the sidebar + footer
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _base_ctx(active_persona_slug: Optional[str]) -> dict[str, Any]:
+    sidebar = []
+    for slug, cfg in PERSONA_CONFIG.items():
+        sidebar.append(
+            {
+                "slug": slug,
+                "title": cfg["title"],
+                "icon": cfg["icon"],
+                "color": cfg["color"],
+                "decision_id": cfg["decision_id"],
+                "active": slug == active_persona_slug,
+            }
+        )
+    return {
+        "personas_sidebar": sidebar,
+        "stages": STAGES,
+        "active_persona": active_persona_slug,
+    }
+
+
+async def _total_decisions() -> int:
+    if not DATABASE_URL:
+        return 0
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        n = await conn.fetchval("SELECT COUNT(*) FROM decision_outputs")
+    return int(n or 0)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Home / sidebar metrics — one query per persona, executed in parallel
+# would be fine but the spec asks for 4 metrics; we batch by walking
+# PERSONA_CONFIG and issuing per-persona aggregates against the latest-
+# version subset.
+# ─────────────────────────────────────────────────────────────────────
+
+
+async def _persona_metrics() -> dict[str, dict[str, Any]]:
+    """Return dict slug → {in_queue, completed, auto_pct, avg_review_sec}."""
+    pool = await _get_pool()
+    metrics: dict[str, dict[str, Any]] = {}
+    async with pool.acquire() as conn:
+        total_apps = await conn.fetchval(
+            "SELECT COUNT(*) FROM entity_states"
+        ) or 0
+        rows = await conn.fetch(
+            """
+            WITH latest AS (
+                SELECT * FROM decision_outputs
+                WHERE version = (
+                    SELECT MAX(version) FROM decision_outputs d2
+                    WHERE d2.application_id = decision_outputs.application_id
+                      AND d2.decision_id = decision_outputs.decision_id
+                )
+            )
+            SELECT decision_id,
+                   COUNT(*) AS total,
+                   COUNT(*) FILTER (
+                       WHERE mode IN ('human_approval', 'recommend')
+                         AND human_action IS NULL
+                   ) AS pending_review,
+                   COUNT(*) FILTER (
+                       WHERE mode = 'auto_execute'
+                          OR human_action IS NOT NULL
+                   ) AS done,
+                   COUNT(*) FILTER (WHERE mode = 'auto_execute') AS auto,
+                   AVG(
+                       CASE WHEN acted_at IS NOT NULL AND decided_at IS NOT NULL
+                            THEN EXTRACT(EPOCH FROM (acted_at - decided_at))
+                       END
+                   ) AS avg_review_sec
+            FROM latest
+            GROUP BY decision_id
+            """
+        )
+    by_decision = {r["decision_id"]: dict(r) for r in rows}
+    for slug, cfg in PERSONA_CONFIG.items():
+        d = cfg["decision_id"]
+        row = by_decision.get(d, {})
+        done = int(row.get("done") or 0)
+        auto = int(row.get("auto") or 0)
+        pending = int(row.get("pending_review") or 0)
+        # auto_execute personas: in-queue = apps without a decision row yet.
+        if cfg["mode"] == "auto_execute":
+            decided = int(row.get("total") or 0)
+            in_queue = max(0, int(total_apps) - decided)
+        else:
+            in_queue = pending
+        metrics[slug] = {
+            "in_queue": in_queue,
+            "completed": done,
+            "auto_count": auto,
+            "auto_pct": round(auto * 100 / done, 1) if done else 0.0,
+            "avg_review_sec": float(row.get("avg_review_sec") or 0),
+        }
+    return metrics
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 1) HOME PAGE — all 11 personas
 # ─────────────────────────────────────────────────────────────────────
 
 
 @router.get("/workbench", response_class=HTMLResponse)
+async def home(request: Request):
+    if not DATABASE_URL:
+        return _not_configured(request)
+    metrics = await _persona_metrics()
+    cards_by_stage = []
+    for stage in STAGES:
+        cards = []
+        for slug in stage["personas"]:
+            cfg = PERSONA_CONFIG[slug]
+            m = metrics.get(slug, {})
+            cards.append(
+                {
+                    "slug": slug,
+                    "title": cfg["title"],
+                    "icon": cfg["icon"],
+                    "color": cfg["color"],
+                    "description": cfg["description"],
+                    "mode": cfg["mode"],
+                    "decision_id": cfg["decision_id"],
+                    "in_queue": m.get("in_queue", 0),
+                    "completed": m.get("completed", 0),
+                    "auto_pct": m.get("auto_pct", 0.0),
+                    "avg_review_sec": m.get("avg_review_sec", 0),
+                }
+            )
+        cards_by_stage.append({"stage": stage, "cards": cards})
+    return templates.TemplateResponse(
+        "persona_home.html",
+        {
+            "request": request,
+            **_base_ctx(None),
+            "active_nav": "home",
+            "stages_with_cards": cards_by_stage,
+            "total_decisions": await _total_decisions(),
+        },
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Literal-prefix routes — registered BEFORE /workbench/{persona_slug}
+# so the slug catcher does not swallow them.
+# ─────────────────────────────────────────────────────────────────────
+
+
+# ── 7) PIPELINE DASHBOARD ────────────────────────────────────────────
+
+
+@router.get("/workbench/pipeline", response_class=HTMLResponse)
 async def pipeline_dashboard(request: Request):
     if not DATABASE_URL:
         return _not_configured(request)
@@ -268,151 +644,766 @@ async def pipeline_dashboard(request: Request):
             LIMIT 100
             """
         )
-        totals = await conn.fetchrow(
-            """
-            SELECT
-                COUNT(*) AS total_apps,
-                COUNT(*) FILTER (
-                    WHERE decisions_complete = decisions_total
-                      AND decisions_total > 0
-                ) AS complete_apps,
-                COUNT(*) FILTER (WHERE has_block) AS blocked_apps,
-                COUNT(*) FILTER (
-                    WHERE pending_human_review > 0
-                ) AS pending_apps
-            FROM vw_pipeline_status
-            """
-        )
-        queue_total = await conn.fetchval(
-            """
-            SELECT COUNT(*) FROM decision_outputs
-            WHERE mode IN ('human_approval', 'recommend')
-              AND human_action IS NULL
-              AND version = (
-                  SELECT MAX(version) FROM decision_outputs d2
-                  WHERE d2.application_id = decision_outputs.application_id
-                    AND d2.decision_id = decision_outputs.decision_id
-              )
-            """
-        )
     return templates.TemplateResponse(
         "pipeline_dashboard.html",
         {
             "request": request,
+            **_base_ctx(None),
+            "active_nav": "pipeline",
             "applications": [dict(a) for a in apps],
-            "totals": dict(totals) if totals else {},
-            "queue_total": queue_total or 0,
+            "total_decisions": await _total_decisions(),
         },
     )
 
 
-@router.get("/workbench/queue", response_class=HTMLResponse)
-async def review_queue(request: Request):
+# ── 8) APPLICATION PIPELINE — one app's journey ──────────────────────
+
+
+@router.get(
+    "/workbench/pipeline/{application_id}", response_class=HTMLResponse
+)
+async def pipeline_app(request: Request, application_id: str):
     if not DATABASE_URL:
         return _not_configured(request)
     pool = await _get_pool()
     async with pool.acquire() as conn:
-        rows = await conn.fetch(
+        decisions = await conn.fetch(
             """
-            SELECT decision_id,
-                   COUNT(*) AS pending,
-                   MIN(decided_at) AS oldest,
-                   COUNT(*) FILTER (WHERE mode = 'human_approval') AS hum,
-                   COUNT(*) FILTER (WHERE mode = 'recommend') AS rec
+            SELECT decision_id, wave, outcome, mode, confidence,
+                   decided_at, human_action, human_reviewer,
+                   risk_level, boundary_matched, boundary_rule
             FROM decision_outputs
-            WHERE mode IN ('human_approval', 'recommend')
-              AND human_action IS NULL
+            WHERE application_id = $1
               AND version = (
                   SELECT MAX(version) FROM decision_outputs d2
                   WHERE d2.application_id = decision_outputs.application_id
                     AND d2.decision_id = decision_outputs.decision_id
               )
-            GROUP BY decision_id
-            ORDER BY MIN(decided_at) ASC
+            ORDER BY wave, decided_at
+            """,
+            application_id,
+        )
+        entity = await conn.fetchrow(
+            "SELECT * FROM entity_states WHERE application_id = $1 LIMIT 1",
+            application_id,
+        )
+        timeline = await conn.fetch(
             """
+            SELECT decision_id, wave, from_state, to_state, trigger,
+                   transition_at, pipeline_position,
+                   time_in_prev_state_seconds
+            FROM decision_timeline
+            WHERE application_id = $1
+            ORDER BY transition_at
+            """,
+            application_id,
         )
-    personas = []
-    for r in rows:
-        d = r["decision_id"]
-        personas.append(
-            {
-                "decision_id": d,
-                "label": DECISION_LABELS.get(d, d),
-                "wave": WAVE_FOR_DECISION.get(d, 0),
-                "risk": RISK_BY_DECISION.get(d, "medium"),
-                "pending": r["pending"],
-                "oldest": r["oldest"],
-                "human_approval": r["hum"],
-                "recommend": r["rec"],
-            }
-        )
+
     by_wave: dict[int, list] = {}
-    for p in personas:
-        by_wave.setdefault(p["wave"], []).append(p)
-    waves = [{"wave": w, "personas": by_wave[w]} for w in sorted(by_wave)]
+    for d in decisions:
+        dd = dict(d)
+        slug = DECISION_TO_SLUG.get(dd["decision_id"])
+        if slug:
+            cfg = PERSONA_CONFIG[slug]
+            dd["persona_slug"] = slug
+            dd["persona_title"] = cfg["title"]
+            dd["persona_color"] = cfg["color"]
+        else:
+            dd["persona_slug"] = None
+            dd["persona_title"] = dd["decision_id"]
+            dd["persona_color"] = "slate"
+        by_wave.setdefault(int(dd["wave"] or 0), []).append(dd)
+    waves = [{"wave": w, "decisions": by_wave[w]} for w in sorted(by_wave)]
+
     return templates.TemplateResponse(
-        "review_queue.html",
+        "pipeline_app.html",
         {
             "request": request,
+            **_base_ctx(None),
+            "active_nav": "pipeline",
+            "application_id": application_id,
+            "entity": _entity_summary(entity),
             "waves": waves,
-            "total_pending": sum(p["pending"] for p in personas),
+            "timeline": [dict(t) for t in timeline],
+            "total_decisions": await _total_decisions(),
         },
     )
 
 
-@router.get("/workbench/queue/{decision_id}", response_class=HTMLResponse)
-async def persona_queue(request: Request, decision_id: str):
+# ── 9) AUDIT DASHBOARD ───────────────────────────────────────────────
+
+
+@router.get("/workbench/audit", response_class=HTMLResponse)
+async def audit_dashboard(request: Request):
+    if not DATABASE_URL:
+        return _not_configured(request)
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        totals = await conn.fetchrow(
+            """
+            WITH latest AS (
+                SELECT * FROM decision_outputs
+                WHERE version = (
+                    SELECT MAX(version) FROM decision_outputs d2
+                    WHERE d2.application_id = decision_outputs.application_id
+                      AND d2.decision_id = decision_outputs.decision_id
+                )
+            )
+            SELECT COUNT(*) AS total,
+                   COUNT(*) FILTER (WHERE outcome = 'block') AS blocks,
+                   COUNT(*) FILTER (WHERE outcome = 'escalate') AS escalations,
+                   COUNT(*) FILTER (WHERE human_action = 'overridden') AS overrides,
+                   COUNT(*) FILTER (
+                       WHERE mode = 'auto_execute'
+                          OR human_action IS NOT NULL
+                   ) AS cleared,
+                   COUNT(*) FILTER (WHERE mode = 'auto_execute') AS auto
+            FROM latest
+            """
+        )
+        override_by_persona = await conn.fetch(
+            """
+            SELECT decision_id,
+                   COUNT(*) FILTER (
+                       WHERE human_action = 'overridden'
+                   ) AS overrides,
+                   COUNT(*) FILTER (
+                       WHERE human_action IS NOT NULL
+                   ) AS reviewed
+            FROM decision_outputs
+            WHERE version = (
+                SELECT MAX(version) FROM decision_outputs d2
+                WHERE d2.application_id = decision_outputs.application_id
+                  AND d2.decision_id = decision_outputs.decision_id
+            )
+            GROUP BY decision_id
+            ORDER BY decision_id
+            """
+        )
+        blocked_apps = await conn.fetch(
+            """
+            SELECT application_id, decision_id, boundary_rule,
+                   confidence, decided_at
+            FROM decision_outputs
+            WHERE outcome = 'block'
+              AND version = (
+                  SELECT MAX(version) FROM decision_outputs d2
+                  WHERE d2.application_id = decision_outputs.application_id
+                    AND d2.decision_id = decision_outputs.decision_id
+              )
+            ORDER BY decided_at DESC
+            LIMIT 100
+            """
+        )
+        fraud_blocks = await conn.fetchval(
+            """
+            SELECT COUNT(DISTINCT application_id) FROM decision_outputs
+            WHERE decision_id = 'fraud_screening' AND outcome = 'block'
+            """
+        )
+        compliance_blocks = await conn.fetchval(
+            """
+            SELECT COUNT(DISTINCT application_id) FROM decision_outputs
+            WHERE decision_id = 'compliance_check' AND outcome = 'block'
+            """
+        )
+
+    totals_d = dict(totals) if totals else {}
+    overrides_table = []
+    for r in override_by_persona:
+        d = r["decision_id"]
+        slug = DECISION_TO_SLUG.get(d)
+        cfg = PERSONA_CONFIG.get(slug) if slug else None
+        reviewed = int(r["reviewed"] or 0)
+        overrides = int(r["overrides"] or 0)
+        overrides_table.append(
+            {
+                "decision_id": d,
+                "persona_title": cfg["title"] if cfg else d,
+                "persona_slug": slug,
+                "persona_color": cfg["color"] if cfg else "slate",
+                "overrides": overrides,
+                "reviewed": reviewed,
+                "rate": round(overrides * 100 / reviewed, 1) if reviewed else 0.0,
+            }
+        )
+    blocks_list = []
+    for b in blocked_apps:
+        bd = dict(b)
+        slug = DECISION_TO_SLUG.get(bd["decision_id"])
+        cfg = PERSONA_CONFIG.get(slug) if slug else None
+        bd["persona_title"] = cfg["title"] if cfg else bd["decision_id"]
+        bd["persona_slug"] = slug
+        blocks_list.append(bd)
+
+    return templates.TemplateResponse(
+        "audit_dashboard.html",
+        {
+            "request": request,
+            **_base_ctx(None),
+            "active_nav": "audit",
+            "totals": totals_d,
+            "overrides_table": overrides_table,
+            "blocks": blocks_list,
+            "fraud_blocks": int(fraud_blocks or 0),
+            "compliance_blocks": int(compliance_blocks or 0),
+            "total_decisions": await _total_decisions(),
+        },
+    )
+
+
+# ── 10) AUDIT TRAIL — one application ────────────────────────────────
+
+
+@router.get(
+    "/workbench/audit/{application_id}", response_class=HTMLResponse
+)
+async def audit_app(request: Request, application_id: str):
     if not DATABASE_URL:
         return _not_configured(request)
     pool = await _get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT dout.application_id, dout.outcome, dout.confidence,
-                   dout.decided_at, dout.mode,
-                   es.mid_credit_score, es.ltv, es.dti_back,
-                   es.status, es.loan_amount
-            FROM decision_outputs dout
-            LEFT JOIN entity_states es
-                   ON es.application_id = dout.application_id
-                  AND es.tenant_id = dout.tenant_id
-            WHERE dout.decision_id = $1
-              AND dout.mode IN ('human_approval', 'recommend')
-              AND dout.human_action IS NULL
-              AND dout.version = (
+            SELECT decision_id, mode, outcome, confidence, risk_level,
+                   human_action, human_reviewer, human_override_reason,
+                   boundary_matched, boundary_rule, decided_at, acted_at,
+                   sla_seconds, actual_seconds, version
+            FROM decision_outputs
+            WHERE application_id = $1
+              AND version = (
                   SELECT MAX(version) FROM decision_outputs d2
-                  WHERE d2.application_id = dout.application_id
-                    AND d2.decision_id = dout.decision_id
+                  WHERE d2.application_id = decision_outputs.application_id
+                    AND d2.decision_id = decision_outputs.decision_id
               )
-            ORDER BY dout.decided_at ASC
-            LIMIT 200
+            ORDER BY decided_at
             """,
-            decision_id,
+            application_id,
         )
+        timeline = await conn.fetch(
+            """
+            SELECT decision_id, wave, from_state, to_state, trigger,
+                   transition_at, pipeline_position,
+                   time_in_prev_state_seconds,
+                   cumulative_elapsed_seconds
+            FROM decision_timeline
+            WHERE application_id = $1
+            ORDER BY transition_at
+            """,
+            application_id,
+        )
+        elapsed = await conn.fetchval(
+            """
+            SELECT EXTRACT(EPOCH FROM (
+                MAX(transition_at) - MIN(transition_at)
+            ))
+            FROM decision_timeline
+            WHERE application_id = $1
+            """,
+            application_id,
+        )
+    decisions = []
+    for r in rows:
+        d = dict(r)
+        slug = DECISION_TO_SLUG.get(d["decision_id"])
+        cfg = PERSONA_CONFIG.get(slug) if slug else None
+        d["persona_slug"] = slug
+        d["persona_title"] = cfg["title"] if cfg else d["decision_id"]
+        decisions.append(d)
     return templates.TemplateResponse(
-        "persona_queue.html",
+        "audit_app.html",
         {
             "request": request,
-            "decision_id": decision_id,
-            "decision_label": DECISION_LABELS.get(decision_id, decision_id),
-            "wave": WAVE_FOR_DECISION.get(decision_id, 0),
-            "risk": RISK_BY_DECISION.get(decision_id, "medium"),
-            "applications": [dict(r) for r in rows],
+            **_base_ctx(None),
+            "active_nav": "audit",
+            "application_id": application_id,
+            "decisions": decisions,
+            "timeline": [dict(t) for t in timeline],
+            "total_pipeline_seconds": float(elapsed or 0),
+            "total_decisions": await _total_decisions(),
         },
     )
 
 
-@router.get(
-    "/workbench/review/{application_id}/{decision_id}",
-    response_class=HTMLResponse,
-)
-async def review_detail(
-    request: Request, application_id: str, decision_id: str
+# ── 11) GOVERNANCE ───────────────────────────────────────────────────
+
+
+@router.get("/workbench/governance", response_class=HTMLResponse)
+async def governance(request: Request):
+    if not DATABASE_URL:
+        return _not_configured(request)
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        outcome_grid = await conn.fetch(
+            """
+            SELECT decision_id, outcome, COUNT(*) AS n
+            FROM decision_outputs
+            WHERE version = (
+                SELECT MAX(version) FROM decision_outputs d2
+                WHERE d2.application_id = decision_outputs.application_id
+                  AND d2.decision_id = decision_outputs.decision_id
+            )
+            GROUP BY decision_id, outcome
+            """
+        )
+        overrides_by_reviewer = await conn.fetch(
+            """
+            SELECT human_reviewer,
+                   COUNT(*) AS n,
+                   COUNT(DISTINCT decision_id) AS distinct_personas
+            FROM decision_outputs
+            WHERE human_action = 'overridden'
+            GROUP BY human_reviewer
+            ORDER BY n DESC
+            LIMIT 20
+            """
+        )
+        overrides_by_reason = await conn.fetch(
+            """
+            SELECT COALESCE(human_override_reason, '(no reason given)')
+                       AS reason,
+                   COUNT(*) AS n
+            FROM decision_outputs
+            WHERE human_action = 'overridden'
+            GROUP BY reason
+            ORDER BY n DESC
+            LIMIT 20
+            """
+        )
+        sla_rows = await conn.fetch(
+            """
+            SELECT decision_id,
+                   COUNT(*) AS total,
+                   COUNT(*) FILTER (
+                       WHERE actual_seconds <= sla_seconds
+                   ) AS within_sla,
+                   AVG(actual_seconds) AS avg_sec,
+                   AVG(sla_seconds) AS avg_sla
+            FROM decision_outputs
+            WHERE actual_seconds IS NOT NULL AND sla_seconds IS NOT NULL
+            GROUP BY decision_id
+            ORDER BY decision_id
+            """
+        )
+
+    grid: dict[str, dict[str, int]] = {}
+    for r in outcome_grid:
+        grid.setdefault(r["decision_id"], {})[r["outcome"]] = r["n"]
+    rows_pretty = []
+    for d in sorted(grid):
+        slug = DECISION_TO_SLUG.get(d)
+        cfg = PERSONA_CONFIG.get(slug) if slug else None
+        cells = grid[d]
+        rows_pretty.append(
+            {
+                "decision_id": d,
+                "persona_title": cfg["title"] if cfg else d,
+                "persona_slug": slug,
+                "persona_color": cfg["color"] if cfg else "slate",
+                "allow": cells.get("allow", 0),
+                "recommend": cells.get("recommend", 0),
+                "escalate": cells.get("escalate", 0),
+                "block": cells.get("block", 0),
+                "total": sum(cells.values()),
+            }
+        )
+
+    sla_pretty = []
+    for r in sla_rows:
+        d = r["decision_id"]
+        slug = DECISION_TO_SLUG.get(d)
+        cfg = PERSONA_CONFIG.get(slug) if slug else None
+        total = int(r["total"] or 0)
+        within = int(r["within_sla"] or 0)
+        sla_pretty.append(
+            {
+                "decision_id": d,
+                "persona_title": cfg["title"] if cfg else d,
+                "persona_color": cfg["color"] if cfg else "slate",
+                "total": total,
+                "within_sla": within,
+                "sla_pct": round(within * 100 / total, 1) if total else 0.0,
+                "avg_sec": float(r["avg_sec"] or 0),
+                "avg_sla": float(r["avg_sla"] or 0),
+            }
+        )
+
+    return templates.TemplateResponse(
+        "governance.html",
+        {
+            "request": request,
+            **_base_ctx(None),
+            "active_nav": "governance",
+            "outcome_grid": rows_pretty,
+            "overrides_by_reviewer": [dict(r) for r in overrides_by_reviewer],
+            "overrides_by_reason": [dict(r) for r in overrides_by_reason],
+            "sla": sla_pretty,
+            "total_decisions": await _total_decisions(),
+        },
+    )
+
+
+# ── Governance CSV export ────────────────────────────────────────────
+
+
+@router.get("/workbench/governance/export.csv")
+async def governance_export():
+    if not DATABASE_URL:
+        return RedirectResponse("/workbench", status_code=303)
+    pool = await _get_pool()
+
+    async def _stream():
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow([
+            "application_id", "decision_id", "wave", "outcome", "mode",
+            "risk_level", "boundary_matched", "confidence", "human_action",
+            "human_reviewer", "human_override_reason", "decided_at",
+            "acted_at", "sla_seconds", "actual_seconds", "version",
+        ])
+        yield buf.getvalue()
+        buf.seek(0)
+        buf.truncate(0)
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                async for r in conn.cursor(
+                    """
+                    SELECT application_id, decision_id, wave, outcome, mode,
+                           risk_level, boundary_matched, confidence,
+                           human_action, human_reviewer,
+                           human_override_reason, decided_at, acted_at,
+                           sla_seconds, actual_seconds, version
+                    FROM decision_outputs
+                    ORDER BY decided_at
+                    """
+                ):
+                    w.writerow([
+                        r["application_id"], r["decision_id"], r["wave"],
+                        r["outcome"], r["mode"], r["risk_level"],
+                        r["boundary_matched"], r["confidence"],
+                        r["human_action"], r["human_reviewer"],
+                        r["human_override_reason"],
+                        r["decided_at"].isoformat() if r["decided_at"] else "",
+                        r["acted_at"].isoformat() if r["acted_at"] else "",
+                        r["sla_seconds"], r["actual_seconds"], r["version"],
+                    ])
+                    yield buf.getvalue()
+                    buf.seek(0)
+                    buf.truncate(0)
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=decisions.csv"},
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 2) PERSONA WORKBENCH — 4 tabs
+# ─────────────────────────────────────────────────────────────────────
+
+
+@router.get("/workbench/{persona_slug}", response_class=HTMLResponse)
+async def persona_workbench(
+    request: Request,
+    persona_slug: str,
+    tab: str = Query("queue"),
 ):
     if not DATABASE_URL:
         return _not_configured(request)
-    edms = _get_edms()
+    persona = _persona_or_none(persona_slug)
+    if persona is None:
+        return _persona_404(request, persona_slug)
+
+    decision_id = persona["decision_id"]
+    mode = persona["mode"]
     pool = await _get_pool()
+
+    # ── KPI strip (always rendered) ──
+    metrics_all = await _persona_metrics()
+    kpi = metrics_all.get(persona_slug, {})
+
+    tab = tab if tab in ("queue", "completed", "auto", "analytics") else "queue"
+    payload: dict[str, Any] = {}
+
+    summary_fields = persona["summary_fields"]
+
+    if tab == "queue":
+        if mode == "auto_execute":
+            # Apps not yet decided.
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    f"""
+                    SELECT es.application_id,
+                           es.mid_credit_score, es.ltv, es.dti_back,
+                           es.loan_amount, es.status
+                    FROM entity_states es
+                    WHERE es.application_id NOT IN (
+                        SELECT application_id FROM decision_outputs
+                        WHERE decision_id = $1
+                    )
+                    ORDER BY es.application_id
+                    LIMIT 200
+                    """,
+                    decision_id,
+                )
+            queue_rows = [
+                {
+                    "application_id": r["application_id"],
+                    "mid_credit_score": r["mid_credit_score"],
+                    "ltv": r["ltv"],
+                    "dti_back": r["dti_back"],
+                    "loan_amount": r["loan_amount"],
+                    "status": r["status"],
+                    "outcome": None,
+                    "confidence": None,
+                    "decided_at": None,
+                }
+                for r in rows
+            ]
+        else:
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT dout.application_id, dout.outcome,
+                           dout.confidence, dout.decided_at,
+                           dout.boundary_rule,
+                           es.mid_credit_score, es.ltv, es.dti_back,
+                           es.loan_amount, es.status
+                    FROM decision_outputs dout
+                    LEFT JOIN entity_states es
+                           ON es.application_id = dout.application_id
+                          AND es.tenant_id = dout.tenant_id
+                    WHERE dout.decision_id = $1
+                      AND dout.mode IN ('human_approval', 'recommend')
+                      AND dout.human_action IS NULL
+                      AND dout.version = (
+                          SELECT MAX(version) FROM decision_outputs d2
+                          WHERE d2.application_id = dout.application_id
+                            AND d2.decision_id = dout.decision_id
+                      )
+                    ORDER BY dout.decided_at ASC
+                    LIMIT 200
+                    """,
+                    decision_id,
+                )
+            queue_rows = [dict(r) for r in rows]
+        payload = {"queue_rows": queue_rows}
+
+    elif tab in ("completed", "auto"):
+        only_auto = tab == "auto"
+        async with pool.acquire() as conn:
+            if only_auto:
+                rows = await conn.fetch(
+                    """
+                    SELECT dout.application_id, dout.outcome, dout.mode,
+                           dout.confidence, dout.decided_at, dout.acted_at,
+                           dout.human_action, dout.human_reviewer,
+                           dout.boundary_rule, dout.reasoning,
+                           es.mid_credit_score, es.ltv, es.dti_back
+                    FROM decision_outputs dout
+                    LEFT JOIN entity_states es
+                           ON es.application_id = dout.application_id
+                          AND es.tenant_id = dout.tenant_id
+                    WHERE dout.decision_id = $1
+                      AND dout.mode = 'auto_execute'
+                      AND dout.version = (
+                          SELECT MAX(version) FROM decision_outputs d2
+                          WHERE d2.application_id = dout.application_id
+                            AND d2.decision_id = dout.decision_id
+                      )
+                    ORDER BY dout.decided_at DESC
+                    LIMIT 200
+                    """,
+                    decision_id,
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT dout.application_id, dout.outcome, dout.mode,
+                           dout.confidence, dout.decided_at, dout.acted_at,
+                           dout.human_action, dout.human_reviewer,
+                           dout.human_override_reason,
+                           dout.boundary_rule, dout.reasoning,
+                           es.mid_credit_score, es.ltv, es.dti_back
+                    FROM decision_outputs dout
+                    LEFT JOIN entity_states es
+                           ON es.application_id = dout.application_id
+                          AND es.tenant_id = dout.tenant_id
+                    WHERE dout.decision_id = $1
+                      AND (
+                          dout.mode = 'auto_execute'
+                          OR dout.human_action IS NOT NULL
+                      )
+                      AND dout.version = (
+                          SELECT MAX(version) FROM decision_outputs d2
+                          WHERE d2.application_id = dout.application_id
+                            AND d2.decision_id = dout.decision_id
+                      )
+                    ORDER BY dout.decided_at DESC
+                    LIMIT 200
+                    """,
+                    decision_id,
+                )
+        completed_rows = []
+        for r in rows:
+            d = dict(r)
+            d["reasoning"] = _maybe_json(d.get("reasoning"))
+            completed_rows.append(d)
+        payload = {"completed_rows": completed_rows}
+
+    elif tab == "analytics":
+        async with pool.acquire() as conn:
+            outcome_dist = await conn.fetch(
+                """
+                SELECT outcome, COUNT(*) AS n FROM decision_outputs
+                WHERE decision_id = $1
+                  AND version = (
+                      SELECT MAX(version) FROM decision_outputs d2
+                      WHERE d2.application_id = decision_outputs.application_id
+                        AND d2.decision_id = decision_outputs.decision_id
+                  )
+                GROUP BY outcome
+                """,
+                decision_id,
+            )
+            agg = await conn.fetchrow(
+                """
+                SELECT COUNT(*) AS total,
+                       AVG(confidence) AS avg_conf,
+                       AVG(actual_seconds) AS avg_sec,
+                       COUNT(*) FILTER (
+                           WHERE mode = 'auto_execute'
+                       ) AS auto,
+                       COUNT(*) FILTER (
+                           WHERE human_action = 'overridden'
+                       ) AS overrides,
+                       COUNT(*) FILTER (
+                           WHERE human_action IS NOT NULL
+                       ) AS reviewed
+                FROM decision_outputs
+                WHERE decision_id = $1
+                  AND version = (
+                      SELECT MAX(version) FROM decision_outputs d2
+                      WHERE d2.application_id = decision_outputs.application_id
+                        AND d2.decision_id = decision_outputs.decision_id
+                  )
+                """,
+                decision_id,
+            )
+            top_rules = await conn.fetch(
+                """
+                SELECT COALESCE(boundary_rule, '(no rule)') AS rule,
+                       COUNT(*) AS n
+                FROM decision_outputs
+                WHERE decision_id = $1
+                  AND version = (
+                      SELECT MAX(version) FROM decision_outputs d2
+                      WHERE d2.application_id = decision_outputs.application_id
+                        AND d2.decision_id = decision_outputs.decision_id
+                  )
+                GROUP BY rule
+                ORDER BY n DESC
+                LIMIT 5
+                """,
+                decision_id,
+            )
+            avg_review = await conn.fetchval(
+                """
+                SELECT AVG(EXTRACT(EPOCH FROM (acted_at - decided_at)))
+                FROM decision_outputs
+                WHERE decision_id = $1
+                  AND human_action IS NOT NULL
+                  AND acted_at IS NOT NULL
+                """,
+                decision_id,
+            )
+        total = int(agg["total"] or 0) if agg else 0
+        reviewed = int(agg["reviewed"] or 0) if agg else 0
+        overrides = int(agg["overrides"] or 0) if agg else 0
+        auto = int(agg["auto"] or 0) if agg else 0
+        outcome_counts = {r["outcome"]: r["n"] for r in outcome_dist}
+        payload = {
+            "analytics": {
+                "total": total,
+                "outcomes": outcome_counts,
+                "auto_pct": round(auto * 100 / total, 1) if total else 0.0,
+                "avg_confidence": float(agg["avg_conf"] or 0) if agg else 0.0,
+                "avg_processing_sec": float(agg["avg_sec"] or 0) if agg else 0.0,
+                "avg_review_sec": float(avg_review or 0),
+                "override_rate": (
+                    round(overrides * 100 / reviewed, 1) if reviewed else 0.0
+                ),
+                "top_rules": [
+                    {"rule": r["rule"], "n": r["n"]} for r in top_rules
+                ],
+            }
+        }
+
+    return templates.TemplateResponse(
+        "persona_workbench.html",
+        {
+            "request": request,
+            **_base_ctx(persona_slug),
+            "persona": persona,
+            "tab": tab,
+            "kpi": kpi,
+            "summary_fields": summary_fields,
+            "total_decisions": await _total_decisions(),
+            **payload,
+        },
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 3) REVIEW DETAIL
+# ─────────────────────────────────────────────────────────────────────
+
+
+@router.get(
+    "/workbench/{persona_slug}/review/{application_id}",
+    response_class=HTMLResponse,
+)
+async def review_detail(
+    request: Request, persona_slug: str, application_id: str
+):
+    if not DATABASE_URL:
+        return _not_configured(request)
+    persona = _persona_or_none(persona_slug)
+    if persona is None:
+        return _persona_404(request, persona_slug)
+    return await _render_review(
+        request, persona, application_id, readonly=False
+    )
+
+
+@router.get(
+    "/workbench/{persona_slug}/completed/{application_id}",
+    response_class=HTMLResponse,
+)
+async def completed_detail(
+    request: Request, persona_slug: str, application_id: str
+):
+    if not DATABASE_URL:
+        return _not_configured(request)
+    persona = _persona_or_none(persona_slug)
+    if persona is None:
+        return _persona_404(request, persona_slug)
+    return await _render_review(
+        request, persona, application_id, readonly=True
+    )
+
+
+async def _render_review(
+    request: Request,
+    persona: dict[str, Any],
+    application_id: str,
+    readonly: bool,
+) -> HTMLResponse:
+    decision_id = persona["decision_id"]
+    pool = await _get_pool()
+    edms = _get_edms()
+
     async with pool.acquire() as conn:
         decision = await conn.fetchrow(
             """
@@ -429,49 +1420,79 @@ async def review_detail(
             decision_id,
         )
         entity = await conn.fetchrow(
-            """
-            SELECT application_id, mid_credit_score, ltv, dti_back,
-                   dti_front, status, loan_amount, interest_rate,
-                   appraised_value, purchase_price, completeness_pct,
-                   combined_monthly_income
-            FROM entity_states WHERE application_id = $1 LIMIT 1
-            """,
+            "SELECT * FROM entity_states WHERE application_id = $1 LIMIT 1",
             application_id,
         )
-        nav_rows = await conn.fetch(
-            """
-            SELECT application_id FROM decision_outputs
-            WHERE decision_id = $1
-              AND mode IN ('human_approval', 'recommend')
-              AND human_action IS NULL
-              AND version = (
-                  SELECT MAX(version) FROM decision_outputs d2
-                  WHERE d2.application_id = decision_outputs.application_id
-                    AND d2.decision_id = decision_outputs.decision_id
-              )
-            ORDER BY decided_at ASC
-            """,
-            decision_id,
-        )
+        upstreams = UPSTREAM.get(decision_id, [])
+        upstream_rows: list[dict[str, Any]] = []
+        if upstreams:
+            urows = await conn.fetch(
+                """
+                SELECT decision_id, outcome, confidence, decided_at,
+                       human_action
+                FROM decision_outputs
+                WHERE application_id = $1
+                  AND decision_id = ANY($2)
+                  AND version = (
+                      SELECT MAX(version) FROM decision_outputs d2
+                      WHERE d2.application_id = decision_outputs.application_id
+                        AND d2.decision_id = decision_outputs.decision_id
+                  )
+                """,
+                application_id,
+                upstreams,
+            )
+            for r in urows:
+                d = dict(r)
+                slug = DECISION_TO_SLUG.get(d["decision_id"])
+                cfg = PERSONA_CONFIG.get(slug) if slug else None
+                d["persona_slug"] = slug
+                d["persona_title"] = cfg["title"] if cfg else d["decision_id"]
+                d["persona_color"] = cfg["color"] if cfg else "slate"
+                upstream_rows.append(d)
 
+        # Queue navigation (only meaningful in non-readonly mode).
+        nav_ids: list[str] = []
+        if not readonly and persona["mode"] != "auto_execute":
+            nav_rows = await conn.fetch(
+                """
+                SELECT application_id FROM decision_outputs
+                WHERE decision_id = $1
+                  AND mode IN ('human_approval', 'recommend')
+                  AND human_action IS NULL
+                  AND version = (
+                      SELECT MAX(version) FROM decision_outputs d2
+                      WHERE d2.application_id = decision_outputs.application_id
+                        AND d2.decision_id = decision_outputs.decision_id
+                  )
+                ORDER BY decided_at ASC
+                """,
+                decision_id,
+            )
+            nav_ids = [r["application_id"] for r in nav_rows]
+
+    # Persona context via EDMS view.
     try:
         snap = await edms.snapshot(
             application_id=application_id,
             decision_id=decision_id,
             upstream_decision_ids=None,
         )
-        context_objects = snap.context
-    except Exception as exc:  # noqa: BLE001 — surface the failure inline
-        context_objects = {"_error": {"detail": {"message": str(exc)}}}
+        ctx_objects = snap.context
+    except Exception as exc:  # noqa: BLE001
+        ctx_objects = {"_error": {"detail": {"message": str(exc)}}}
 
-    context_groups: list[dict[str, Any]] = []
-    for object_type, by_id in (context_objects or {}).items():
+    # Flatten: build a dict of all known field-name → value (first match
+    # across object buckets wins). Used to display persona key_fields.
+    flat_ctx: dict[str, Any] = {}
+    raw_groups: list[dict[str, Any]] = []
+    for object_type, by_id in (ctx_objects or {}).items():
         if not isinstance(by_id, dict):
             continue
         for entity_id, fields in by_id.items():
             if not isinstance(fields, dict):
                 continue
-            context_groups.append(
+            raw_groups.append(
                 {
                     "object_type": object_type,
                     "entity_id": entity_id,
@@ -480,6 +1501,16 @@ async def review_detail(
                     ],
                 }
             )
+            for k, v in fields.items():
+                flat_ctx.setdefault(k, v)
+
+    entity_dict = dict(entity) if entity else {}
+    key_field_rows = []
+    for field in persona["key_fields"]:
+        val = flat_ctx.get(field)
+        if val is None:
+            val = entity_dict.get(field)
+        key_field_rows.append({"key": field, "value": val})
 
     decision_dict: Optional[dict[str, Any]] = None
     if decision is not None:
@@ -487,7 +1518,6 @@ async def review_detail(
         for k in ("context_snapshot", "reasoning", "upstream_decisions"):
             decision_dict[k] = _maybe_json(decision_dict.get(k))
 
-    nav_ids = [r["application_id"] for r in nav_rows]
     prev_id: Optional[str] = None
     next_id: Optional[str] = None
     queue_position: Optional[int] = None
@@ -501,37 +1531,49 @@ async def review_detail(
     elif nav_ids:
         next_id = nav_ids[0]
 
+    template = "completed_detail.html" if readonly else "review_detail.html"
     return templates.TemplateResponse(
-        "review_detail.html",
+        template,
         {
             "request": request,
+            **_base_ctx(persona["slug"]),
+            "persona": persona,
             "application_id": application_id,
-            "decision_id": decision_id,
-            "decision_label": DECISION_LABELS.get(decision_id, decision_id),
-            "wave": WAVE_FOR_DECISION.get(decision_id, 0),
-            "risk": RISK_BY_DECISION.get(decision_id, "medium"),
             "decision": decision_dict,
-            "entity": dict(entity) if entity else None,
-            "context_groups": context_groups,
+            "entity": _entity_summary(entity),
+            "key_field_rows": key_field_rows,
+            "raw_context_groups": raw_groups,
+            "upstreams": upstream_rows,
             "prev_id": prev_id,
             "next_id": next_id,
             "queue_position": queue_position,
             "queue_total": len(nav_ids),
+            "total_decisions": await _total_decisions(),
         },
     )
 
 
-@router.post("/workbench/review/{application_id}/{decision_id}/approve")
+# ─────────────────────────────────────────────────────────────────────
+# 4) + 5) POST approve / override
+# ─────────────────────────────────────────────────────────────────────
+
+
+@router.post(
+    "/workbench/{persona_slug}/review/{application_id}/approve"
+)
 async def review_approve(
+    persona_slug: str,
     application_id: str,
-    decision_id: str,
     reviewer: str = Form(""),
 ):
     if not DATABASE_URL:
         return RedirectResponse("/workbench", status_code=303)
+    persona = _persona_or_none(persona_slug)
+    if persona is None:
+        return RedirectResponse("/workbench", status_code=303)
     next_app = await _record_review(
         application_id=application_id,
-        decision_id=decision_id,
+        decision_id=persona["decision_id"],
         new_outcome=None,
         reviewer=reviewer or "anonymous",
         override_reason=None,
@@ -540,38 +1582,43 @@ async def review_approve(
     )
     if next_app:
         return RedirectResponse(
-            f"/workbench/review/{next_app}/{decision_id}", status_code=303
+            f"/workbench/{persona_slug}/review/{next_app}", status_code=303
         )
     return RedirectResponse(
-        f"/workbench/queue/{decision_id}", status_code=303
+        f"/workbench/{persona_slug}?tab=queue", status_code=303
     )
 
 
-@router.post("/workbench/review/{application_id}/{decision_id}/override")
+@router.post(
+    "/workbench/{persona_slug}/review/{application_id}/override"
+)
 async def review_override(
+    persona_slug: str,
     application_id: str,
-    decision_id: str,
     new_outcome: str = Form(...),
     reviewer: str = Form(""),
-    override_reason: str = Form(""),
+    reason: str = Form(""),
 ):
     if not DATABASE_URL:
         return RedirectResponse("/workbench", status_code=303)
+    persona = _persona_or_none(persona_slug)
+    if persona is None:
+        return RedirectResponse("/workbench", status_code=303)
     next_app = await _record_review(
         application_id=application_id,
-        decision_id=decision_id,
+        decision_id=persona["decision_id"],
         new_outcome=new_outcome,
         reviewer=reviewer or "anonymous",
-        override_reason=override_reason or None,
+        override_reason=reason or None,
         trigger="human_override",
         action="overridden",
     )
     if next_app:
         return RedirectResponse(
-            f"/workbench/review/{next_app}/{decision_id}", status_code=303
+            f"/workbench/{persona_slug}/review/{next_app}", status_code=303
         )
     return RedirectResponse(
-        f"/workbench/queue/{decision_id}", status_code=303
+        f"/workbench/{persona_slug}?tab=queue", status_code=303
     )
 
 
@@ -585,8 +1632,6 @@ async def _record_review(
     trigger: str,
     action: str,
 ) -> Optional[str]:
-    """Update the decision row + append a timeline entry, return the
-    application_id of the next pending review (or None)."""
     pool = await _get_pool()
     now = datetime.now(timezone.utc)
     async with pool.acquire() as conn:
@@ -663,64 +1708,20 @@ async def _record_review(
     return next_app
 
 
-@router.get("/workbench/app/{application_id}", response_class=HTMLResponse)
-async def app_detail(request: Request, application_id: str):
-    if not DATABASE_URL:
-        return _not_configured(request)
-    pool = await _get_pool()
-    async with pool.acquire() as conn:
-        decisions = await conn.fetch(
-            """
-            SELECT decision_id, wave, outcome, mode, confidence,
-                   decided_at, human_action, human_reviewer,
-                   human_override_reason, risk_level, boundary_matched,
-                   boundary_rule, actual_seconds, sla_seconds
-            FROM decision_outputs
-            WHERE application_id = $1
-              AND version = (
-                  SELECT MAX(version) FROM decision_outputs d2
-                  WHERE d2.application_id = decision_outputs.application_id
-                    AND d2.decision_id = decision_outputs.decision_id
-              )
-            ORDER BY wave, decided_at
-            """,
-            application_id,
-        )
-        entity = await conn.fetchrow(
-            """
-            SELECT * FROM entity_states WHERE application_id = $1 LIMIT 1
-            """,
-            application_id,
-        )
-        timeline = await conn.fetch(
-            """
-            SELECT decision_id, wave, from_state, to_state, trigger,
-                   transition_at, pipeline_position,
-                   time_in_prev_state_seconds
-            FROM decision_timeline
-            WHERE application_id = $1
-            ORDER BY transition_at
-            """,
-            application_id,
-        )
+# ─────────────────────────────────────────────────────────────────────
+# helpers
+# ─────────────────────────────────────────────────────────────────────
 
-    by_wave: dict[int, list] = {}
-    for d in decisions:
-        dd = dict(d)
-        dd["label"] = DECISION_LABELS.get(dd["decision_id"], dd["decision_id"])
-        by_wave.setdefault(int(dd["wave"] or 0), []).append(dd)
-    waves = [{"wave": w, "decisions": by_wave[w]} for w in sorted(by_wave)]
 
+def _persona_404(request: Request, slug: str) -> HTMLResponse:
     return templates.TemplateResponse(
-        "app_detail.html",
+        "persona_404.html",
         {
             "request": request,
-            "application_id": application_id,
-            "entity": _entity_summary(entity),
-            "waves": waves,
-            "timeline": [dict(t) for t in timeline],
-            "total_decisions": len(decisions),
+            **_base_ctx(None),
+            "bad_slug": slug,
         },
+        status_code=404,
     )
 
 
@@ -735,166 +1736,6 @@ def _entity_summary(row: Any) -> Optional[dict[str, Any]]:
         "total_liquid_assets", "qualifying_monthly", "piti_monthly",
     )
     return {k: d.get(k) for k in keep}
-
-
-@router.get("/workbench/analytics", response_class=HTMLResponse)
-async def analytics(request: Request):
-    if not DATABASE_URL:
-        return _not_configured(request)
-    pool = await _get_pool()
-    async with pool.acquire() as conn:
-        outcome_dist = await conn.fetch(
-            """
-            SELECT decision_id, outcome, COUNT(*) AS n
-            FROM decision_outputs
-            WHERE version = (
-                SELECT MAX(version) FROM decision_outputs d2
-                WHERE d2.application_id = decision_outputs.application_id
-                  AND d2.decision_id = decision_outputs.decision_id
-            )
-            GROUP BY decision_id, outcome
-            ORDER BY decision_id, outcome
-            """
-        )
-        avg_time = await conn.fetch(
-            """
-            SELECT decision_id, AVG(actual_seconds) AS avg_sec,
-                   COUNT(*) AS n
-            FROM decision_outputs
-            WHERE version = (
-                SELECT MAX(version) FROM decision_outputs d2
-                WHERE d2.application_id = decision_outputs.application_id
-                  AND d2.decision_id = decision_outputs.decision_id
-            )
-            GROUP BY decision_id
-            ORDER BY decision_id
-            """
-        )
-        bottlenecks = await conn.fetch(
-            """
-            SELECT decision_id, COUNT(*) AS pending,
-                   MIN(decided_at) AS oldest
-            FROM decision_outputs
-            WHERE mode IN ('human_approval', 'recommend')
-              AND human_action IS NULL
-              AND version = (
-                  SELECT MAX(version) FROM decision_outputs d2
-                  WHERE d2.application_id = decision_outputs.application_id
-                    AND d2.decision_id = decision_outputs.decision_id
-              )
-            GROUP BY decision_id
-            ORDER BY pending DESC
-            """
-        )
-        totals = await conn.fetchrow(
-            """
-            SELECT
-                COUNT(*) AS total,
-                COUNT(*) FILTER (WHERE mode = 'auto_execute') AS auto,
-                COUNT(*) FILTER (WHERE human_action IS NOT NULL) AS reviewed,
-                COUNT(*) FILTER (WHERE outcome = 'block') AS blocked,
-                COUNT(*) FILTER (
-                    WHERE human_action = 'overridden'
-                ) AS overridden,
-                COUNT(*) FILTER (
-                    WHERE mode IN ('human_approval', 'recommend')
-                ) AS reviewable
-            FROM decision_outputs
-            WHERE version = (
-                SELECT MAX(version) FROM decision_outputs d2
-                WHERE d2.application_id = decision_outputs.application_id
-                  AND d2.decision_id = decision_outputs.decision_id
-            )
-            """
-        )
-        wave_velocity = await conn.fetch(
-            """
-            SELECT wave,
-                   AVG(time_in_prev_state_seconds) AS avg_sec,
-                   COUNT(*) AS n
-            FROM decision_timeline
-            WHERE wave IS NOT NULL
-            GROUP BY wave ORDER BY wave
-            """
-        )
-
-    by_decision: dict[str, dict[str, int]] = {}
-    for r in outcome_dist:
-        by_decision.setdefault(r["decision_id"], {})[r["outcome"]] = r["n"]
-    outcome_rows = []
-    for d in sorted(by_decision):
-        row = by_decision[d]
-        outcome_rows.append(
-            {
-                "decision_id": d,
-                "label": DECISION_LABELS.get(d, d),
-                "allow": row.get("allow", 0),
-                "recommend": row.get("recommend", 0),
-                "escalate": row.get("escalate", 0),
-                "block": row.get("block", 0),
-                "total": sum(row.values()),
-            }
-        )
-
-    totals_d = dict(totals) if totals else {}
-    total = totals_d.get("total") or 0
-
-    def _pct(n: Any) -> float:
-        return round((n or 0) * 100 / total, 1) if total else 0.0
-
-    reviewable = totals_d.get("reviewable") or 0
-    kpis = {
-        "total": total,
-        "auto_pct": _pct(totals_d.get("auto")),
-        "reviewed_pct": _pct(totals_d.get("reviewed")),
-        "blocked_pct": _pct(totals_d.get("blocked")),
-        "override_rate": (
-            round(
-                (totals_d.get("overridden") or 0) * 100 / reviewable, 1
-            )
-            if reviewable
-            else 0.0
-        ),
-    }
-
-    return templates.TemplateResponse(
-        "analytics.html",
-        {
-            "request": request,
-            "kpis": kpis,
-            "outcomes": outcome_rows,
-            "avg_time": [
-                {
-                    "decision_id": r["decision_id"],
-                    "label": DECISION_LABELS.get(
-                        r["decision_id"], r["decision_id"]
-                    ),
-                    "avg_sec": round(float(r["avg_sec"] or 0), 3),
-                    "n": r["n"],
-                }
-                for r in avg_time
-            ],
-            "bottlenecks": [
-                {
-                    "decision_id": r["decision_id"],
-                    "label": DECISION_LABELS.get(
-                        r["decision_id"], r["decision_id"]
-                    ),
-                    "pending": r["pending"],
-                    "oldest": r["oldest"],
-                }
-                for r in bottlenecks
-            ],
-            "wave_velocity": [
-                {
-                    "wave": r["wave"],
-                    "avg_sec": round(float(r["avg_sec"] or 0), 1),
-                    "n": r["n"],
-                }
-                for r in wave_velocity
-            ],
-        },
-    )
 
 
 def _maybe_json(val: Any) -> Any:
@@ -912,4 +1753,4 @@ def _maybe_json(val: Any) -> Any:
     return val
 
 
-__all__ = ["router", "DATABASE_URL"]
+__all__ = ["router", "DATABASE_URL", "PERSONA_CONFIG", "STAGES"]

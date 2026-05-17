@@ -1,38 +1,10 @@
-{% extends "base_edms.html" %}
-{% set active_nav = 'dashboard' %}
-{% block title %}Pipeline Dashboard{% endblock %}
+{% extends "base_workbench.html" %}
+{% block title %}Pipeline{% endblock %}
 {% block content %}
-<header class="mb-6 flex items-end justify-between">
-  <div>
-    <h1 class="text-2xl font-semibold tracking-tight">Pipeline Dashboard</h1>
-    <p class="text-sm text-slate-500 mt-1">
-      Top 100 applications by pipeline completion. Click a row to drill into the journey.
-    </p>
-  </div>
-  <a href="/workbench/queue"
-     class="text-sm font-medium text-blue-700 hover:text-blue-900">
-    Review queue → <span class="mono">({{ queue_total }} pending)</span>
-  </a>
+<header class="mb-5">
+  <h1 class="text-2xl font-semibold tracking-tight">Pipeline</h1>
+  <p class="text-sm text-slate-500 mt-1">Top 100 applications by completion. Click a row to see the journey.</p>
 </header>
-
-<section class="grid grid-cols-4 gap-4 mb-8">
-  <div class="bg-white border border-slate-200 rounded-lg p-5">
-    <div class="text-xs uppercase tracking-wider text-slate-500">Total apps</div>
-    <div class="mt-2 text-3xl font-semibold">{{ totals.total_apps or 0 }}</div>
-  </div>
-  <div class="bg-white border border-slate-200 rounded-lg p-5">
-    <div class="text-xs uppercase tracking-wider text-slate-500">Complete (12/12)</div>
-    <div class="mt-2 text-3xl font-semibold text-emerald-700">{{ totals.complete_apps or 0 }}</div>
-  </div>
-  <div class="bg-white border border-slate-200 rounded-lg p-5">
-    <div class="text-xs uppercase tracking-wider text-slate-500">Blocked</div>
-    <div class="mt-2 text-3xl font-semibold text-rose-700">{{ totals.blocked_apps or 0 }}</div>
-  </div>
-  <div class="bg-white border border-slate-200 rounded-lg p-5">
-    <div class="text-xs uppercase tracking-wider text-slate-500">Pending review</div>
-    <div class="mt-2 text-3xl font-semibold text-amber-700">{{ totals.pending_apps or 0 }}</div>
-  </div>
-</section>
 
 <section class="bg-white border border-slate-200 rounded-lg overflow-hidden">
   <table class="min-w-full text-sm">
@@ -51,45 +23,28 @@
     </thead>
     <tbody class="divide-y divide-slate-100">
       {% for app in applications %}
-        {% set row_bg = '' %}
-        {% if app.has_block %}{% set row_bg = 'bg-rose-50/40 hover:bg-rose-50' %}
-        {% elif app.pending_human_review and app.pending_human_review > 0 %}{% set row_bg = 'bg-amber-50/40 hover:bg-amber-50' %}
-        {% elif app.decisions_complete == app.decisions_total %}{% set row_bg = 'bg-emerald-50/40 hover:bg-emerald-50' %}
-        {% else %}{% set row_bg = 'hover:bg-slate-50' %}{% endif %}
-        <tr class="{{ row_bg }} cursor-pointer"
-            onclick="window.location='/workbench/app/{{ app.application_id }}'">
-          <td class="px-4 py-2.5 mono text-xs">{{ app.application_id }}</td>
-          <td class="px-4 py-2.5">Wave {{ app.current_wave or '?' }}</td>
-          <td class="px-4 py-2.5">{{ app.decisions_complete }}/{{ app.decisions_total }}</td>
-          <td class="px-4 py-2.5">
+        {% if app.has_block %}{% set rowbg = 'bg-rose-50/30 hover:bg-rose-50' %}
+        {% elif app.pending_human_review and app.pending_human_review > 0 %}{% set rowbg = 'bg-amber-50/30 hover:bg-amber-50' %}
+        {% elif app.decisions_complete == app.decisions_total %}{% set rowbg = 'bg-emerald-50/30 hover:bg-emerald-50' %}
+        {% else %}{% set rowbg = 'hover:bg-slate-50' %}{% endif %}
+        <tr class="{{ rowbg }} cursor-pointer" onclick="window.location='/workbench/pipeline/{{ app.application_id }}'">
+          <td class="px-4 py-2 mono text-xs">{{ app.application_id }}</td>
+          <td class="px-4 py-2">Wave {{ app.current_wave or '?' }}</td>
+          <td class="px-4 py-2">{{ app.decisions_complete }}/{{ app.decisions_total }}</td>
+          <td class="px-4 py-2">
             <div class="flex items-center gap-2">
-              <div class="w-24 bg-slate-200 rounded h-1.5">
-                <div class="h-1.5 bg-blue-600 rounded" style="width: {{ app.pipeline_pct or 0 }}%"></div>
-              </div>
+              <div class="w-24 bg-slate-200 rounded h-1.5"><div class="h-1.5 bg-blue-600 rounded" style="width: {{ app.pipeline_pct or 0 }}%"></div></div>
               <span class="text-xs text-slate-600">{{ app.pipeline_pct or 0 }}%</span>
             </div>
           </td>
-          <td class="px-4 py-2.5">
-            {% if app.has_block %}<span class="text-xs px-2 py-0.5 rounded bg-rose-100 text-rose-700">block</span>
-            {% else %}<span class="text-slate-300">—</span>{% endif %}
-          </td>
-          <td class="px-4 py-2.5">
-            {% if app.pending_human_review and app.pending_human_review > 0 %}
-              <span class="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800">{{ app.pending_human_review }}</span>
-            {% else %}<span class="text-slate-300">—</span>{% endif %}
-          </td>
-          <td class="px-4 py-2.5">
-            {% if app.escalate_count and app.escalate_count > 0 %}
-              <span class="text-xs px-2 py-0.5 rounded bg-orange-100 text-orange-800">{{ app.escalate_count }}</span>
-            {% else %}<span class="text-slate-300">—</span>{% endif %}
-          </td>
-          <td class="px-4 py-2.5 text-xs text-slate-500">{{ app.pipeline_started | humanize_age }}</td>
-          <td class="px-4 py-2.5 text-xs text-slate-500">{{ app.last_decision_at | humanize_age }}</td>
+          <td class="px-4 py-2">{% if app.has_block %}<span class="text-xs px-2 py-0.5 rounded bg-rose-100 text-rose-700">block</span>{% else %}<span class="text-slate-300">—</span>{% endif %}</td>
+          <td class="px-4 py-2">{% if app.pending_human_review and app.pending_human_review > 0 %}<span class="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800">{{ app.pending_human_review }}</span>{% else %}<span class="text-slate-300">—</span>{% endif %}</td>
+          <td class="px-4 py-2">{% if app.escalate_count and app.escalate_count > 0 %}<span class="text-xs px-2 py-0.5 rounded bg-orange-100 text-orange-800">{{ app.escalate_count }}</span>{% else %}<span class="text-slate-300">—</span>{% endif %}</td>
+          <td class="px-4 py-2 text-xs text-slate-500">{{ app.pipeline_started | humanize_age }}</td>
+          <td class="px-4 py-2 text-xs text-slate-500">{{ app.last_decision_at | humanize_age }}</td>
         </tr>
       {% else %}
-        <tr><td colspan="9" class="px-4 py-10 text-center text-slate-400">
-          No applications found in <code class="mono">vw_pipeline_status</code>.
-        </td></tr>
+        <tr><td colspan="9" class="px-4 py-10 text-center text-slate-400">vw_pipeline_status is empty.</td></tr>
       {% endfor %}
     </tbody>
   </table>

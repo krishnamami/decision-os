@@ -1,0 +1,89 @@
+{% extends "base_workbench.html" %}
+{% block title %}Audit · {{ application_id }}{% endblock %}
+{% block content %}
+<nav class="text-xs text-slate-500 mb-3">
+  <a href="/workbench/audit" class="hover:underline">Audit</a>
+  <span class="mx-1">›</span>
+  <span class="text-slate-900 mono">{{ application_id }}</span>
+</nav>
+
+<header class="mb-5 flex items-baseline justify-between">
+  <h1 class="text-2xl font-semibold tracking-tight mono">{{ application_id }}</h1>
+  <div class="text-xs text-slate-500">Total pipeline time: <span class="font-semibold text-slate-900">{{ total_pipeline_seconds | fmt_seconds }}</span></div>
+</header>
+
+<section class="bg-white border border-slate-200 rounded-lg overflow-hidden mb-6">
+  <div class="px-5 pt-4 pb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Decisions ({{ decisions | length }})</div>
+  <table class="min-w-full text-sm">
+    <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+      <tr>
+        <th class="text-left px-4 py-2">Persona</th>
+        <th class="text-left px-4 py-2">Outcome</th>
+        <th class="text-left px-4 py-2">Mode</th>
+        <th class="text-right px-4 py-2">Conf</th>
+        <th class="text-left px-4 py-2">Risk</th>
+        <th class="text-left px-4 py-2">Human</th>
+        <th class="text-left px-4 py-2">Reviewer</th>
+        <th class="text-left px-4 py-2">Override reason</th>
+        <th class="text-left px-4 py-2">Decided</th>
+        <th class="text-left px-4 py-2">Acted</th>
+        <th class="text-right px-4 py-2">SLA</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-100">
+      {% for d in decisions %}
+        {% set oc = d.outcome | outcome_color %}
+        <tr class="hover:bg-slate-50">
+          <td class="px-4 py-1.5">
+            {% if d.persona_slug %}
+              <a href="/workbench/{{ d.persona_slug }}/completed/{{ application_id }}" class="text-blue-700 hover:underline">{{ d.persona_title }}</a>
+            {% else %}{{ d.persona_title }}{% endif %}
+          </td>
+          <td class="px-4 py-1.5"><span class="text-xs px-2 py-0.5 rounded bg-{{ oc }}-100 text-{{ oc }}-700 font-medium">{{ d.outcome }}</span></td>
+          <td class="px-4 py-1.5 text-xs">{{ d.mode }}</td>
+          <td class="px-4 py-1.5 text-right mono">{{ '%.2f' % (d.confidence or 0) }}</td>
+          <td class="px-4 py-1.5 text-xs">{{ d.risk_level or '—' }}</td>
+          <td class="px-4 py-1.5 text-xs">
+            {% if d.human_action == 'approved' %}<span class="text-emerald-700">approved</span>
+            {% elif d.human_action == 'overridden' %}<span class="text-violet-700">overridden</span>
+            {% else %}<span class="text-slate-400">—</span>{% endif %}
+          </td>
+          <td class="px-4 py-1.5 text-xs">{{ d.human_reviewer or '—' }}</td>
+          <td class="px-4 py-1.5 text-xs text-slate-600">{{ d.human_override_reason or '—' }}</td>
+          <td class="px-4 py-1.5 text-xs text-slate-500">{{ d.decided_at | humanize_age }}</td>
+          <td class="px-4 py-1.5 text-xs text-slate-500">{{ d.acted_at | humanize_age }}</td>
+          <td class="px-4 py-1.5 text-right text-xs">
+            {% if d.sla_seconds and d.actual_seconds %}
+              {% set within = d.actual_seconds <= d.sla_seconds %}
+              <span class="{% if within %}text-emerald-700{% else %}text-rose-700{% endif %}">
+                {{ d.actual_seconds | fmt_seconds }} / {{ d.sla_seconds | fmt_seconds }}
+              </span>
+            {% else %}<span class="text-slate-300">—</span>{% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="11" class="px-4 py-10 text-center text-slate-400">No decisions recorded for this application.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% if timeline %}
+<section class="bg-white border border-slate-200 rounded-lg p-5">
+  <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">State transitions ({{ timeline | length }})</div>
+  <ol class="space-y-1.5 text-xs">
+    {% for t in timeline %}
+      {% set tc = t.to_state | outcome_color %}
+      <li class="flex items-start gap-3 border-b border-slate-100 last:border-b-0 pb-1.5">
+        <span class="mono text-slate-400 w-44 flex-shrink-0">{{ t.transition_at }}</span>
+        <span class="mono text-slate-700 w-44 flex-shrink-0">{{ t.decision_id }}</span>
+        <span class="text-slate-500">{{ t.from_state }} →</span>
+        <span class="px-1.5 py-0.5 rounded bg-{{ tc }}-100 text-{{ tc }}-700 mono">{{ t.to_state }}</span>
+        <span class="text-slate-400 ml-2">{{ t.trigger }}</span>
+        <span class="ml-auto text-slate-400 mono">{{ t.pipeline_position }}</span>
+      </li>
+    {% endfor %}
+  </ol>
+</section>
+{% endif %}
+{% endblock %}

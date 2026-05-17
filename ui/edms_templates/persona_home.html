@@ -1,0 +1,55 @@
+{% extends "base_workbench.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<header class="mb-6">
+  <h1 class="text-2xl font-semibold tracking-tight">Lending Workbench</h1>
+  <p class="text-sm text-slate-500 mt-1">
+    Eleven personas, one pipeline. Pick a role to see the queue.
+  </p>
+</header>
+
+{% for grp in stages_with_cards %}
+  <section class="mb-8">
+    <div class="flex items-center gap-3 mb-3">
+      <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500">{{ grp.stage.name }}</h2>
+      <div class="flex-1 border-t border-slate-200"></div>
+      <span class="text-xs text-slate-400">{{ grp.cards | length }} role{% if grp.cards | length != 1 %}s{% endif %}</span>
+    </div>
+    <div class="grid grid-cols-4 gap-4">
+      {% for c in grp.cards %}
+        <a href="/workbench/{{ c.slug }}"
+           class="block bg-white border border-slate-200 rounded-lg p-5 hover:shadow-md hover:border-{{ c.color }}-300 transition">
+          <div class="flex items-start gap-3">
+            <span class="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-{{ c.color }}-100 text-{{ c.color }}-700 text-sm font-semibold">{{ c.icon }}</span>
+            <div class="min-w-0 flex-1">
+              <div class="text-sm font-semibold text-slate-900">{{ c.title }}</div>
+              <div class="text-xs text-slate-500 mt-0.5 leading-snug">{{ c.description }}</div>
+            </div>
+          </div>
+          <div class="mt-4 grid grid-cols-2 gap-3 text-xs">
+            <div>
+              <div class="text-slate-500">In queue</div>
+              <div class="mt-0.5 text-lg font-semibold {% if c.in_queue > 0 %}text-orange-600{% else %}text-slate-400{% endif %}">{{ c.in_queue }}</div>
+            </div>
+            <div>
+              <div class="text-slate-500">Completed</div>
+              <div class="mt-0.5 text-lg font-semibold text-slate-900">{{ c.completed }}</div>
+            </div>
+            <div>
+              <div class="text-slate-500">Auto cleared</div>
+              <div class="mt-0.5 text-sm font-medium text-emerald-700">{{ c.auto_pct }}%</div>
+            </div>
+            <div>
+              <div class="text-slate-500">Avg review</div>
+              <div class="mt-0.5 text-sm font-medium text-slate-700">{{ c.avg_review_sec | fmt_seconds }}</div>
+            </div>
+          </div>
+          <div class="mt-3 text-[11px] text-slate-400">
+            {{ c.mode }} · <span class="mono">{{ c.decision_id }}</span>
+          </div>
+        </a>
+      {% endfor %}
+    </div>
+  </section>
+{% endfor %}
+{% endblock %}
