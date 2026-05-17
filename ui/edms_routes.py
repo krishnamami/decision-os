@@ -68,7 +68,8 @@ PERSONA_CONFIG: dict[str, dict[str, Any]] = {
         ],
         "summary_fields": ["credit_score", "credit_band"],
         "mode": "recommend",
-        "icon": "CU",
+        "icon": "ti-shield",
+        "abbr": "CU",
         "color": "blue",
     },
     "income_underwriter": {
@@ -83,7 +84,8 @@ PERSONA_CONFIG: dict[str, dict[str, Any]] = {
         ],
         "summary_fields": ["verified_income", "income_discrepancy_pct"],
         "mode": "recommend",
-        "icon": "IU",
+        "icon": "ti-coin",
+        "abbr": "IU",
         "color": "emerald",
     },
     "employment_specialist": {
@@ -99,7 +101,8 @@ PERSONA_CONFIG: dict[str, dict[str, Any]] = {
         ],
         "summary_fields": ["reconciliation_status", "continuity_coverage_pct"],
         "mode": "recommend",
-        "icon": "ES",
+        "icon": "ti-briefcase",
+        "abbr": "ES",
         "color": "teal",
     },
     "fraud_analyst": {
@@ -114,7 +117,8 @@ PERSONA_CONFIG: dict[str, dict[str, Any]] = {
         ],
         "summary_fields": ["fraud_score", "identity_match_confidence"],
         "mode": "human_approval",
-        "icon": "FA",
+        "icon": "ti-alert-triangle",
+        "abbr": "FA",
         "color": "rose",
     },
     "compliance_officer": {
@@ -130,7 +134,8 @@ PERSONA_CONFIG: dict[str, dict[str, Any]] = {
         ],
         "summary_fields": ["all_hmda_fields_complete", "state_rules_passed"],
         "mode": "human_approval",
-        "icon": "CO",
+        "icon": "ti-clipboard-check",
+        "abbr": "CO",
         "color": "indigo",
     },
     "collateral_analyst": {
@@ -144,7 +149,8 @@ PERSONA_CONFIG: dict[str, dict[str, Any]] = {
         ],
         "summary_fields": ["ltv", "appraised_value"],
         "mode": "auto_execute",
-        "icon": "CA",
+        "icon": "ti-home",
+        "abbr": "CA",
         "color": "amber",
     },
     "product_specialist": {
@@ -158,7 +164,8 @@ PERSONA_CONFIG: dict[str, dict[str, Any]] = {
         ],
         "summary_fields": ["loan_type", "credit_band"],
         "mode": "recommend",
-        "icon": "PS",
+        "icon": "ti-package",
+        "abbr": "PS",
         "color": "cyan",
     },
     "pricing_analyst": {
@@ -173,7 +180,8 @@ PERSONA_CONFIG: dict[str, dict[str, Any]] = {
         ],
         "summary_fields": ["interest_rate", "llpa_adjustment"],
         "mode": "recommend",
-        "icon": "PA",
+        "icon": "ti-trending-up",
+        "abbr": "PA",
         "color": "violet",
     },
     "senior_underwriter": {
@@ -189,7 +197,8 @@ PERSONA_CONFIG: dict[str, dict[str, Any]] = {
         ],
         "summary_fields": ["mid_credit_score", "ltv", "dti_back"],
         "mode": "human_approval",
-        "icon": "SU",
+        "icon": "ti-user-check",
+        "abbr": "SU",
         "color": "purple",
     },
     "closer": {
@@ -205,7 +214,8 @@ PERSONA_CONFIG: dict[str, dict[str, Any]] = {
         ],
         "summary_fields": ["title_clear", "cd_timing_compliant"],
         "mode": "human_approval",
-        "icon": "CL",
+        "icon": "ti-check-circle",
+        "abbr": "CL",
         "color": "orange",
     },
     "post_closer": {
@@ -216,7 +226,8 @@ PERSONA_CONFIG: dict[str, dict[str, Any]] = {
         "key_fields": ["applicant_id", "status", "completeness_pct"],
         "summary_fields": ["status"],
         "mode": "auto_execute",
-        "icon": "PC",
+        "icon": "ti-send",
+        "abbr": "PC",
         "color": "slate",
     },
 }
@@ -335,9 +346,29 @@ def _get_decision_store() -> Any:
 
 
 def _not_configured(request: Request) -> HTMLResponse:
+    # Sidebar metrics need DATABASE_URL; when it's empty we render the
+    # error page with an empty sidebar shell (no PG call).
+    sidebar = [
+        {
+            "slug": slug,
+            "title": cfg["title"],
+            "icon": cfg["icon"],
+            "abbr": cfg.get("abbr", slug[:2].upper()),
+            "color": cfg["color"],
+            "decision_id": cfg["decision_id"],
+            "active": False,
+            "in_queue": 0,
+        }
+        for slug, cfg in PERSONA_CONFIG.items()
+    ]
     return templates.TemplateResponse(
         "not_configured.html",
-        {"request": request, **_base_ctx(None)},
+        {
+            "request": request,
+            "personas_sidebar": sidebar,
+            "stages": STAGES,
+            "active_persona": None,
+        },
         status_code=503,
     )
 
@@ -475,7 +506,65 @@ templates.env.filters["fmt_seconds"] = _fmt_seconds
 # ─────────────────────────────────────────────────────────────────────
 
 
-def _base_ctx(active_persona_slug: Optional[str]) -> dict[str, Any]:
+async def _sidebar_queue_counts() -> dict[str, int]:
+    """One grouped query that returns in-queue count per decision_id.
+
+    Cheap enough to run on every request (single grouped scan against
+    the latest version of each decision_outputs row)."""
+    if not DATABASE_URL:
+        return {}
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT decision_id, COUNT(*) AS n
+            FROM decision_outputs
+            WHERE mode IN ('human_approval', 'recommend')
+              AND human_action IS NULL
+              AND version = (
+                  SELECT MAX(version) FROM decision_outputs d2
+                  WHERE d2.application_id = decision_outputs.application_id
+                    AND d2.decision_id = decision_outputs.decision_id
+              )
+            GROUP BY decision_id
+            """
+        )
+    by_decision = {r["decision_id"]: int(r["n"] or 0) for r in rows}
+    if not by_decision:
+        return {}
+    # entity_states-only personas (auto_execute with no decisions yet):
+    # count un-decided apps as their "queue" so the sidebar reflects the
+    # work waiting for that role.
+    async with pool.acquire() as conn:
+        total_apps = await conn.fetchval(
+            "SELECT COUNT(*) FROM entity_states"
+        )
+        decided_per_decision = await conn.fetch(
+            """
+            SELECT decision_id, COUNT(*) AS n
+            FROM decision_outputs
+            WHERE version = (
+                SELECT MAX(version) FROM decision_outputs d2
+                WHERE d2.application_id = decision_outputs.application_id
+                  AND d2.decision_id = decision_outputs.decision_id
+            )
+            GROUP BY decision_id
+            """
+        )
+    decided = {r["decision_id"]: int(r["n"] or 0) for r in decided_per_decision}
+    total_apps = int(total_apps or 0)
+    out: dict[str, int] = {}
+    for slug, cfg in PERSONA_CONFIG.items():
+        d = cfg["decision_id"]
+        if cfg["mode"] == "auto_execute":
+            out[d] = max(0, total_apps - decided.get(d, 0))
+        else:
+            out[d] = by_decision.get(d, 0)
+    return out
+
+
+async def _base_ctx(active_persona_slug: Optional[str]) -> dict[str, Any]:
+    queue_counts = await _sidebar_queue_counts() if DATABASE_URL else {}
     sidebar = []
     for slug, cfg in PERSONA_CONFIG.items():
         sidebar.append(
@@ -483,9 +572,11 @@ def _base_ctx(active_persona_slug: Optional[str]) -> dict[str, Any]:
                 "slug": slug,
                 "title": cfg["title"],
                 "icon": cfg["icon"],
+                "abbr": cfg.get("abbr", slug[:2].upper()),
                 "color": cfg["color"],
                 "decision_id": cfg["decision_id"],
                 "active": slug == active_persona_slug,
+                "in_queue": queue_counts.get(cfg["decision_id"], 0),
             }
         )
     return {
@@ -609,7 +700,7 @@ async def home(request: Request):
         "persona_home.html",
         {
             "request": request,
-            **_base_ctx(None),
+            **(await _base_ctx(None)),
             "active_nav": "home",
             "stages_with_cards": cards_by_stage,
             "total_decisions": await _total_decisions(),
@@ -648,7 +739,7 @@ async def pipeline_dashboard(request: Request):
         "pipeline_dashboard.html",
         {
             "request": request,
-            **_base_ctx(None),
+            **(await _base_ctx(None)),
             "active_nav": "pipeline",
             "applications": [dict(a) for a in apps],
             "total_decisions": await _total_decisions(),
@@ -719,7 +810,7 @@ async def pipeline_app(request: Request, application_id: str):
         "pipeline_app.html",
         {
             "request": request,
-            **_base_ctx(None),
+            **(await _base_ctx(None)),
             "active_nav": "pipeline",
             "application_id": application_id,
             "entity": _entity_summary(entity),
@@ -840,7 +931,7 @@ async def audit_dashboard(request: Request):
         "audit_dashboard.html",
         {
             "request": request,
-            **_base_ctx(None),
+            **(await _base_ctx(None)),
             "active_nav": "audit",
             "totals": totals_d,
             "overrides_table": overrides_table,
@@ -914,7 +1005,7 @@ async def audit_app(request: Request, application_id: str):
         "audit_app.html",
         {
             "request": request,
-            **_base_ctx(None),
+            **(await _base_ctx(None)),
             "active_nav": "audit",
             "application_id": application_id,
             "decisions": decisions,
@@ -1032,7 +1123,7 @@ async def governance(request: Request):
         "governance.html",
         {
             "request": request,
-            **_base_ctx(None),
+            **(await _base_ctx(None)),
             "active_nav": "governance",
             "outcome_grid": rows_pretty,
             "overrides_by_reviewer": [dict(r) for r in overrides_by_reviewer],
@@ -1113,7 +1204,7 @@ async def persona_workbench(
         return _not_configured(request)
     persona = _persona_or_none(persona_slug)
     if persona is None:
-        return _persona_404(request, persona_slug)
+        return await _persona_404(request, persona_slug)
 
     decision_id = persona["decision_id"]
     mode = persona["mode"]
@@ -1344,7 +1435,7 @@ async def persona_workbench(
         "persona_workbench.html",
         {
             "request": request,
-            **_base_ctx(persona_slug),
+            **(await _base_ctx(persona_slug)),
             "persona": persona,
             "tab": tab,
             "kpi": kpi,
@@ -1371,7 +1462,7 @@ async def review_detail(
         return _not_configured(request)
     persona = _persona_or_none(persona_slug)
     if persona is None:
-        return _persona_404(request, persona_slug)
+        return await _persona_404(request, persona_slug)
     return await _render_review(
         request, persona, application_id, readonly=False
     )
@@ -1388,7 +1479,7 @@ async def completed_detail(
         return _not_configured(request)
     persona = _persona_or_none(persona_slug)
     if persona is None:
-        return _persona_404(request, persona_slug)
+        return await _persona_404(request, persona_slug)
     return await _render_review(
         request, persona, application_id, readonly=True
     )
@@ -1536,7 +1627,7 @@ async def _render_review(
         template,
         {
             "request": request,
-            **_base_ctx(persona["slug"]),
+            **(await _base_ctx(persona["slug"])),
             "persona": persona,
             "application_id": application_id,
             "decision": decision_dict,
@@ -1713,12 +1804,12 @@ async def _record_review(
 # ─────────────────────────────────────────────────────────────────────
 
 
-def _persona_404(request: Request, slug: str) -> HTMLResponse:
+async def _persona_404(request: Request, slug: str) -> HTMLResponse:
     return templates.TemplateResponse(
         "persona_404.html",
         {
             "request": request,
-            **_base_ctx(None),
+            **(await _base_ctx(None)),
             "bad_slug": slug,
         },
         status_code=404,

@@ -130,6 +130,14 @@ class Platform:
         self._executor: Optional[DAGExecutor] = None
         self._executor_dirty = True
 
+        # EDMS stores — populated by build_default_platform when
+        # DATABASE_URL is configured. None in pure in-memory mode.
+        # ui/edms_routes.py + ui/views.py also use module-level
+        # singletons; these attributes give in-process callers a
+        # ready-to-use handle without re-reading the env.
+        self.edms_store: Optional[Any] = None
+        self.decision_store: Optional[Any] = None
+
     # ── Registries ───────────────────────────────────────────────────
 
     def register_agent(self, agent: DecisionAgent) -> None:
@@ -311,7 +319,7 @@ def build_default_platform(
 
     resolver = entity_resolver or _default_resolver(store)
 
-    return Platform(
+    platform = Platform(
         spec=spec,
         store=store,
         builder=builder,
@@ -336,6 +344,30 @@ def build_default_platform(
         pii_access_log=pii_access_log,
         outcome_tracker=outcome_tracker,
     )
+
+    # EDMS stores — wired only when DATABASE_URL is configured. The
+    # asyncpg pools inside each store are lazy, so this is just two
+    # cheap constructor calls. Tests with no DATABASE_URL leave both
+    # attributes None and the in-memory path runs unchanged.
+    import os as _deps_os
+    try:
+        from dotenv import load_dotenv as _deps_load_dotenv  # type: ignore
+
+        _deps_load_dotenv()
+    except ImportError:  # pragma: no cover
+        pass
+    _database_url = _deps_os.environ.get("DATABASE_URL", "").strip()
+    if _database_url:
+        try:
+            from core.edms_store import EdmsContextStore
+            from core.decision_store import DecisionStore
+
+            platform.edms_store = EdmsContextStore(_database_url)
+            platform.decision_store = DecisionStore(_database_url)
+        except ImportError as err:  # pragma: no cover — surfaces in dev only
+            print(f"[deps] EDMS stores not wired: {err}")
+
+    return platform
 
 
 __all__ = [

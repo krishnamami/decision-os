@@ -5,9 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Decision OS — {% block title %}Workbench{% endblock %}</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.47.0/tabler-icons.min.css" />
   <style>
     body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .ti { font-size: 1rem; line-height: 1; }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-900 min-h-screen">
@@ -29,18 +32,36 @@
 
   <div class="max-w-screen-2xl mx-auto px-6 py-6 grid grid-cols-12 gap-6">
     <aside class="col-span-2">
-      <div class="text-[11px] uppercase tracking-wider text-slate-400 mb-2 px-2">Personas</div>
-      <nav class="space-y-0.5">
-        {% for p in personas_sidebar %}
-          {% set act = 'bg-' + p.color + '-50 border-' + p.color + '-200 text-' + p.color + '-900' %}
-          <a href="/workbench/{{ p.slug }}"
-             class="flex items-center gap-2 px-2 py-1.5 rounded text-sm
-                    {% if p.active %}{{ act }} border{% else %}text-slate-700 hover:bg-slate-100 border border-transparent{% endif %}">
-            <span class="inline-flex items-center justify-center w-6 h-6 rounded text-[10px] font-semibold bg-{{ p.color }}-100 text-{{ p.color }}-700">{{ p.icon }}</span>
-            <span class="truncate">{{ p.title }}</span>
-          </a>
-        {% endfor %}
-      </nav>
+      {% set sidebar_groups = [
+        ('Pre-underwriting', ['credit_underwriter', 'fraud_analyst', 'compliance_officer', 'employment_specialist']),
+        ('Underwriting',     ['income_underwriter', 'collateral_analyst', 'product_specialist', 'pricing_analyst']),
+        ('Decision',         ['senior_underwriter']),
+        ('Post-decision',    ['closer', 'post_closer']),
+      ] %}
+      {% set sidebar_by_slug = {} %}
+      {% for p in personas_sidebar %}{% set _ = sidebar_by_slug.update({p.slug: p}) %}{% endfor %}
+      {% for group_name, slugs in sidebar_groups %}
+        <div class="text-[10px] uppercase tracking-wider text-slate-400 mb-1.5 mt-3 first:mt-0 px-2">{{ group_name }}</div>
+        <nav class="space-y-0.5 mb-1">
+          {% for slug in slugs %}
+            {% set p = sidebar_by_slug.get(slug) %}
+            {% if p %}
+              {% set act = 'bg-blue-50 border-blue-300 text-blue-900' %}
+              <a href="/workbench/{{ p.slug }}"
+                 class="flex items-center gap-2 px-2 py-1.5 rounded text-sm
+                        {% if p.active %}{{ act }} border-l-2{% else %}text-slate-700 hover:bg-slate-100 border-l-2 border-transparent{% endif %}">
+                <span class="inline-flex items-center justify-center w-6 h-6 rounded bg-{{ p.color }}-100 text-{{ p.color }}-700">
+                  <i class="ti {{ p.icon }}"></i>
+                </span>
+                <span class="truncate flex-1">{{ p.title }}</span>
+                {% if p.in_queue and p.in_queue > 0 %}
+                  <span class="ml-auto text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-100 text-orange-700">{{ p.in_queue }}</span>
+                {% endif %}
+              </a>
+            {% endif %}
+          {% endfor %}
+        </nav>
+      {% endfor %}
     </aside>
 
     <main class="col-span-10">

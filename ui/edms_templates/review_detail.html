@@ -10,7 +10,9 @@
 </nav>
 
 <header class="mb-5 flex items-start gap-4">
-  <span class="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-{{ persona.color }}-100 text-{{ persona.color }}-700 text-sm font-semibold">{{ persona.icon }}</span>
+  <span class="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-{{ persona.color }}-100 text-{{ persona.color }}-700 text-lg">
+    <i class="ti {{ persona.icon }}"></i>
+  </span>
   <div class="flex-1 min-w-0">
     <h1 class="text-xl font-semibold tracking-tight">
       {{ persona.title }}

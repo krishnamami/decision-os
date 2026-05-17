@@ -147,6 +147,14 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        # Operator-visible one-liner so the data-source mode is obvious
+        # in the uvicorn log. EDMS stores hang on Platform when
+        # DATABASE_URL is set; otherwise the legacy in-memory backends
+        # serve every read.
+        if platform.edms_store is not None:
+            print("[startup] EDMS PostgreSQL mode — /workbench reads from EDMS")
+        else:
+            print("[startup] In-memory mode — DATABASE_URL not set")
         if seed_demo_data:
             await _bootstrap_demo(platform)
         yield

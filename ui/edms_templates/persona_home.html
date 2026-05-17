@@ -20,7 +20,9 @@
         <a href="/workbench/{{ c.slug }}"
            class="block bg-white border border-slate-200 rounded-lg p-5 hover:shadow-md hover:border-{{ c.color }}-300 transition">
           <div class="flex items-start gap-3">
-            <span class="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-{{ c.color }}-100 text-{{ c.color }}-700 text-sm font-semibold">{{ c.icon }}</span>
+            <span class="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-{{ c.color }}-100 text-{{ c.color }}-700 text-lg">
+              <i class="ti {{ c.icon }}"></i>
+            </span>
             <div class="min-w-0 flex-1">
               <div class="text-sm font-semibold text-slate-900">{{ c.title }}</div>
               <div class="text-xs text-slate-500 mt-0.5 leading-snug">{{ c.description }}</div>
