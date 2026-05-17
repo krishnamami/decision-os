@@ -13,21 +13,29 @@ from core.normalizer.models import DecisionOutcome
 from core.trace import HumanReview, derive_similarity_tags
 
 from .views import (
+    DATABASE_URL,
     application_detail,
+    application_detail_async,
     audit_record_detail,
     decision_detail,
+    decision_detail_async,
     document_detail_view,
     list_applications,
+    list_applications_async,
     list_audit_flags,
     list_audit_for_application,
     list_documents_for_application,
     list_pending_claims,
     list_persona_workbenches,
+    list_persona_workbenches_async,
     list_policies,
     list_workbenches,
     persona_workbench_view,
+    persona_workbench_view_async,
     policy_version_detail,
     queue_view,
+    queue_view_async,
+    record_override_edms,
     templates,
     workbench_view,
 )
@@ -42,7 +50,7 @@ async def home(request: Request, platform: Platform = Depends(get_platform)):
         "index.html",
         {
             "request": request,
-            "applications": list_applications(platform),
+            "applications": await list_applications_async(platform),
             "domain": platform.spec.domain,
             "version": platform.spec.version,
             "agent_count": len(platform.agents),
@@ -56,7 +64,7 @@ async def application_view(
     request: Request,
     platform: Platform = Depends(get_platform),
 ):
-    detail = application_detail(platform, application_id)
+    detail = await application_detail_async(platform, application_id)
     if detail is None or not detail.get("waves"):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -78,7 +86,7 @@ async def decision_view(
     request: Request,
     platform: Platform = Depends(get_platform),
 ):
-    detail = decision_detail(platform, application_id, decision_id)
+    detail = await decision_detail_async(platform, application_id, decision_id)
     if detail is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -97,7 +105,7 @@ async def queue_view_route(
 ):
     return templates.TemplateResponse(
         "queue.html",
-        {"request": request, **queue_view(platform)},
+        {"request": request, **(await queue_view_async(platform))},
     )
 
 
@@ -298,7 +306,7 @@ async def personas_index(
         "persona_index.html",
         {
             "request": request,
-            "personas": list_persona_workbenches(platform),
+            "personas": await list_persona_workbenches_async(platform),
         },
     )
 
@@ -312,7 +320,7 @@ async def persona_workbench(
     tab: str = "workbench",
     platform: Platform = Depends(get_platform),
 ):
-    detail = persona_workbench_view(
+    detail = await persona_workbench_view_async(
         platform,
         decision_id,
         application_id=application_id or None,
@@ -531,18 +539,69 @@ async def submit_override(
     override_reason: str = Form(...),
     override_reason_code: Optional[str] = Form(None),
 ):
-    trace = await platform.trace_writer.get(trace_id)
-    if trace is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="trace not found"
-        )
-
     try:
         new_outcome_enum = DecisionOutcome(new_outcome)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"invalid outcome {new_outcome!r}",
+        )
+
+    # ── EDMS path ────────────────────────────────────────────────────
+    # When DATABASE_URL is set there's no Pydantic trace in the writer
+    # — the cron runner doesn't produce them. We treat decision_outputs
+    # as the source of truth: look up the latest row, write the human
+    # action, append a decision_timeline entry. Same-outcome submissions
+    # are still rejected so a "confirmation" doesn't get logged as an
+    # override.
+    if DATABASE_URL:
+        detail = await decision_detail_async(platform, application_id, decision_id)
+        if detail is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown decision_id {decision_id!r}",
+            )
+        td = detail.get("trace_dict") or {}
+        current_outcome = td.get("outcome")
+        if current_outcome is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="decision row not found",
+            )
+        overridden = new_outcome_enum.value != current_outcome
+        if not overridden:
+            return templates.TemplateResponse(
+                "_override_card.html",
+                {
+                    "request": request,
+                    **detail,
+                    "error": (
+                        "new_outcome matches the current outcome — pick a "
+                        "different outcome to record an override, or skip "
+                        "to leave the decision pending."
+                    ),
+                },
+            )
+        await record_override_edms(
+            application_id=application_id,
+            decision_id=decision_id,
+            new_outcome=new_outcome_enum.value,
+            reviewer=reviewer_id,
+            reason=override_reason,
+            overridden=True,
+        )
+        # Re-read so the partial reflects the persisted human action.
+        detail = await decision_detail_async(platform, application_id, decision_id)
+        return templates.TemplateResponse(
+            "_override_result.html",
+            {"request": request, **(detail or {}), "learning": None},
+        )
+
+    # ── In-memory path (unchanged) ───────────────────────────────────
+    trace = await platform.trace_writer.get(trace_id)
+    if trace is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="trace not found"
         )
 
     overridden = new_outcome_enum != trace.outcome

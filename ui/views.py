@@ -2908,25 +2908,1248 @@ def audit_record_detail(
     }
 
 
+# ═════════════════════════════════════════════════════════════════════
+# EDMS DATA LAYER — added late, optional, off by default.
+#
+# When DATABASE_URL is set the async dispatchers below return view-model
+# dicts shaped IDENTICALLY to the existing sync helpers, but populated
+# from EDMS PostgreSQL instead of the in-memory Platform. ui/routes.py
+# always calls the async dispatcher; when DATABASE_URL is empty the
+# dispatcher just delegates back to the sync helper, so nothing about
+# the in-memory path changes and the test suite is unaffected.
+# ═════════════════════════════════════════════════════════════════════
+
+
+import os as _edms_os
+import json as _edms_json
+
+# Pick up DATABASE_URL from .env if present (mirrors core/cron/runner.py).
+try:
+    from dotenv import load_dotenv as _edms_load_dotenv  # type: ignore
+
+    _edms_load_dotenv()
+except ImportError:  # pragma: no cover — listed in requirements.txt
+    pass
+
+
+DATABASE_URL: Optional[str] = (
+    _edms_os.environ.get("DATABASE_URL", "").strip() or None
+)
+
+
+_edms_store_singleton: Any = None
+_decision_store_singleton: Any = None
+_edms_pool: Any = None
+
+
+def _get_edms_stores() -> tuple[Any, Any]:
+    """Return (EdmsContextStore, DecisionStore) — or (None, None) when
+    DATABASE_URL is not configured. Lazy so module import stays cheap."""
+    global _edms_store_singleton, _decision_store_singleton
+    if not DATABASE_URL:
+        return (None, None)
+    if _edms_store_singleton is None:
+        from core.edms_store import EdmsContextStore
+        from core.decision_store import DecisionStore
+
+        _edms_store_singleton = EdmsContextStore(DATABASE_URL)
+        _decision_store_singleton = DecisionStore(DATABASE_URL)
+    return (_edms_store_singleton, _decision_store_singleton)
+
+
+async def _get_edms_pool() -> Any:
+    """A separate asyncpg pool for ad-hoc reads the store classes don't
+    expose. Reusing the pool inside the store classes would require
+    poking at private state; cheaper to keep one more pool."""
+    global _edms_pool
+    if _edms_pool is None:
+        import asyncpg  # type: ignore
+
+        _edms_pool = await asyncpg.create_pool(
+            DATABASE_URL, min_size=1, max_size=5
+        )
+    return _edms_pool
+
+
+# ─── helpers ─────────────────────────────────────────────────────────
+
+
+def _edms_maybe_json(val: Any) -> Any:
+    if val is None or isinstance(val, (dict, list)):
+        return val
+    if isinstance(val, (bytes, bytearray)):
+        val = val.decode("utf-8", errors="replace")
+    if isinstance(val, str):
+        try:
+            return _edms_json.loads(val)
+        except (ValueError, _edms_json.JSONDecodeError):
+            return val
+    return val
+
+
+def _edms_jsonify(val: Any) -> Any:
+    """Recursively replace non-JSON-serializable values (datetime, UUID,
+    Decimal) with strings. Templates call ``| tojson`` on these dicts;
+    a stray datetime in a JSONB payload would otherwise raise."""
+    from datetime import date as _date
+    from decimal import Decimal as _Decimal
+    from uuid import UUID as _UUID
+
+    if val is None or isinstance(val, (str, int, float, bool)):
+        return val
+    if isinstance(val, dict):
+        return {k: _edms_jsonify(v) for k, v in val.items()}
+    if isinstance(val, (list, tuple)):
+        return [_edms_jsonify(v) for v in val]
+    if isinstance(val, (datetime, _date)):
+        return val.isoformat()
+    if isinstance(val, _UUID):
+        return str(val)
+    if isinstance(val, _Decimal):
+        return float(val)
+    return str(val)
+
+
+def _edms_outcome_style(outcome: Optional[str]) -> dict[str, str]:
+    return OUTCOME_STYLES.get(outcome or "pending", OUTCOME_STYLES["pending"])
+
+
+def _edms_halt_reason(outcomes_by_decision: dict[str, str]) -> Optional[str]:
+    if outcomes_by_decision.get("fraud_screening") == "block":
+        return "fraud_block_stops_pipeline"
+    if outcomes_by_decision.get("compliance_check") == "block":
+        return "compliance_block_stops_closing"
+    return None
+
+
+# ─── 1) list_applications ────────────────────────────────────────────
+
+
+async def _list_applications_edms() -> list[dict[str, Any]]:
+    pool = await _get_edms_pool()
+    async with pool.acquire() as conn:
+        apps = await conn.fetch(
+            """
+            SELECT application_id, decisions_complete, decisions_total,
+                   has_block, pending_human_review, escalate_count,
+                   pipeline_started, last_decision_at
+            FROM vw_pipeline_status
+            ORDER BY application_id
+            LIMIT 250
+            """
+        )
+        # Per-app outcome rollup in one round trip.
+        outcome_rows = await conn.fetch(
+            """
+            SELECT application_id, decision_id, outcome
+            FROM decision_outputs
+            WHERE version = (
+                SELECT MAX(version) FROM decision_outputs d2
+                WHERE d2.application_id = decision_outputs.application_id
+                  AND d2.decision_id = decision_outputs.decision_id
+            )
+            """
+        )
+        entity_rows = await conn.fetch(
+            """
+            SELECT application_id, status, loan_amount, loan_terms
+            FROM entity_states
+            """
+        )
+    outcomes_by_app: dict[str, dict[str, str]] = {}
+    for r in outcome_rows:
+        outcomes_by_app.setdefault(r["application_id"], {})[r["decision_id"]] = r["outcome"]
+    entity_by_app: dict[str, dict[str, Any]] = {}
+    for r in entity_rows:
+        loan_terms = _edms_maybe_json(r["loan_terms"]) or {}
+        entity_by_app[r["application_id"]] = {
+            "loan_amount": r["loan_amount"],
+            "status": r["status"],
+            "loan_terms": loan_terms if isinstance(loan_terms, dict) else {},
+        }
+
+    rows: list[dict[str, Any]] = []
+    for a in apps:
+        app_id = a["application_id"]
+        per_app = outcomes_by_app.get(app_id, {})
+        counts: dict[str, int] = defaultdict(int)
+        for o in per_app.values():
+            counts[o] += 1
+        es = entity_by_app.get(app_id, {})
+        loan_terms = es.get("loan_terms", {})
+        rows.append(
+            {
+                "application_id":   app_id,
+                "loan_purpose":     loan_terms.get("loan_purpose"),
+                "requested_amount": (
+                    loan_terms.get("loan_amount") or es.get("loan_amount")
+                ),
+                "property_state":   loan_terms.get("property_state"),
+                "submitted_at":     a["pipeline_started"],
+                "completed":        int(a["decisions_complete"] or 0),
+                "halted":           bool(a["has_block"]),
+                "halt_reason":      _edms_halt_reason(per_app),
+                "outcome_counts":   dict(counts),
+                "queued_count":     int(a["pending_human_review"] or 0),
+            }
+        )
+    return rows
+
+
+async def list_applications_async(platform: Platform) -> list[dict[str, Any]]:
+    if DATABASE_URL:
+        return await _list_applications_edms()
+    return list_applications(platform)
+
+
+# ─── 2) application_detail ───────────────────────────────────────────
+
+
+async def _application_detail_edms(
+    platform: Platform, application_id: str
+) -> dict[str, Any]:
+    spec = platform.spec
+    pool = await _get_edms_pool()
+    async with pool.acquire() as conn:
+        decisions = await conn.fetch(
+            """
+            SELECT decision_id, wave, outcome, mode, confidence,
+                   boundary_matched, decided_at, human_action,
+                   human_reviewer, id
+            FROM decision_outputs
+            WHERE application_id = $1
+              AND version = (
+                  SELECT MAX(version) FROM decision_outputs d2
+                  WHERE d2.application_id = decision_outputs.application_id
+                    AND d2.decision_id = decision_outputs.decision_id
+              )
+            """,
+            application_id,
+        )
+        entity = await conn.fetchrow(
+            "SELECT * FROM entity_states WHERE application_id = $1 LIMIT 1",
+            application_id,
+        )
+
+    by_decision: dict[str, dict[str, Any]] = {
+        d["decision_id"]: dict(d) for d in decisions
+    }
+    waves: list[list[dict[str, Any]]] = []
+    for wave_ids in spec.execution_waves:
+        wave_cards: list[dict[str, Any]] = []
+        for did in wave_ids:
+            decision_spec = spec.decision_index.get(did, {})
+            row = by_decision.get(did)
+            wave_cards.append(_decision_card_from_edms(decision_spec, row))
+        waves.append(wave_cards)
+
+    pending_human = sum(
+        1 for d in decisions
+        if d["mode"] in ("human_approval", "recommend")
+        and d["human_action"] is None
+    )
+
+    # Synthesize an "application" dict from entity_states — templates
+    # read .get(...) so missing fields render as "—".
+    application: dict[str, Any] = {}
+    if entity is not None:
+        e = dict(entity)
+        loan_terms = _edms_maybe_json(e.get("loan_terms")) or {}
+        loan_terms = loan_terms if isinstance(loan_terms, dict) else {}
+        application = {
+            "applicant_id":     _edms_maybe_json(e.get("borrower") or {}).get(
+                "applicant_id"
+            ) if isinstance(e.get("borrower"), (dict, str, bytes)) else None,
+            "loan_purpose":     loan_terms.get("loan_purpose"),
+            "requested_amount": loan_terms.get("loan_amount") or e.get("loan_amount"),
+            "property_state":   loan_terms.get("property_state"),
+            "submitted_at":     e.get("created_at"),
+            "loan_type":        loan_terms.get("loan_type"),
+        }
+
+    return {
+        "application_id": application_id,
+        "application":    application,
+        "waves":          waves,
+        "wave_labels":    _wave_labels(spec.execution_waves),
+        "queued_count":   pending_human,
+    }
+
+
+def _decision_card_from_edms(
+    spec: dict[str, Any], row: Optional[dict[str, Any]]
+) -> dict[str, Any]:
+    if row is None:
+        outcome = "pending"
+        confidence = None
+        matched_clause = None
+        ran = False
+        trace_id = None
+        queued = False
+    else:
+        outcome = row["outcome"]
+        confidence = row["confidence"]
+        matched_clause = row.get("boundary_matched")
+        ran = True
+        trace_id = str(row["id"]) if row.get("id") else None
+        queued = (
+            row.get("mode") in ("human_approval", "recommend")
+            and row.get("human_action") is None
+        )
+    return {
+        "decision_id":    spec.get("id"),
+        "name":           spec.get("name"),
+        "persona":        spec.get("persona"),
+        "mode":           spec.get("mode"),
+        "mode_label":     MODE_LABELS.get(spec.get("mode", ""), spec.get("mode")),
+        "risk_level":     spec.get("risk_level"),
+        "owner_team":     spec.get("owner_team"),
+        "depends_on":     [d["decision"] for d in spec.get("depends_on") or []],
+        "outcome":        outcome,
+        "outcome_style":  _edms_outcome_style(outcome),
+        "confidence":     confidence,
+        "matched_clause": matched_clause,
+        "ran":            ran,
+        "queued":         queued,
+        "trace_id":       trace_id,
+    }
+
+
+async def application_detail_async(
+    platform: Platform, application_id: str
+) -> dict[str, Any]:
+    if DATABASE_URL:
+        return await _application_detail_edms(platform, application_id)
+    return application_detail(platform, application_id)
+
+
+# ─── 3) decision_detail ──────────────────────────────────────────────
+
+
+async def _decision_detail_edms(
+    platform: Platform, application_id: str, decision_id: str
+) -> Optional[dict[str, Any]]:
+    spec = platform.spec
+    if decision_id not in spec.decision_index:
+        return None
+    decision_spec = spec.decision_index.get(decision_id, {})
+
+    edms, _ = _get_edms_stores()
+    pool = await _get_edms_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT * FROM decision_outputs
+            WHERE application_id = $1 AND decision_id = $2
+              AND version = (
+                  SELECT MAX(version) FROM decision_outputs d2
+                  WHERE d2.application_id = decision_outputs.application_id
+                    AND d2.decision_id = decision_outputs.decision_id
+              )
+            LIMIT 1
+            """,
+            application_id,
+            decision_id,
+        )
+        upstream_rows = await conn.fetch(
+            """
+            SELECT decision_id, outcome, confidence, decided_at
+            FROM decision_outputs
+            WHERE application_id = $1
+              AND decision_id != $2
+              AND version = (
+                  SELECT MAX(version) FROM decision_outputs d2
+                  WHERE d2.application_id = decision_outputs.application_id
+                    AND d2.decision_id = decision_outputs.decision_id
+              )
+            """,
+            application_id,
+            decision_id,
+        )
+
+    # Persona view context — best effort; some decisions (lead_scoring)
+    # don't have an EDMS view.
+    try:
+        snap = await edms.snapshot(
+            application_id=application_id,
+            decision_id=decision_id,
+            upstream_decision_ids=None,
+        )
+        bundle_objects = snap.context if isinstance(snap.context, dict) else {}
+    except Exception:  # noqa: BLE001 — degrade gracefully on missing view
+        bundle_objects = {}
+
+    # Synthesize a Trace-like dict the template can read. The actual
+    # DecisionTrace object isn't available in EDMS mode (the cron runner
+    # doesn't persist a Pydantic trace); the template guards with
+    # {% if trace %} for the rich panels.
+    trace_dict: Optional[dict[str, Any]] = None
+    queued_item = None
+    boundary = decision_spec.get("boundary") or {}
+    output_payload: dict[str, Any] = {}
+
+    if row is not None:
+        d = dict(row)
+        reasoning = _edms_maybe_json(d.get("reasoning")) or {}
+        if not isinstance(reasoning, dict):
+            reasoning = {}
+        ctx_snap = _edms_maybe_json(d.get("context_snapshot")) or {}
+        if isinstance(ctx_snap, dict):
+            output_payload = ctx_snap
+        trace_dict = {
+            "trace_id":       str(d["id"]),
+            "agent_id":       decision_spec.get("persona") or decision_id,
+            "decision_id":    decision_id,
+            "application_id": application_id,
+            "outcome":        d["outcome"],
+            "mode":           d["mode"],
+            "risk_level":     d.get("risk_level"),
+            "confidence":     d.get("confidence"),
+            "matched_clause": d.get("boundary_matched"),
+            "policy_reasons": [d["boundary_rule"]] if d.get("boundary_rule") else [],
+            "output_payload": output_payload,
+            "work_journal": {
+                "hypothesis_tested": reasoning.get("hypothesis"),
+                "conclusion":        reasoning.get("conclusion"),
+                "confidence_basis":  reasoning.get("confidence_basis"),
+                "human_readable_summary": reasoning.get("summary"),
+                "signals_evaluated": [
+                    {
+                        "name":       s.get("name"),
+                        "direction":  "neutral",
+                        "summary":    str(s.get("value")) if s.get("value") is not None else "",
+                        "value":      s.get("value"),
+                    }
+                    for s in (reasoning.get("signals") or [])
+                    if isinstance(s, dict)
+                ],
+                "contradictions_found": [],
+            },
+            "started_at": d.get("decided_at"),
+            "ended_at":   d.get("decided_at"),
+            "human_review": (
+                {
+                    "reviewer_id":   d.get("human_reviewer"),
+                    "reviewer_role": "reviewer",
+                    "original_ai_decision": d["outcome"],
+                    "final_outcome": d["outcome"],
+                    "overridden":    d.get("human_action") == "overridden",
+                    "override_reason": d.get("human_override_reason"),
+                    "reviewed_at":   d.get("acted_at"),
+                }
+                if d.get("human_action") else None
+            ),
+        }
+        if d.get("mode") in ("human_approval", "recommend") and d.get("human_action") is None:
+            queued_item = {
+                "id":               d["id"],
+                "application_id":   application_id,
+                "decision_id":      decision_id,
+                "agent_id":         decision_spec.get("persona") or decision_id,
+                "proposed_outcome": d["outcome"],
+                "confidence":       d.get("confidence"),
+                "reasons":          [d["boundary_rule"]] if d.get("boundary_rule") else [],
+                "enqueued_at":      d.get("decided_at"),
+            }
+
+    upstream_outputs: dict[str, dict[str, Any]] = {}
+    for u in upstream_rows:
+        upstream_outputs[u["decision_id"]] = _edms_jsonify({
+            "outcome":    u["outcome"],
+            "confidence": u["confidence"],
+            "decided_at": u["decided_at"],
+        })
+
+    # Re-derive a basic boundary_eval against the EDMS output_payload
+    # so the boundary section in decision.html stays populated. Falls
+    # back to {} when the eval helper isn't available or raises.
+    try:
+        boundary_eval = _evaluate_boundary(boundary, output_payload, bundle_objects)
+    except Exception:  # noqa: BLE001 — degrade gracefully
+        boundary_eval = {}
+
+    # Stubbed panels — the in-memory path has rich data here from the
+    # trace_writer / knowledge_store / audit_store. EDMS has none of
+    # that today; templates guard each panel with {% if %}, and the
+    # dict-shaped ones default to {} so .get() calls in Jinja are safe.
+    return {
+        "application_id":   application_id,
+        "decision_id":      decision_id,
+        "spec":             decision_spec,
+        "trace":            None,
+        "trace_dict":       trace_dict,
+        "queued_item":      queued_item,
+        "boundary":         boundary,
+        "boundary_eval":    boundary_eval or {},
+        "bundle_objects":   bundle_objects,
+        "upstream_outputs": upstream_outputs,
+        "upstream_status":  [],
+        "read_permissions": [],
+        "routing_target":   None,
+        "atomic_steps":     [],
+        "persona_panel":    PERSONA_PANELS.get(decision_id),
+        "persona_view":     None,
+        "policy_panel":     None,
+        "evidence_panel":   None,
+        "audit_panel":      None,
+        "contamination_guard": decision_spec.get("contamination_guard") or {},
+        "learnings":        [],
+        "outcome_style":    _edms_outcome_style(
+            trace_dict["outcome"] if trace_dict else "pending"
+        ),
+        "outcome_palette":  OUTCOME_STYLES,
+        "decision_modes":   [m.value for m in DecisionMode],
+        "decision_outcomes": [o.value for o in DecisionOutcome],
+        # EDMS-mode marker so the override POST handler knows to route
+        # the write back to PG instead of the in-memory trace_writer.
+        "_edms_source":     True,
+    }
+
+
+async def decision_detail_async(
+    platform: Platform, application_id: str, decision_id: str
+) -> Optional[dict[str, Any]]:
+    if DATABASE_URL:
+        return await _decision_detail_edms(platform, application_id, decision_id)
+    return decision_detail(platform, application_id, decision_id)
+
+
+# ─── 4) queue_view ───────────────────────────────────────────────────
+
+
+async def _queue_view_edms() -> dict[str, Any]:
+    pool = await _get_edms_pool()
+    async with pool.acquire() as conn:
+        open_rows_raw = await conn.fetch(
+            """
+            SELECT id, application_id, decision_id, mode, outcome,
+                   confidence, boundary_rule, decided_at
+            FROM decision_outputs
+            WHERE mode IN ('human_approval', 'recommend')
+              AND human_action IS NULL
+              AND version = (
+                  SELECT MAX(version) FROM decision_outputs d2
+                  WHERE d2.application_id = decision_outputs.application_id
+                    AND d2.decision_id = decision_outputs.decision_id
+              )
+            ORDER BY decided_at ASC
+            LIMIT 200
+            """
+        )
+        resolved_rows_raw = await conn.fetch(
+            """
+            SELECT id, application_id, decision_id, human_action,
+                   human_reviewer, human_override_reason, acted_at
+            FROM decision_outputs
+            WHERE human_action IS NOT NULL
+              AND version = (
+                  SELECT MAX(version) FROM decision_outputs d2
+                  WHERE d2.application_id = decision_outputs.application_id
+                    AND d2.decision_id = decision_outputs.decision_id
+              )
+            ORDER BY acted_at DESC NULLS LAST
+            LIMIT 100
+            """
+        )
+
+    items: list[dict[str, Any]] = []
+    for r in open_rows_raw:
+        items.append(
+            {
+                "queue_id":         str(r["id"]),
+                "application_id":   r["application_id"],
+                "decision_id":      r["decision_id"],
+                "agent_id":         r["decision_id"],
+                "proposed_outcome": r["outcome"],
+                "outcome_style":    _edms_outcome_style(r["outcome"]),
+                "confidence":       r["confidence"],
+                "reasons":          [r["boundary_rule"]] if r["boundary_rule"] else [],
+                "enqueued_at":      r["decided_at"],
+                "trace_id":         str(r["id"]),
+            }
+        )
+
+    resolved: list[dict[str, Any]] = []
+    for r in resolved_rows_raw:
+        action = r["human_action"]
+        resolution_tone = (
+            "emerald" if action == "approved"
+            else "rose" if action == "overridden"
+            else "slate"
+        )
+        resolved.append(
+            {
+                "item_id":         str(r["id"]),
+                "application_id":  r["application_id"],
+                "decision_id":     r["decision_id"],
+                "decision_label":  PERSONA_LABELS.get(r["decision_id"], r["decision_id"]),
+                "resolution":      "approve" if action == "approved" else "decline",
+                "resolution_tone": resolution_tone,
+                "reviewer_id":     r["human_reviewer"],
+                "reviewer_role":   "reviewer",
+                "resolved_at":     r["acted_at"],
+                "notes":           r["human_override_reason"],
+            }
+        )
+
+    return {
+        "items":          items,
+        "resolved":       resolved,
+        "open_count":     len(items),
+        "resolved_count": len(resolved),
+    }
+
+
+async def queue_view_async(platform: Platform) -> dict[str, Any]:
+    if DATABASE_URL:
+        return await _queue_view_edms()
+    return queue_view(platform)
+
+
+# ─── 5) list_persona_workbenches ─────────────────────────────────────
+
+
+async def _list_persona_workbenches_edms(
+    platform: Platform,
+) -> list[dict[str, Any]]:
+    spec = platform.spec
+    pool = await _get_edms_pool()
+    async with pool.acquire() as conn:
+        agg = await conn.fetch(
+            """
+            SELECT decision_id,
+                   COUNT(*) AS total,
+                   COUNT(*) FILTER (
+                       WHERE mode IN ('human_approval', 'recommend')
+                         AND human_action IS NULL
+                   ) AS pending,
+                   COUNT(*) FILTER (
+                       WHERE mode = 'auto_execute' AND outcome = 'allow'
+                         AND human_action IS NULL
+                   ) AS auto_decided,
+                   AVG(
+                       CASE WHEN acted_at IS NOT NULL AND decided_at IS NOT NULL
+                            THEN EXTRACT(EPOCH FROM (acted_at - decided_at)) * 1000.0
+                       END
+                   ) AS avg_review_ms,
+                   COUNT(*) FILTER (
+                       WHERE acted_at IS NOT NULL
+                   ) AS human_reviewed
+            FROM decision_outputs
+            WHERE version = (
+                SELECT MAX(version) FROM decision_outputs d2
+                WHERE d2.application_id = decision_outputs.application_id
+                  AND d2.decision_id = decision_outputs.decision_id
+            )
+            GROUP BY decision_id
+            """
+        )
+    by_did = {r["decision_id"]: dict(r) for r in agg}
+
+    rows: list[dict[str, Any]] = []
+    for d in spec.decisions:
+        decision_id = d["id"]
+        m = by_did.get(decision_id, {})
+        total = int(m.get("total") or 0)
+        auto = int(m.get("auto_decided") or 0)
+        rows.append(
+            {
+                "decision_id":      decision_id,
+                "persona":          d.get("persona"),
+                "label":            PERSONA_LABELS.get(decision_id, decision_id),
+                "owner_team":       d.get("owner_team"),
+                "owner_team_label": OWNER_TEAM_LABELS.get(
+                    d.get("owner_team", ""), d.get("owner_team", "")
+                ),
+                "mode":             d.get("mode"),
+                "risk_level":       d.get("risk_level"),
+                "is_auto":          d.get("mode") == "auto_execute",
+                "decisions_completed":  total,
+                "pending_review":       int(m.get("pending") or 0),
+                "auto_decided_pct":     (auto / total) if total else None,
+                "avg_review_ms":        (
+                    float(m["avg_review_ms"])
+                    if m.get("avg_review_ms") is not None else None
+                ),
+                "human_reviewed_count": int(m.get("human_reviewed") or 0),
+            }
+        )
+    return rows
+
+
+async def list_persona_workbenches_async(
+    platform: Platform,
+) -> list[dict[str, Any]]:
+    if DATABASE_URL:
+        return await _list_persona_workbenches_edms(platform)
+    return list_persona_workbenches(platform)
+
+
+# ─── 6) persona_workbench_view ───────────────────────────────────────
+
+
+async def _persona_kpis_edms(decision_id: str) -> dict[str, Any]:
+    pool = await _get_edms_pool()
+    async with pool.acquire() as conn:
+        agg = await conn.fetchrow(
+            """
+            SELECT COUNT(*) AS total,
+                   COUNT(*) FILTER (
+                       WHERE mode IN ('human_approval', 'recommend')
+                         AND human_action IS NULL
+                   ) AS pending,
+                   COUNT(*) FILTER (
+                       WHERE mode = 'auto_execute' AND outcome = 'allow'
+                         AND human_action IS NULL
+                   ) AS auto_decided,
+                   AVG(
+                       CASE WHEN acted_at IS NOT NULL AND decided_at IS NOT NULL
+                            THEN EXTRACT(EPOCH FROM (acted_at - decided_at)) * 1000.0
+                       END
+                   ) AS avg_review_ms,
+                   COUNT(*) FILTER (
+                       WHERE acted_at IS NOT NULL
+                   ) AS human_reviewed
+            FROM decision_outputs
+            WHERE decision_id = $1
+              AND version = (
+                  SELECT MAX(version) FROM decision_outputs d2
+                  WHERE d2.application_id = decision_outputs.application_id
+                    AND d2.decision_id = decision_outputs.decision_id
+              )
+            """,
+            decision_id,
+        )
+    total = int(agg["total"] or 0) if agg else 0
+    auto = int(agg["auto_decided"] or 0) if agg else 0
+    return {
+        "decisions_completed":  total,
+        "pending_review":       int(agg["pending"] or 0) if agg else 0,
+        "auto_decided_pct":     (auto / total) if total else None,
+        "avg_review_ms":        (
+            float(agg["avg_review_ms"]) if agg and agg["avg_review_ms"] is not None
+            else None
+        ),
+        "human_reviewed_count": int(agg["human_reviewed"] or 0) if agg else 0,
+    }
+
+
+def _edms_minutes_ago(when: Any) -> Optional[int]:
+    if when is None or not isinstance(when, datetime):
+        return None
+    now = datetime.now(when.tzinfo) if when.tzinfo else datetime.utcnow()
+    return max(0, int((now - when).total_seconds() // 60))
+
+
+async def _persona_queue_rows_edms(
+    decision_id: str, selected_app: Optional[str]
+) -> list[dict[str, Any]]:
+    pool = await _get_edms_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT dout.application_id, dout.outcome, dout.confidence,
+                   dout.decided_at, dout.mode,
+                   es.mid_credit_score, es.ltv, es.dti_back,
+                   es.loan_amount, es.status,
+                   es.borrower, es.loan_terms
+            FROM decision_outputs dout
+            LEFT JOIN entity_states es
+                   ON es.application_id = dout.application_id
+                  AND es.tenant_id = dout.tenant_id
+            WHERE dout.decision_id = $1
+              AND dout.mode IN ('human_approval', 'recommend')
+              AND dout.human_action IS NULL
+              AND dout.version = (
+                  SELECT MAX(version) FROM decision_outputs d2
+                  WHERE d2.application_id = dout.application_id
+                    AND d2.decision_id = dout.decision_id
+              )
+            ORDER BY dout.decided_at ASC
+            LIMIT 100
+            """,
+            decision_id,
+        )
+
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        app_id = r["application_id"]
+        borrower = _edms_maybe_json(r["borrower"]) or {}
+        if not isinstance(borrower, dict):
+            borrower = {}
+        loan_terms = _edms_maybe_json(r["loan_terms"]) or {}
+        if not isinstance(loan_terms, dict):
+            loan_terms = {}
+        app_value = {
+            "applicant_id":     borrower.get("applicant_id"),
+            "loan_purpose":     loan_terms.get("loan_purpose"),
+            "requested_amount": loan_terms.get("loan_amount") or r["loan_amount"],
+            "property_state":   loan_terms.get("property_state"),
+        }
+        loan_value = {
+            "loan_type":      loan_terms.get("loan_type"),
+            "interest_rate":  loan_terms.get("interest_rate"),
+            "term_months":    loan_terms.get("term_months"),
+        }
+        out.append(
+            {
+                "application_id":   app_id,
+                "is_selected":      app_id == selected_app,
+                "is_queued":        True,
+                "applicant_id":     app_value["applicant_id"],
+                "display_name":     _display_name(app_value, app_id),
+                "initials":         _initials(app_value, app_id),
+                "avatar_tone":      _avatar_tone(app_id),
+                "loan_summary":     _loan_summary(app_value, loan_value),
+                "amount":           app_value["requested_amount"],
+                "ago_minutes":      _edms_minutes_ago(r["decided_at"]),
+                "risk_pill":        _risk_pill_for_confidence(r["confidence"]),
+                "proposed_outcome": r["outcome"],
+                "outcome":          r["outcome"],
+                "outcome_style":    _edms_outcome_style(r["outcome"]),
+                "confidence":       r["confidence"],
+                "kind":             "queued",
+            }
+        )
+    return out
+
+
+async def _persona_recent_traces_edms(
+    decision_id: str, selected_app: Optional[str], limit: int
+) -> list[dict[str, Any]]:
+    pool = await _get_edms_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT dout.application_id, dout.outcome, dout.confidence,
+                   dout.decided_at, dout.mode, dout.human_action,
+                   es.borrower, es.loan_terms, es.loan_amount
+            FROM decision_outputs dout
+            LEFT JOIN entity_states es
+                   ON es.application_id = dout.application_id
+                  AND es.tenant_id = dout.tenant_id
+            WHERE dout.decision_id = $1
+              AND dout.version = (
+                  SELECT MAX(version) FROM decision_outputs d2
+                  WHERE d2.application_id = dout.application_id
+                    AND d2.decision_id = dout.decision_id
+              )
+            ORDER BY dout.decided_at DESC
+            LIMIT $2
+            """,
+            decision_id,
+            limit,
+        )
+
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        app_id = r["application_id"]
+        borrower = _edms_maybe_json(r["borrower"]) or {}
+        if not isinstance(borrower, dict):
+            borrower = {}
+        loan_terms = _edms_maybe_json(r["loan_terms"]) or {}
+        if not isinstance(loan_terms, dict):
+            loan_terms = {}
+        app_value = {
+            "applicant_id":     borrower.get("applicant_id"),
+            "loan_purpose":     loan_terms.get("loan_purpose"),
+            "requested_amount": loan_terms.get("loan_amount") or r["loan_amount"],
+            "property_state":   loan_terms.get("property_state"),
+        }
+        loan_value = {
+            "loan_type":      loan_terms.get("loan_type"),
+            "interest_rate":  loan_terms.get("interest_rate"),
+            "term_months":    loan_terms.get("term_months"),
+        }
+        is_queued = (
+            r["mode"] in ("human_approval", "recommend")
+            and r["human_action"] is None
+        )
+        out.append(
+            {
+                "application_id":   app_id,
+                "is_selected":      app_id == selected_app,
+                "is_queued":        is_queued,
+                "applicant_id":     app_value["applicant_id"],
+                "display_name":     _display_name(app_value, app_id),
+                "initials":         _initials(app_value, app_id),
+                "avatar_tone":      _avatar_tone(app_id),
+                "loan_summary":     _loan_summary(app_value, loan_value),
+                "amount":           app_value["requested_amount"],
+                "ago_minutes":      _edms_minutes_ago(r["decided_at"]),
+                "risk_pill":        _risk_pill_for_confidence(r["confidence"]),
+                "proposed_outcome": r["outcome"],
+                "outcome":          r["outcome"],
+                "outcome_style":    _edms_outcome_style(r["outcome"]),
+                "confidence":       r["confidence"],
+                "kind":             "completed",
+            }
+        )
+    out.sort(key=lambda r: (0 if r["is_queued"] else 1))
+    return out
+
+
+async def _persona_focused_app_edms(
+    platform: Platform, decision_id: str, application_id: str
+) -> dict[str, Any]:
+    """Build the focused-app panel from EDMS. Stubs the policy /
+    evidence / audit panels (None) — templates guard with {% if %}."""
+    spec = platform.spec
+    decision_spec = spec.decision_index.get(decision_id, {})
+    pool = await _get_edms_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT * FROM decision_outputs
+            WHERE application_id = $1 AND decision_id = $2
+              AND version = (
+                  SELECT MAX(version) FROM decision_outputs d2
+                  WHERE d2.application_id = decision_outputs.application_id
+                    AND d2.decision_id = decision_outputs.decision_id
+              )
+            LIMIT 1
+            """,
+            application_id,
+            decision_id,
+        )
+        entity = await conn.fetchrow(
+            "SELECT * FROM entity_states WHERE application_id = $1 LIMIT 1",
+            application_id,
+        )
+
+    borrower = _edms_maybe_json(entity["borrower"] if entity else None) or {}
+    if not isinstance(borrower, dict):
+        borrower = {}
+    loan_terms = _edms_maybe_json(entity["loan_terms"] if entity else None) or {}
+    if not isinstance(loan_terms, dict):
+        loan_terms = {}
+    app_value = {
+        "applicant_id":     borrower.get("applicant_id"),
+        "loan_purpose":     loan_terms.get("loan_purpose"),
+        "requested_amount": loan_terms.get("loan_amount") or (entity and entity["loan_amount"]),
+        "property_state":   loan_terms.get("property_state"),
+    }
+    loan_value = {
+        "loan_type":      loan_terms.get("loan_type"),
+        "interest_rate":  loan_terms.get("interest_rate"),
+        "term_months":    loan_terms.get("term_months"),
+    }
+
+    has_human_review = row is not None and row["human_action"] is not None
+    can_act = (
+        row is not None
+        and row["mode"] in ("human_approval", "recommend")
+        and row["human_action"] is None
+    )
+
+    outcome = row["outcome"] if row else None
+    confidence = row["confidence"] if row else None
+
+    # Skinny trace surrogate for the template.
+    trace_surrogate = None
+    if row is not None:
+        reasoning = _edms_maybe_json(row["reasoning"]) or {}
+        if not isinstance(reasoning, dict):
+            reasoning = {}
+        trace_surrogate = {
+            "trace_id":    str(row["id"]),
+            "agent_id":    decision_spec.get("persona") or decision_id,
+            "decision_id": decision_id,
+            "outcome":     outcome,
+            "confidence":  confidence,
+            "started_at":  row["decided_at"],
+            "human_review": None if not has_human_review else {
+                "reviewer_id":   row["human_reviewer"],
+                "reviewer_role": "reviewer",
+                "overridden":    row["human_action"] == "overridden",
+                "override_reason": row["human_override_reason"],
+                "final_outcome": outcome,
+                "original_ai_decision": outcome,
+                "reviewed_at":  row["acted_at"],
+            },
+            "output_payload": (
+                _edms_maybe_json(row["context_snapshot"]) or {}
+                if row["context_snapshot"] else {}
+            ),
+            "work_journal": {
+                "hypothesis_tested": reasoning.get("hypothesis"),
+                "conclusion":        reasoning.get("conclusion"),
+                "confidence_basis":  reasoning.get("confidence_basis"),
+                "human_readable_summary": reasoning.get("summary"),
+                "signals_evaluated": [
+                    {
+                        "name":      s.get("name"),
+                        "direction": "neutral",
+                        "summary":   str(s.get("value")) if s.get("value") is not None else "",
+                        "value":     s.get("value"),
+                    }
+                    for s in (reasoning.get("signals") or [])
+                    if isinstance(s, dict)
+                ],
+                "contradictions_found": [],
+            },
+        }
+
+    application_context = _persona_application_context(
+        decision_id, app_value, loan_value, []
+    )
+
+    return {
+        "application_id":      application_id,
+        "applicant_id":        app_value["applicant_id"],
+        "display_name":        _display_name(app_value, application_id),
+        "initials":            _initials(app_value, application_id),
+        "avatar_tone":         _avatar_tone(application_id),
+        "loan_summary":        _loan_summary(app_value, loan_value),
+        "amount":              app_value["requested_amount"],
+        "risk_pill":           _risk_pill_for_confidence(confidence),
+        "trace":               trace_surrogate,
+        "trace_id":            str(row["id"]) if row else None,
+        "queue_item_id":       str(row["id"]) if can_act else None,
+        "outcome":             outcome,
+        "outcome_style":       _edms_outcome_style(outcome),
+        "confidence":          confidence,
+        "matched_clause":      row["boundary_matched"] if row else None,
+        "application_context": application_context,
+        "signals_evaluated":   (
+            trace_surrogate["work_journal"]["signals_evaluated"]
+            if trace_surrogate else []
+        ),
+        "ai_reasoning":        (
+            {
+                "hypothesis": trace_surrogate["work_journal"]["hypothesis_tested"],
+                "conclusion": trace_surrogate["work_journal"]["conclusion"],
+                "confidence_basis": trace_surrogate["work_journal"]["confidence_basis"],
+                "summary":    trace_surrogate["work_journal"]["human_readable_summary"],
+            }
+            if trace_surrogate else None
+        ),
+        "policy_panel":     None,
+        "audit_panel":      None,
+        "evidence_panel":   None,
+        "has_human_review": has_human_review,
+        "human_review":     (
+            trace_surrogate["human_review"] if trace_surrogate and has_human_review
+            else None
+        ),
+        "can_act":          can_act,
+        "can_send_back":    can_act and decision_spec.get("type") == "dependent",
+        "decision_outcomes": [o.value for o in DecisionOutcome],
+    }
+
+
+async def _persona_workbench_view_edms(
+    platform: Platform,
+    decision_id: str,
+    *,
+    application_id: Optional[str],
+    time_range: str,
+    tab: str,
+) -> Optional[dict[str, Any]]:
+    spec = platform.spec
+    decision_spec = spec.decision_index.get(decision_id)
+    if decision_spec is None:
+        return None
+    if time_range not in TIME_RANGES:
+        time_range = "quarter"
+    if tab not in ("workbench", "history", "analytics"):
+        tab = "workbench"
+
+    persona_label = PERSONA_LABELS.get(decision_id, decision_id)
+    owner_team = decision_spec.get("owner_team", "")
+    is_auto = decision_spec.get("mode") == "auto_execute"
+
+    siblings: list[dict[str, Any]] = []
+    for d in spec.decisions:
+        if d.get("owner_team") != owner_team:
+            continue
+        sib_id = d["id"]
+        siblings.append(
+            {
+                "decision_id": sib_id,
+                "label":       PERSONA_LABELS.get(sib_id, sib_id),
+                "active":      sib_id == decision_id,
+            }
+        )
+
+    kpis = await _persona_kpis_edms(decision_id)
+
+    if is_auto:
+        left_label = "Recently completed"
+        left_rows = await _persona_recent_traces_edms(
+            decision_id, application_id, 10
+        )
+    else:
+        left_label = f"{persona_label.lower().replace(' ', '_')} queue"
+        left_rows = await _persona_queue_rows_edms(
+            decision_id, application_id
+        )
+
+    focused = None
+    if application_id is not None:
+        focused = await _persona_focused_app_edms(
+            platform, decision_id, application_id
+        )
+
+    return {
+        "decision_id":     decision_id,
+        "persona":         decision_spec.get("persona"),
+        "persona_label":   persona_label,
+        "decision_name":   decision_spec.get("name"),
+        "owner_team":      owner_team,
+        "owner_team_label": OWNER_TEAM_LABELS.get(owner_team, owner_team),
+        "mode":            decision_spec.get("mode"),
+        "risk_level":      decision_spec.get("risk_level"),
+        "is_auto":         is_auto,
+        "siblings":        siblings,
+        "selected_application_id": application_id,
+        "time_range":      time_range,
+        "time_range_label": TIME_RANGES[time_range]["label"],
+        "time_ranges":     [
+            {"key": k, "label": v["label"], "selected": k == time_range}
+            for k, v in TIME_RANGES.items()
+        ],
+        "tab":             tab,
+        "kpis":            kpis,
+        "left_label":      left_label,
+        "left_rows":       left_rows,
+        "focused":         focused,
+    }
+
+
+async def persona_workbench_view_async(
+    platform: Platform,
+    decision_id: str,
+    *,
+    application_id: Optional[str] = None,
+    time_range: str = "quarter",
+    tab: str = "workbench",
+) -> Optional[dict[str, Any]]:
+    if DATABASE_URL:
+        return await _persona_workbench_view_edms(
+            platform, decision_id,
+            application_id=application_id,
+            time_range=time_range,
+            tab=tab,
+        )
+    return persona_workbench_view(
+        platform, decision_id,
+        application_id=application_id,
+        time_range=time_range,
+        tab=tab,
+    )
+
+
+# ─── Override write — EDMS branch used by ui/routes.py ───────────────
+
+
+async def record_override_edms(
+    *,
+    application_id: str,
+    decision_id: str,
+    new_outcome: str,
+    reviewer: str,
+    reason: Optional[str],
+    overridden: bool,
+) -> Optional[str]:
+    """Write human action + (optional) outcome flip + timeline row.
+
+    Returns the application_id of the next pending review for this
+    decision, or None when the queue is empty / row not found."""
+
+    pool = await _get_edms_pool()
+    now = datetime.now()
+    action = "overridden" if overridden else "approved"
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            current = await conn.fetchrow(
+                """
+                SELECT id, outcome, wave, tenant_id FROM decision_outputs
+                WHERE application_id = $1 AND decision_id = $2
+                  AND version = (
+                      SELECT MAX(version) FROM decision_outputs d2
+                      WHERE d2.application_id = decision_outputs.application_id
+                        AND d2.decision_id = decision_outputs.decision_id
+                  )
+                LIMIT 1
+                """,
+                application_id, decision_id,
+            )
+            if current is None:
+                return None
+            final_outcome = new_outcome if overridden else current["outcome"]
+            await conn.execute(
+                """
+                UPDATE decision_outputs
+                   SET human_action = $1,
+                       human_reviewer = $2,
+                       human_override_reason = $3,
+                       outcome = $4,
+                       acted_at = $5
+                 WHERE id = $6
+                """,
+                action, reviewer, reason, final_outcome, now, current["id"],
+            )
+            await conn.execute(
+                """
+                INSERT INTO decision_timeline (
+                    application_id, decision_id, wave, from_state,
+                    to_state, trigger, transition_at, tenant_id
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                """,
+                application_id, decision_id, current["wave"],
+                current["outcome"], final_outcome,
+                "human_override" if overridden else "human_approve",
+                now, current["tenant_id"],
+            )
+            next_app = await conn.fetchval(
+                """
+                SELECT application_id FROM decision_outputs
+                WHERE decision_id = $1
+                  AND application_id != $2
+                  AND mode IN ('human_approval', 'recommend')
+                  AND human_action IS NULL
+                  AND version = (
+                      SELECT MAX(version) FROM decision_outputs d2
+                      WHERE d2.application_id = decision_outputs.application_id
+                        AND d2.decision_id = decision_outputs.decision_id
+                  )
+                ORDER BY decided_at ASC
+                LIMIT 1
+                """,
+                decision_id, application_id,
+            )
+    return next_app
+
+
 __all__ = [
     "AGENCY_LABELS",
     "AUDIT_STATUS_TONES",
+    "DATABASE_URL",
     "DOC_STATUS_TONES",
     "application_detail",
+    "application_detail_async",
     "audit_record_detail",
     "decision_detail",
+    "decision_detail_async",
     "document_detail_view",
     "list_applications",
+    "list_applications_async",
     "list_audit_flags",
     "list_audit_for_application",
     "list_documents_for_application",
     "list_pending_claims",
     "list_persona_workbenches",
+    "list_persona_workbenches_async",
     "list_policies",
     "list_workbenches",
     "persona_workbench_view",
+    "persona_workbench_view_async",
     "policy_version_detail",
     "queue_view",
+    "queue_view_async",
+    "record_override_edms",
     "templates",
     "workbench_view",
     "OUTCOME_STYLES",
