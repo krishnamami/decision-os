@@ -29,7 +29,15 @@
       "Bash(python -m pytest tests/ --tb=short)",
       "Bash(grep *)",
       "Bash(python *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "PowerShell(python -c \"import asyncpg, dotenv; print\\('asyncpg', asyncpg.__version__\\); print\\('dotenv', dotenv.__version__\\)\")",
+      "PowerShell(python -c \"import asyncpg; from dotenv import load_dotenv; print\\('asyncpg', asyncpg.__version__\\); print\\('dotenv ok'\\)\")",
+      "PowerShell(python -c \"from core.edms_store import EdmsContextStore, EdmsSnapshot; from core.decision_store import DecisionStore; from core.cron.runner import PersonaRunner, WAVE_CONFIG, WAVES; print\\('OK'\\)\")",
+      "PowerShell(python -c \"from core.cron.runner import PersonaRunner; r = PersonaRunner\\('postgresql://nope'\\); agent = r._get_agent\\('credit_assessment'\\); print\\('agent:', agent.__class__.__name__, 'decision_id:', agent.decision_id\\)\")",
+      "PowerShell(python -m core.cron.runner credit_assessment 10)",
+      "PowerShell(python scripts/_verify_edms_writes.py)",
+      "PowerShell(python scripts/run_tests.py 2>&1 | Select-Object -Last 30)",
+      "Bash(awk '/^def build_default_platform/,/^[a-zA-Z_]/' api/deps.py)"
     ]
   }
 }
