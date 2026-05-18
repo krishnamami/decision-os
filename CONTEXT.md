@@ -277,8 +277,47 @@ Files confirmed in repo as of May 2026:
 ✅  docker-compose.yml                   Postgres 16 + Redis 7 services with healthchecks.
 ✅  requirements.txt                     pydantic v2, redis, asyncpg, PyYAML, fastapi,
                                          uvicorn, anthropic, structlog, httpx, pytest,
-                                         pytest-asyncio.
+                                         pytest-asyncio, python-dotenv (Session 12).
 ✅  README.md
+✅  core/edms_store.py                   STEP 12. EdmsContextStore — reads
+                                         vw_<decision_id>_context views into
+                                         ContextBundle-shaped EdmsSnapshot. Lazy
+                                         asyncpg pool tuned for batch (Session 12).
+                                         FULL_ROW projection for
+                                         underwriting_decision view.
+✅  core/decision_store.py               STEP 12. DecisionStore — append-only
+                                         writes to decision_outputs +
+                                         decision_timeline; version + supersession
+                                         per (application_id, decision_id,
+                                         tenant_id). get_upstream, get_pending,
+                                         get_pipeline_status read helpers.
+✅  core/cron/runner.py                  STEP 12. PersonaRunner — wave-by-wave
+                                         executor (5 waves) that reads EDMS,
+                                         runs persona._compute_offline, writes
+                                         decision_outputs + decision_timeline.
+                                         Connection resilience (Session 12):
+                                         per-app try/except → _reset_pools() on
+                                         transient errors → retry once; pools
+                                         cycle every 500 rows.
+                                         CLI: python -m core.cron.runner [persona].
+✅  ui/edms_routes.py                    STEP 12. Persona-centric /workbench —
+                                         11 personas grouped by stage; 4 tabs
+                                         (queue / completed / auto / analytics);
+                                         pipeline / audit / governance pages;
+                                         approve + override POST writes through
+                                         to decision_outputs + decision_timeline.
+                                         Date range filter (Session 12) on every
+                                         persona page.
+✅  ui/edms_templates/                   10 Jinja2 templates: base_workbench,
+                                         persona_home, persona_workbench,
+                                         review_detail, completed_detail,
+                                         pipeline_dashboard, pipeline_app,
+                                         audit_dashboard, audit_app, governance.
+                                         Tailwind CDN + Tabler Icons CDN.
+✅  scripts/_verify_edms_writes.py       Session 12 write-side smoke — counts
+                                         decision_outputs + decision_timeline
+                                         rows for a given decision and dumps the
+                                         five most recent.
 ```
 
 Also: in Session 5 the Applicant ObjectType was extended with
@@ -416,6 +455,193 @@ Connector layering — push vs pull (STEP 4 design)
 ---
 
 ## Session history
+
+### Session 12 — May 18 2026
+
+**Theme:** Move every UI read off the in-memory Platform onto live EDMS
+PostgreSQL, ship a persona-centric workbench operators can actually
+run a shop from, and harden the cron runner for thousand-app batches.
+**Commits:** 8 pushed —
+`4236f18` `cbbfe67` `50f2e9e` `80ff1a8` `59d6fe7` `b7488fb` `df0c391` `9f542bd`.
+**Tests:** 351/351 green throughout — the in-memory path is byte-
+identical when `DATABASE_URL` is unset, so the unit suite never sees
+the EDMS overlay.
+
+**What landed:**
+
+EDMS-backed persona workbench at `/workbench` (`4236f18` → `cbbfe67`)
+  - `ui/edms_routes.py` (~1.7k lines) + `ui/edms_templates/` (10
+    templates) — sibling to the legacy `/ui` that reads only from
+    EDMS PG (`vw_pipeline_status`, `vw_<decision_id>_context`,
+    `decision_outputs`, `decision_timeline`, `entity_states`).
+  - 11 lending personas grouped by stage (Pre-underwriting /
+    Underwriting / Decision / Post-decision):
+      Pre-underwriting:  credit_underwriter, fraud_analyst,
+                         compliance_officer, employment_specialist
+      Underwriting:      income_underwriter, collateral_analyst,
+                         product_specialist, pricing_analyst
+      Decision:          senior_underwriter
+      Post-decision:     closer, post_closer
+  - Each persona gets a 4-tab workbench:
+      In Queue · Completed · Auto Cleared · Analytics
+  - Approve / Override POST endpoints update
+    `decision_outputs.human_action / human_reviewer /
+     human_override_reason / outcome / acted_at` and append a
+    `decision_timeline` row with trigger `human_approve` or
+    `human_override`. Auto-advances to the next pending app in the
+    queue.
+  - Pipeline dashboard, audit dashboard (per-app trail at
+    `/workbench/audit/{id}`), governance page with CSV export of
+    `decision_outputs` round out the surface.
+  - SQL alias bug caught: `do` is a reserved Postgres keyword
+    (DO blocks). Aliased everywhere as `dout`.
+  - 12 routes total. All 11 personas × 4 tabs = 44 combos green
+    via TestClient against live EDMS.
+
+Legacy `/ui` rewired for EDMS (`50f2e9e`)
+  - `ui/views.py` got an EDMS overlay appended below the existing
+    sync helpers (which stay byte-identical). Module-level
+    `DATABASE_URL` detection + lazy `EdmsContextStore` /
+    `DecisionStore` singletons + six async dispatchers:
+      list_applications_async
+      application_detail_async
+      decision_detail_async
+      queue_view_async
+      list_persona_workbenches_async
+      persona_workbench_view_async
+  - Each dispatcher: if `DATABASE_URL` → read from PG; else →
+    delegate to the existing sync helper. Sync helpers are
+    untouched, so the 351 tests still pass.
+  - `ui/routes.py` route handlers `await` the dispatchers.
+  - Override POST has an EDMS branch that writes to
+    `decision_outputs` + `decision_timeline` directly (no
+    trace_writer in EDMS mode).
+  - `_edms_jsonify` walks dicts to ISO-encode datetime / UUID /
+    Decimal so `{{ ... | tojson }}` doesn't choke on JSONB
+    columns that contain raw datetimes.
+  - Stubs on the EDMS path: policy_panel, evidence_panel,
+    audit_panel, learnings, atomic_steps, upstream_status,
+    read_permissions — all return None / [] / {} so templates
+    render unchanged. Migrating these is a follow-up.
+
+Sidebar polish + Platform EDMS wiring (`80ff1a8`, `59d6fe7`)
+  - Tabler Icons via CDN. Each persona has its actual icon:
+      ti-shield, ti-coin, ti-briefcase, ti-alert-triangle,
+      ti-clipboard-check, ti-home, ti-package, ti-trending-up,
+      ti-user-check, ti-check-circle, ti-send.
+  - Sidebar groups personas by stage with section headers.
+  - Orange count badge per persona whose queue is non-empty.
+    One grouped query per request. For auto_execute personas the
+    badge = apps in `entity_states` without a decision row;
+    everyone else = pending decisions with human_action IS NULL.
+  - `_base_ctx` is now async so it can fan the badge query into
+    every page. All 9 callsites await it. Sync `_not_configured`
+    inlines a zero-queue sidebar fallback.
+  - `Platform` gained optional `edms_store` + `decision_store`
+    attributes. `build_default_platform` wires them when
+    `DATABASE_URL` is set; tests with no env var leave them None.
+  - Lifespan prints `[startup] EDMS PostgreSQL mode — /workbench
+    reads from EDMS` (or the in-memory equivalent), with
+    `flush=True` so uvicorn's buffered stdout actually surfaces it.
+
+Date range filter on persona workbench (`b7488fb`)
+  - Dropdown in the KPI-strip area. Options:
+      Today · This week · This month (default) · This quarter ·
+      This year · All time · Custom range (from/to date inputs).
+  - URL params: `?range=this_quarter` or
+    `?range=custom&from=2026-05-01&to=2026-05-16`.
+  - Selection survives tab switches via a query-string suffix the
+    template appends to every tab link.
+  - Quarter math: Q1=Jan–Mar … Q4=Oct–Dec. Week starts Monday.
+    All bounds tz-aware UTC.
+  - Filters Completed / Auto Cleared rows, Analytics aggregates,
+    and 3 of 4 KPI cards (Completed / Auto cleared / Avg review
+    time). The **In Queue** KPI card and the **sidebar queue
+    badges stay unfiltered** — they reflect work waiting right
+    now, not historical throughput.
+  - Bad range keys + bad date strings silently fall back to
+    `this_month`.
+
+asyncpg pool tuning + cron runner resilience (`df0c391`)
+  - Both `EdmsContextStore` and `DecisionStore` now `create_pool`
+    with: `min_size=2, max_size=10, command_timeout=60,
+    max_inactive_connection_lifetime=300, statement_cache_size=0`.
+    Tuned identically on both sides so a long runner can't end up
+    with one tuned pool and one default.
+  - `core/cron/runner.py` gains three pieces of hygiene:
+      `_process_one(...)` — per-app body extracted so the retry
+        path re-runs it without duplicating the snapshot →
+        reasoning → write_decision flow.
+      `_reset_pools()` — closes + nulls both pools so the next
+        `_get_pool()` rebuilds. Called on transient errors AND
+        pre-emptively every 500 rows.
+      `_looks_like_conn_error(exc)` — classifies by both class
+        (`asyncpg.PostgresConnectionError` / `InterfaceError`,
+        builtin `ConnectionError` / `ConnectionResetError`) AND
+        message ("connection is closed", "ConnectionReset",
+        "server closed the connection", …).
+  - Main loop wraps each app in try/except; transient errors
+    reset pools + retry once before logging the row.
+  - CLI `batch_size`: 100 → 9000 so
+    `python -m core.cron.runner credit_assessment` processes every
+    pending app in one pass.
+  - Verified live-EDMS: cold `_reset_pools` no-ops; snapshot
+    instantiates a pool; hot `_reset_pools` closes both cleanly;
+    follow-up snapshot rebuilds and returns rows.
+
+Tooling commit (`9f542bd`)
+  - `requirements.txt` pins `python-dotenv>=1.0`. Every EDMS-
+    touching module (`ui/edms_routes.py`, `ui/views.py`,
+    `api/deps.py`, `core/cron/runner.py`) calls `load_dotenv()`;
+    fresh clones now resolve the dep cleanly.
+  - `scripts/_verify_edms_writes.py` ships as a short write-side
+    smoke (counts rows in `decision_outputs` + `decision_timeline`
+    for a given decision and dumps the five most recent).
+
+**Run locally:**
+```
+uvicorn api.main:get_app --factory --port 8000
+```
+Open http://localhost:8000/workbench — sidebar shows real EDMS
+queue counts; pick a persona; pick a date range; approve / override
+writes land in `decision_outputs` + `decision_timeline`.
+
+**EDMS schema reads/writes this session:**
+```
+vw_pipeline_status           — application rollup
+vw_<decision_id>_context     — per-decision projection
+                               (FULL_ROW for underwriting_decision)
+decision_outputs             — append-only versioned decision rows
+                               (mode, outcome, confidence, boundary_rule,
+                                reasoning JSONB, human_action, ...)
+decision_timeline            — state-transition log
+                               (from_state, to_state, trigger,
+                                transition_at, pipeline_position)
+entity_states                — applicant + loan summary
+                               (mid_credit_score, ltv, dti_back,
+                                loan_amount, status, borrower JSONB,
+                                loan_terms JSONB, ...)
+```
+
+**Still pending (next session):**
+
+  1. Migrate the rich panels (policy / evidence / audit /
+     learnings / atomic-steps / upstream-status / read-permissions)
+     onto EDMS reads. Today the EDMS path returns empty defaults
+     for these; templates guard with `{% if %}` so the page still
+     renders, but the audit-trail story is incomplete.
+  2. Run the cron runner end-to-end against the full ~8,740-app
+     EDMS dataset and verify the connection-resilience path holds
+     up over a multi-hour batch.
+  3. Smoke the persona Approve / Override flow on `/workbench`
+     against live EDMS (read paths verified; mutation paths not
+     yet exercised on real data because doing so on the live demo
+     would corrupt the seed).
+  4. UI: make the persona detail screen surface upstream decisions
+     (already returned by the route but not yet rendered).
+  5. Wire the Audit page's CSV export through StreamingResponse
+     for the 100k+ row case — current export is fine for
+     <10k rows but loads the whole result set into memory.
 
 ### Session 11 — May 4 2026
 
@@ -2579,4 +2805,4 @@ How to run smoke tests:
 
 ---
 
-*Decision OS · CONTEXT.md · Updated May 2 2026 (Session 8 — workbench/persona UI live, PATH C locked)*
+*Decision OS · CONTEXT.md · Updated May 18 2026 (Session 12 — UI rewired to live EDMS PG; persona workbench + cron runner shipped)*
