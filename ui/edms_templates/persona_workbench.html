@@ -45,36 +45,19 @@
 </div>
 
 <section class="grid grid-cols-4 gap-3 mb-5">
-  <div class="bg-white border border-slate-200 rounded p-4">
-    <div class="text-[11px] uppercase tracking-wider text-slate-500">In queue</div>
-    <div class="mt-1 text-2xl font-semibold {% if kpi.in_queue and kpi.in_queue > 0 %}text-orange-600{% else %}text-slate-400{% endif %}">{{ kpi.in_queue or 0 }}</div>
-    <div class="text-[10px] text-slate-400 mt-1">current</div>
-  </div>
-  <div class="bg-white border border-slate-200 rounded p-4">
-    <div class="text-[11px] uppercase tracking-wider text-slate-500">Completed</div>
-    <div class="mt-1 text-2xl font-semibold text-slate-900">{{ kpi.completed or 0 }}</div>
-    <div class="text-[10px] text-slate-400 mt-1">{{ range_label }}</div>
-  </div>
-  <div class="bg-white border border-slate-200 rounded p-4">
-    <div class="text-[11px] uppercase tracking-wider text-slate-500">Auto cleared</div>
-    <div class="mt-1 text-2xl font-semibold text-emerald-700">{{ kpi.auto_pct or 0 }}%</div>
-    <div class="text-[10px] text-slate-400 mt-1">{{ range_label }}</div>
-  </div>
-  <div class="bg-white border border-slate-200 rounded p-4">
-    <div class="text-[11px] uppercase tracking-wider text-slate-500">Avg review time</div>
-    <div class="mt-1 text-2xl font-semibold text-slate-700">{{ kpi.avg_review_sec | fmt_seconds }}</div>
-    <div class="text-[10px] text-slate-400 mt-1">{{ range_label }}</div>
-  </div>
+  {% for card in kpi_cards %}
+    <div class="bg-white border border-slate-200 rounded p-4">
+      <div class="text-[11px] uppercase tracking-wider text-slate-500">{{ card.label }}</div>
+      <div class="mt-1 text-2xl font-semibold {{ card.color_class }}">{{ card.display }}</div>
+      <div class="text-[10px] text-slate-400 mt-1">
+        {% if card.query == 'pending_human' %}current{% else %}{{ range_label }}{% endif %}
+      </div>
+    </div>
+  {% endfor %}
 </section>
 
 <nav class="flex items-center gap-1 mb-4 border-b border-slate-200">
-  {% set tabs = [
-    ('queue', 'In Queue'),
-    ('completed', 'Completed'),
-    ('auto', 'Auto Cleared'),
-    ('analytics', 'Analytics'),
-  ] %}
-  {% for slug, label in tabs %}
+  {% for slug, label in tabs_config %}
     <a href="/workbench/{{ persona.slug }}?tab={{ slug }}{{ range_query_suffix }}"
        class="px-4 py-2 text-sm border-b-2
               {% if tab == slug %}border-{{ persona.color }}-500 text-slate-900 font-medium{% else %}border-transparent text-slate-500 hover:text-slate-800{% endif %}">
@@ -83,7 +66,8 @@
   {% endfor %}
 </nav>
 
-{% if tab == 'queue' %}
+{# ─── Pending review tab — human personas, FIFO queue ─────────────── #}
+{% if tab == 'pending' %}
   <section class="bg-white border border-slate-200 rounded-lg overflow-hidden">
     {% if queue_rows %}
       <table class="min-w-full text-sm">
@@ -126,11 +110,57 @@
         </tbody>
       </table>
     {% else %}
-      <div class="p-10 text-center text-slate-400 text-sm">Queue is empty.</div>
+      <div class="p-10 text-center text-slate-400 text-sm">Queue is empty in this date range.</div>
     {% endif %}
   </section>
 
-{% elif tab in ('completed', 'auto') %}
+{# ─── Reviewed tab — human personas, what's been acted on ─────────── #}
+{% elif tab == 'reviewed' %}
+  <section class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+    {% if completed_rows %}
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+          <tr>
+            <th class="text-left px-4 py-2.5">Application</th>
+            <th class="text-left px-4 py-2.5">Credit</th>
+            <th class="text-left px-4 py-2.5">Loan</th>
+            <th class="text-left px-4 py-2.5">Outcome</th>
+            <th class="text-left px-4 py-2.5">Action</th>
+            <th class="text-left px-4 py-2.5">Reviewer</th>
+            <th class="text-left px-4 py-2.5">When</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for row in completed_rows %}
+            {% set color = row.outcome | outcome_color %}
+            <tr class="hover:bg-slate-50 cursor-pointer"
+                onclick="window.location='/workbench/{{ persona.slug }}/completed/{{ row.application_id }}'">
+              <td class="px-4 py-2 mono text-xs">{{ row.application_id }}</td>
+              <td class="px-4 py-2">{% set cc = row.mid_credit_score | credit_color %}<span class="text-{{ cc }}-700 font-medium">{{ row.mid_credit_score | fmt_value }}</span></td>
+              <td class="px-4 py-2">{{ row.loan_amount | fmt_money }}</td>
+              <td class="px-4 py-2"><span class="text-xs px-2 py-0.5 rounded bg-{{ color }}-100 text-{{ color }}-700 font-medium">{{ row.outcome }}</span></td>
+              <td class="px-4 py-2 text-xs">
+                {% if row.human_action == 'overridden' %}
+                  <span class="text-violet-700">Overridden</span>
+                {% elif row.human_action == 'approved' %}
+                  <span class="text-emerald-700">Approved</span>
+                {% else %}
+                  <span class="text-slate-400">—</span>
+                {% endif %}
+              </td>
+              <td class="px-4 py-2 text-xs">{{ row.human_reviewer or '—' }}</td>
+              <td class="px-4 py-2 text-xs text-slate-500">{{ row.acted_at | humanize_age }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="p-10 text-center text-slate-400 text-sm">No reviewed decisions in this date range.</div>
+    {% endif %}
+  </section>
+
+{# ─── All decisions tab — auto personas, every decision the engine made #}
+{% elif tab == 'all' %}
   <section class="bg-white border border-slate-200 rounded-lg overflow-hidden">
     {% if completed_rows %}
       <table class="min-w-full text-sm">
@@ -141,7 +171,7 @@
             <th class="text-left px-4 py-2.5">LTV</th>
             <th class="text-left px-4 py-2.5">DTI</th>
             <th class="text-left px-4 py-2.5">Outcome</th>
-            <th class="text-left px-4 py-2.5">How</th>
+            <th class="text-left px-4 py-2.5">Confidence</th>
             <th class="text-left px-4 py-2.5">Decided</th>
           </tr>
         </thead>
@@ -155,27 +185,51 @@
               <td class="px-4 py-2">{{ row.ltv | fmt_pct }}</td>
               <td class="px-4 py-2">{{ row.dti_back | fmt_pct }}</td>
               <td class="px-4 py-2"><span class="text-xs px-2 py-0.5 rounded bg-{{ color }}-100 text-{{ color }}-700 font-medium">{{ row.outcome }}</span></td>
-              <td class="px-4 py-2 text-xs">
-                {% if row.mode == 'auto_execute' %}
-                  <span class="text-slate-500">Auto</span>
-                {% elif row.human_action == 'overridden' %}
-                  <span class="text-violet-700">Human · overridden{% if row.human_reviewer %} · {{ row.human_reviewer }}{% endif %}</span>
-                {% elif row.human_action == 'approved' %}
-                  <span class="text-emerald-700">Human · approved{% if row.human_reviewer %} · {{ row.human_reviewer }}{% endif %}</span>
-                {% else %}
-                  <span class="text-slate-400">—</span>
-                {% endif %}
-              </td>
+              <td class="px-4 py-2 mono text-xs">{% if row.confidence is not none %}{{ '%.2f' % row.confidence }}{% else %}—{% endif %}</td>
               <td class="px-4 py-2 text-xs text-slate-500">{{ row.decided_at | humanize_age }}</td>
             </tr>
           {% endfor %}
         </tbody>
       </table>
     {% else %}
-      <div class="p-10 text-center text-slate-400 text-sm">Nothing here yet.</div>
+      <div class="p-10 text-center text-slate-400 text-sm">No decisions in this date range.</div>
     {% endif %}
   </section>
 
+{# ─── By outcome tab — auto personas, count + samples per outcome ──── #}
+{% elif tab == 'by_outcome' %}
+  <section class="space-y-4">
+    {% if by_outcome_groups %}
+      {% for grp in by_outcome_groups %}
+        {% set oc = grp.outcome | outcome_color %}
+        <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+          <div class="flex items-center gap-3 px-5 py-3 border-b border-slate-100 bg-slate-50">
+            <span class="px-2.5 py-1 rounded bg-{{ oc }}-100 text-{{ oc }}-700 font-semibold text-sm uppercase tracking-wider">{{ grp.outcome }}</span>
+            <span class="text-2xl font-semibold text-slate-900">{{ '{:,}'.format(grp.count) }}</span>
+            <span class="text-xs text-slate-500 ml-auto">sample of {{ grp.samples | length }} most recent</span>
+          </div>
+          {% if grp.samples %}
+            <table class="min-w-full text-sm">
+              <tbody class="divide-y divide-slate-100">
+                {% for s in grp.samples %}
+                  <tr class="hover:bg-slate-50 cursor-pointer"
+                      onclick="window.location='/workbench/{{ persona.slug }}/completed/{{ s.application_id }}'">
+                    <td class="px-5 py-2 mono text-xs">{{ s.application_id }}</td>
+                    <td class="px-5 py-2 mono text-xs">conf {{ '%.2f' % (s.confidence or 0) }}</td>
+                    <td class="px-5 py-2 text-xs text-slate-500">{{ s.decided_at | humanize_age }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          {% endif %}
+        </div>
+      {% endfor %}
+    {% else %}
+      <div class="p-10 text-center text-slate-400 text-sm bg-white border border-slate-200 rounded-lg">No decisions in this date range.</div>
+    {% endif %}
+  </section>
+
+{# ─── Analytics tab — same for both persona kinds ──────────────────── #}
 {% elif tab == 'analytics' %}
   <section class="grid grid-cols-2 gap-5">
     <div class="bg-white border border-slate-200 rounded-lg p-5">

@@ -1195,6 +1195,339 @@ async def governance_export():
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Per-persona KPI cards + tab labels.
+#
+# Every persona has 4 KPI cards and 3 tabs that match their actual
+# lending job. Credit underwriters care about Approved / Flagged /
+# Blocked counts; compliance officers care about Pending review and
+# Avg review time; pricing analysts care about Normal band / Exception
+# pricing / Usury blocked. The shape per entry:
+#
+#   "kind":  "auto" | "human"           — drives tab semantics
+#   "cards": [ { label, query, color } × 4 ]
+#   "tabs":  [ (slug, label) × 3 ]
+#
+# All query kinds are computed in _compute_kpi_card below against the
+# current date range (with pending_human as the only unfiltered card).
+# ─────────────────────────────────────────────────────────────────────
+
+
+PERSONA_KPIS: dict[str, dict[str, Any]] = {
+    "credit_underwriter": {
+        "kind": "auto",
+        "cards": [
+            {"label": "Total screened",    "query": "total",                     "color": "default"},
+            {"label": "Approved",          "query": "count_allow",               "color": "green"},
+            {"label": "Flagged",           "query": "count_recommend_escalate",  "color": "amber"},
+            {"label": "Blocked",           "query": "count_block",               "color": "red"},
+        ],
+        "tabs": [("all", "All decisions"), ("by_outcome", "By outcome"), ("analytics", "Analytics")],
+    },
+    "fraud_analyst": {
+        "kind": "auto",
+        "cards": [
+            {"label": "Total screened",    "query": "total",                     "color": "default"},
+            {"label": "Cleared",           "query": "count_allow",               "color": "green"},
+            {"label": "Under review",      "query": "count_recommend",           "color": "amber"},
+            {"label": "Blocked",           "query": "count_block",               "color": "red"},
+        ],
+        "tabs": [("all", "All decisions"), ("by_outcome", "By outcome"), ("analytics", "Analytics")],
+    },
+    "compliance_officer": {
+        "kind": "human",
+        "cards": [
+            {"label": "Pending review",    "query": "pending_human",             "color": "orange"},
+            {"label": "Cleared",           "query": "count_approved",            "color": "green"},
+            {"label": "Violations",        "query": "count_block",               "color": "red"},
+            {"label": "Avg review time",   "query": "avg_review_time",           "color": "default"},
+        ],
+        "tabs": [("pending", "Pending review"), ("reviewed", "Reviewed"), ("analytics", "Analytics")],
+    },
+    "employment_specialist": {
+        "kind": "human",
+        "cards": [
+            {"label": "Pending review",    "query": "pending_human",             "color": "orange"},
+            {"label": "Verified",          "query": "count_approved",            "color": "green"},
+            {"label": "Escalated",         "query": "count_escalate",            "color": "amber"},
+            {"label": "Avg review time",   "query": "avg_review_time",           "color": "default"},
+        ],
+        "tabs": [("pending", "Pending review"), ("reviewed", "Reviewed"), ("analytics", "Analytics")],
+    },
+    "income_underwriter": {
+        "kind": "human",
+        "cards": [
+            {"label": "Pending review",    "query": "pending_human",             "color": "orange"},
+            {"label": "Verified",          "query": "count_approved",            "color": "green"},
+            {"label": "Blocked",           "query": "count_block",               "color": "red"},
+            {"label": "Override rate",     "query": "override_rate",             "color": "default"},
+        ],
+        "tabs": [("pending", "Pending review"), ("reviewed", "Reviewed"), ("analytics", "Analytics")],
+    },
+    "collateral_analyst": {
+        "kind": "auto",
+        "cards": [
+            {"label": "Total assessed",    "query": "total",                     "color": "default"},
+            {"label": "LTV ≤ 80%",         "query": "count_allow",               "color": "green"},
+            {"label": "LTV 80-95%",        "query": "count_recommend",           "color": "amber"},
+            {"label": "LTV > 97%",         "query": "count_block",               "color": "red"},
+        ],
+        "tabs": [("all", "All decisions"), ("by_outcome", "By outcome"), ("analytics", "Analytics")],
+    },
+    "product_specialist": {
+        "kind": "human",
+        "cards": [
+            {"label": "Pending review",    "query": "pending_human",             "color": "orange"},
+            {"label": "Eligible",          "query": "count_allow",               "color": "green"},
+            {"label": "No products",       "query": "count_block",               "color": "red"},
+            {"label": "Exception rate",    "query": "count_escalate_pct",        "color": "default"},
+        ],
+        "tabs": [("pending", "Pending review"), ("reviewed", "Reviewed"), ("analytics", "Analytics")],
+    },
+    "pricing_analyst": {
+        "kind": "auto",
+        "cards": [
+            {"label": "Total priced",      "query": "total",                     "color": "default"},
+            {"label": "Normal band",       "query": "count_allow",               "color": "green"},
+            {"label": "Exception pricing", "query": "count_recommend",           "color": "amber"},
+            {"label": "Usury blocked",     "query": "count_block",               "color": "red"},
+        ],
+        "tabs": [("all", "All decisions"), ("by_outcome", "By outcome"), ("analytics", "Analytics")],
+    },
+    "senior_underwriter": {
+        "kind": "human",
+        "cards": [
+            {"label": "Pending decision",  "query": "pending_human",             "color": "orange"},
+            {"label": "Approved",          "query": "count_allow_approved",      "color": "green"},
+            {"label": "Denied",            "query": "count_block",               "color": "red"},
+            {"label": "Conditional",       "query": "count_recommend",           "color": "amber"},
+        ],
+        "tabs": [("pending", "Pending review"), ("reviewed", "Reviewed"), ("analytics", "Analytics")],
+    },
+    "closer": {
+        "kind": "human",
+        "cards": [
+            {"label": "Pending close",     "query": "pending_human",             "color": "orange"},
+            {"label": "Clear to close",    "query": "count_allow_approved",      "color": "green"},
+            {"label": "Blocked",           "query": "count_block",               "color": "red"},
+            {"label": "Avg days to close", "query": "avg_review_time_days",      "color": "default"},
+        ],
+        "tabs": [("pending", "Pending review"), ("reviewed", "Reviewed"), ("analytics", "Analytics")],
+    },
+    "post_closer": {
+        "kind": "auto",
+        "cards": [
+            {"label": "Total routed",      "query": "total",                     "color": "default"},
+            {"label": "Approved sent",     "query": "count_allow",               "color": "green"},
+            {"label": "Conditional sent", "query": "count_recommend",            "color": "amber"},
+            {"label": "Avg routing time",  "query": "avg_processing_time",       "color": "default"},
+        ],
+        "tabs": [("all", "All decisions"), ("by_outcome", "By outcome"), ("analytics", "Analytics")],
+    },
+}
+
+
+# Tailwind color → number-class map for the 5 KPI palette values.
+_KPI_COLOR_CLASS: dict[str, str] = {
+    "default": "text-slate-900",
+    "green":   "text-emerald-700",
+    "amber":   "text-amber-700",
+    "orange":  "text-orange-600",
+    "red":     "text-rose-700",
+}
+
+
+async def _compute_kpi_card(
+    conn: Any,
+    decision_id: str,
+    query_kind: str,
+    date_clause: str,
+    date_args: list[Any],
+) -> dict[str, Any]:
+    """Run the SQL for one card kind and return:
+
+        { "value": int|float|None, "display": str }
+
+    Caller wraps this with the card's label + color before handing to
+    the template. ``date_clause`` is the same ``AND decided_at …``
+    fragment the rest of the route builds; ``date_args`` are bound
+    after the leading ``$1 = decision_id``."""
+    # Strip ``dout.`` aliasing — the route builds the clause for the
+    # tab-specific queries that join entity_states; the KPI helpers
+    # query an unaliased ``decision_outputs``.
+    date_clause = date_clause.replace("dout.", "")
+    latest_clause = (
+        " AND version = ("
+        "    SELECT MAX(version) FROM decision_outputs d2"
+        "    WHERE d2.application_id = decision_outputs.application_id"
+        "      AND d2.decision_id = decision_outputs.decision_id"
+        ")"
+    )
+    base = (
+        "FROM decision_outputs WHERE decision_id = $1"
+        + latest_clause + date_clause
+    )
+
+    async def _scalar(sql: str) -> Any:
+        return await conn.fetchval(sql, decision_id, *date_args)
+
+    if query_kind == "total":
+        n = await _scalar(f"SELECT COUNT(*) {base}")
+        return {"value": int(n or 0), "display": f"{int(n or 0):,}"}
+    if query_kind == "count_allow":
+        n = await _scalar(f"SELECT COUNT(*) {base} AND outcome = 'allow'")
+        return {"value": int(n or 0), "display": f"{int(n or 0):,}"}
+    if query_kind == "count_recommend":
+        n = await _scalar(f"SELECT COUNT(*) {base} AND outcome = 'recommend'")
+        return {"value": int(n or 0), "display": f"{int(n or 0):,}"}
+    if query_kind == "count_escalate":
+        n = await _scalar(f"SELECT COUNT(*) {base} AND outcome = 'escalate'")
+        return {"value": int(n or 0), "display": f"{int(n or 0):,}"}
+    if query_kind == "count_block":
+        n = await _scalar(f"SELECT COUNT(*) {base} AND outcome = 'block'")
+        return {"value": int(n or 0), "display": f"{int(n or 0):,}"}
+    if query_kind == "count_recommend_escalate":
+        n = await _scalar(
+            f"SELECT COUNT(*) {base} AND outcome IN ('recommend', 'escalate')"
+        )
+        return {"value": int(n or 0), "display": f"{int(n or 0):,}"}
+    if query_kind == "pending_human":
+        # NOTE: pending is the only card that stays unfiltered by date —
+        # it reflects work waiting right now, not historical throughput.
+        # We rebuild the args list without the date clause for this one.
+        sql = (
+            "SELECT COUNT(*) FROM decision_outputs WHERE decision_id = $1"
+            " AND human_action IS NULL"
+            " AND mode IN ('human_approval', 'recommend')"
+            + latest_clause
+        )
+        n = await conn.fetchval(sql, decision_id)
+        return {"value": int(n or 0), "display": f"{int(n or 0):,}"}
+    if query_kind == "count_approved":
+        n = await _scalar(
+            f"SELECT COUNT(*) {base} AND human_action IS NOT NULL"
+        )
+        return {"value": int(n or 0), "display": f"{int(n or 0):,}"}
+    if query_kind == "count_allow_approved":
+        n = await _scalar(
+            f"SELECT COUNT(*) {base}"
+            " AND outcome = 'allow'"
+            " AND (mode = 'auto_execute' OR human_action IS NOT NULL)"
+        )
+        return {"value": int(n or 0), "display": f"{int(n or 0):,}"}
+    if query_kind == "override_rate":
+        reviewed = await _scalar(
+            f"SELECT COUNT(*) {base} AND human_action IS NOT NULL"
+        ) or 0
+        overridden = await _scalar(
+            f"SELECT COUNT(*) {base} AND human_action = 'overridden'"
+        ) or 0
+        pct = round(int(overridden) * 100 / int(reviewed), 1) if reviewed else 0.0
+        return {"value": pct, "display": f"{pct}%"}
+    if query_kind == "count_escalate_pct":
+        total = await _scalar(f"SELECT COUNT(*) {base}") or 0
+        esc = await _scalar(
+            f"SELECT COUNT(*) {base} AND outcome = 'escalate'"
+        ) or 0
+        pct = round(int(esc) * 100 / int(total), 1) if total else 0.0
+        return {"value": pct, "display": f"{pct}%"}
+    if query_kind == "avg_review_time":
+        sec = await _scalar(
+            f"SELECT AVG(EXTRACT(EPOCH FROM (acted_at - decided_at))) {base}"
+            " AND human_action IS NOT NULL AND acted_at IS NOT NULL"
+        )
+        if sec is None or float(sec) <= 0:
+            return {"value": None, "display": "—"}
+        s = float(sec)
+        if s < 3600:
+            return {"value": s, "display": f"{s / 60:.1f}m"}
+        return {"value": s, "display": f"{s / 3600:.1f}h"}
+    if query_kind == "avg_review_time_days":
+        sec = await _scalar(
+            f"SELECT AVG(EXTRACT(EPOCH FROM (acted_at - decided_at))) {base}"
+            " AND human_action IS NOT NULL AND acted_at IS NOT NULL"
+        )
+        if sec is None or float(sec) <= 0:
+            return {"value": None, "display": "—"}
+        days = float(sec) / 86400.0
+        return {"value": days, "display": f"{days:.1f} days"}
+    if query_kind == "avg_processing_time":
+        sec = await _scalar(f"SELECT AVG(actual_seconds) {base}")
+        if sec is None or float(sec) < 0:
+            return {"value": None, "display": "—"}
+        return {"value": float(sec), "display": f"{float(sec):.1f}s"}
+    # Unknown kind — render an em-dash so the card still shows up.
+    return {"value": None, "display": "—"}
+
+
+async def _by_outcome_groups(
+    conn: Any,
+    decision_id: str,
+    date_clause: str,
+    date_args: list[Any],
+) -> list[dict[str, Any]]:
+    """Group decisions by outcome, return sample applications per group.
+
+    Powers the "By outcome" tab for auto_execute personas. Up to 8
+    sample app ids per outcome so the page doesn't balloon."""
+    date_clause = date_clause.replace("dout.", "")
+    latest_clause = (
+        " AND version = ("
+        "    SELECT MAX(version) FROM decision_outputs d2"
+        "    WHERE d2.application_id = decision_outputs.application_id"
+        "      AND d2.decision_id = decision_outputs.decision_id"
+        ")"
+    )
+    counts_sql = (
+        "SELECT outcome, COUNT(*) AS n FROM decision_outputs"
+        " WHERE decision_id = $1" + latest_clause + date_clause +
+        " GROUP BY outcome"
+    )
+    samples_sql = (
+        "WITH ranked AS ("
+        "  SELECT application_id, outcome, confidence, decided_at,"
+        "         ROW_NUMBER() OVER (PARTITION BY outcome ORDER BY decided_at DESC) AS rn"
+        "  FROM decision_outputs"
+        "  WHERE decision_id = $1" + latest_clause + date_clause +
+        ")"
+        " SELECT application_id, outcome, confidence, decided_at"
+        " FROM ranked WHERE rn <= 8"
+    )
+    counts = await conn.fetch(counts_sql, decision_id, *date_args)
+    samples = await conn.fetch(samples_sql, decision_id, *date_args)
+    by_outcome: dict[str, list[dict[str, Any]]] = {}
+    for s in samples:
+        by_outcome.setdefault(s["outcome"], []).append(dict(s))
+    return [
+        {
+            "outcome": r["outcome"],
+            "count": int(r["n"] or 0),
+            "samples": by_outcome.get(r["outcome"], []),
+        }
+        for r in sorted(counts, key=lambda r: -int(r["n"] or 0))
+    ]
+
+
+def _normalize_tab(tab: str, kind: str) -> str:
+    """Map legacy tab slugs (queue / completed / auto) onto the new
+    persona-kind-aware names (pending / reviewed / all / by_outcome /
+    analytics). Unknown slugs fall through to the first tab for the
+    persona kind."""
+    legacy = {
+        ("queue", "human"):      "pending",
+        ("queue", "auto"):       "all",
+        ("completed", "human"):  "reviewed",
+        ("completed", "auto"):   "all",
+        ("auto", "auto"):        "all",
+        ("auto", "human"):       "pending",
+    }
+    if tab in ("pending", "reviewed", "all", "by_outcome", "analytics"):
+        return tab
+    if (tab, kind) in legacy:
+        return legacy[(tab, kind)]
+    return "pending" if kind == "human" else "all"
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Date range filter — drives every persona workbench query.
 #
 # Sidebar queue badges, the In-Queue KPI card, and home-page metrics
@@ -1323,101 +1656,130 @@ async def persona_workbench(
     # decision_outputs without aliasing.
     date_clause_plain = date_clause.replace("dout.", "")
 
-    tab = tab if tab in ("queue", "completed", "auto", "analytics") else "queue"
+    # Persona-specific KPI config + 3-tab system. Fall back to a
+    # generic auto-style layout if a persona isn't in PERSONA_KPIS
+    # (defensive — keeps the page rendering during config edits).
+    kpi_cfg = PERSONA_KPIS.get(persona_slug) or {
+        "kind": "human" if mode != "auto_execute" else "auto",
+        "cards": [
+            {"label": "Total",        "query": "total",         "color": "default"},
+            {"label": "Allow",        "query": "count_allow",   "color": "green"},
+            {"label": "Recommend",    "query": "count_recommend", "color": "amber"},
+            {"label": "Block",        "query": "count_block",   "color": "red"},
+        ],
+        "tabs": [
+            ("pending" if mode != "auto_execute" else "all",
+             "Pending review" if mode != "auto_execute" else "All decisions"),
+            ("reviewed" if mode != "auto_execute" else "by_outcome",
+             "Reviewed" if mode != "auto_execute" else "By outcome"),
+            ("analytics", "Analytics"),
+        ],
+    }
+    persona_kind = kpi_cfg["kind"]
+    tab = _normalize_tab(tab, persona_kind)
     payload: dict[str, Any] = {}
     summary_fields = persona["summary_fields"]
 
-    # ── KPI strip — In-Queue is always current; the rest narrow to range
-    in_queue_total = await _persona_in_queue_count(decision_id, mode)
-    kpi_window = await _persona_kpi_window(decision_id, start, end)
-    kpi = {
-        "in_queue": in_queue_total,
-        "completed": kpi_window["completed"],
-        "auto_pct": kpi_window["auto_pct"],
-        "avg_review_sec": kpi_window["avg_review_sec"],
-    }
-
-    if tab == "queue":
-        if mode == "auto_execute":
-            # Apps not yet decided. Date filter doesn't apply to
-            # "no decision row yet" — show all undecided.
-            async with pool.acquire() as conn:
-                rows = await conn.fetch(
-                    """
-                    SELECT es.application_id,
-                           es.mid_credit_score, es.ltv, es.dti_back,
-                           es.loan_amount, es.status
-                    FROM entity_states es
-                    WHERE es.application_id NOT IN (
-                        SELECT application_id FROM decision_outputs
-                        WHERE decision_id = $1
-                    )
-                    ORDER BY es.application_id
-                    LIMIT 200
-                    """,
-                    decision_id,
-                )
-            queue_rows = [
+    # ── KPI strip — render the 4 cards from the persona's config ──
+    kpi_cards: list[dict[str, Any]] = []
+    async with pool.acquire() as conn:
+        for card in kpi_cfg["cards"]:
+            data = await _compute_kpi_card(
+                conn, decision_id, card["query"], date_clause, date_args
+            )
+            # When pending_human is 0, flip the color to green so the
+            # operator sees the queue is clear at a glance (the spec).
+            color = card["color"]
+            if card["query"] == "pending_human" and (data["value"] or 0) == 0:
+                color = "green"
+                data = {**data, "display": "✓ 0"}
+            kpi_cards.append(
                 {
-                    "application_id": r["application_id"],
-                    "mid_credit_score": r["mid_credit_score"],
-                    "ltv": r["ltv"],
-                    "dti_back": r["dti_back"],
-                    "loan_amount": r["loan_amount"],
-                    "status": r["status"],
-                    "outcome": None,
-                    "confidence": None,
-                    "decided_at": None,
+                    "label": card["label"],
+                    "display": data["display"],
+                    "value": data["value"],
+                    "color_class": _KPI_COLOR_CLASS.get(color, "text-slate-900"),
+                    "color": color,
+                    "query": card["query"],
                 }
-                for r in rows
-            ]
-        else:
-            sql = f"""
-                SELECT dout.application_id, dout.outcome,
-                       dout.confidence, dout.decided_at,
-                       dout.boundary_rule,
-                       es.mid_credit_score, es.ltv, es.dti_back,
-                       es.loan_amount, es.status
-                FROM decision_outputs dout
-                LEFT JOIN entity_states es
-                       ON es.application_id = dout.application_id
-                      AND es.tenant_id = dout.tenant_id
-                WHERE dout.decision_id = $1
-                  AND dout.mode IN ('human_approval', 'recommend')
-                  AND dout.human_action IS NULL
-                  AND dout.version = (
-                      SELECT MAX(version) FROM decision_outputs d2
-                      WHERE d2.application_id = dout.application_id
-                        AND d2.decision_id = dout.decision_id
-                  ){date_clause}
-                ORDER BY dout.decided_at ASC
-                LIMIT 200
-            """
-            async with pool.acquire() as conn:
-                rows = await conn.fetch(sql, decision_id, *date_args)
-            queue_rows = [dict(r) for r in rows]
-        payload = {"queue_rows": queue_rows}
+            )
 
-    elif tab in ("completed", "auto"):
-        only_auto = tab == "auto"
-        mode_predicate = (
-            "dout.mode = 'auto_execute'"
-            if only_auto
-            else "(dout.mode = 'auto_execute' OR dout.human_action IS NOT NULL)"
-        )
+    if tab == "pending":
+        # Human personas: queue of un-acted decisions, oldest first
+        # (FIFO). Date filter applied to decided_at.
+        sql = f"""
+            SELECT dout.application_id, dout.outcome,
+                   dout.confidence, dout.decided_at,
+                   dout.boundary_rule,
+                   es.mid_credit_score, es.ltv, es.dti_back,
+                   es.loan_amount, es.status
+            FROM decision_outputs dout
+            LEFT JOIN entity_states es
+                   ON es.application_id = dout.application_id
+                  AND es.tenant_id = dout.tenant_id
+            WHERE dout.decision_id = $1
+              AND dout.mode IN ('human_approval', 'recommend')
+              AND dout.human_action IS NULL
+              AND dout.version = (
+                  SELECT MAX(version) FROM decision_outputs d2
+                  WHERE d2.application_id = dout.application_id
+                    AND d2.decision_id = dout.decision_id
+              ){date_clause}
+            ORDER BY dout.decided_at ASC
+            LIMIT 200
+        """
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(sql, decision_id, *date_args)
+        payload = {"queue_rows": [dict(r) for r in rows]}
+
+    elif tab == "reviewed":
+        # Human personas: rows where a reviewer has acted (approved
+        # or overridden), most recent first.
         sql = f"""
             SELECT dout.application_id, dout.outcome, dout.mode,
                    dout.confidence, dout.decided_at, dout.acted_at,
                    dout.human_action, dout.human_reviewer,
                    dout.human_override_reason,
                    dout.boundary_rule, dout.reasoning,
-                   es.mid_credit_score, es.ltv, es.dti_back
+                   es.mid_credit_score, es.ltv, es.dti_back, es.loan_amount
             FROM decision_outputs dout
             LEFT JOIN entity_states es
                    ON es.application_id = dout.application_id
                   AND es.tenant_id = dout.tenant_id
             WHERE dout.decision_id = $1
-              AND {mode_predicate}
+              AND dout.human_action IS NOT NULL
+              AND dout.version = (
+                  SELECT MAX(version) FROM decision_outputs d2
+                  WHERE d2.application_id = dout.application_id
+                    AND d2.decision_id = dout.decision_id
+              ){date_clause}
+            ORDER BY dout.acted_at DESC NULLS LAST
+            LIMIT 200
+        """
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(sql, decision_id, *date_args)
+        completed_rows = []
+        for r in rows:
+            d = dict(r)
+            d["reasoning"] = _maybe_json(d.get("reasoning"))
+            completed_rows.append(d)
+        payload = {"completed_rows": completed_rows}
+
+    elif tab == "all":
+        # Auto personas: every decision this persona has produced,
+        # most recent first.
+        sql = f"""
+            SELECT dout.application_id, dout.outcome, dout.mode,
+                   dout.confidence, dout.decided_at, dout.acted_at,
+                   dout.human_action, dout.human_reviewer,
+                   dout.human_override_reason,
+                   dout.boundary_rule, dout.reasoning,
+                   es.mid_credit_score, es.ltv, es.dti_back, es.loan_amount
+            FROM decision_outputs dout
+            LEFT JOIN entity_states es
+                   ON es.application_id = dout.application_id
+                  AND es.tenant_id = dout.tenant_id
+            WHERE dout.decision_id = $1
               AND dout.version = (
                   SELECT MAX(version) FROM decision_outputs d2
                   WHERE d2.application_id = dout.application_id
@@ -1434,6 +1796,14 @@ async def persona_workbench(
             d["reasoning"] = _maybe_json(d.get("reasoning"))
             completed_rows.append(d)
         payload = {"completed_rows": completed_rows}
+
+    elif tab == "by_outcome":
+        # Auto personas: grouped view — count + sample apps per outcome.
+        async with pool.acquire() as conn:
+            groups = await _by_outcome_groups(
+                conn, decision_id, date_clause, date_args
+            )
+        payload = {"by_outcome_groups": groups}
 
     elif tab == "analytics":
         outcome_sql = f"""
@@ -1532,7 +1902,9 @@ async def persona_workbench(
             **(await _base_ctx(persona_slug)),
             "persona": persona,
             "tab": tab,
-            "kpi": kpi,
+            "kpi_cards": kpi_cards,
+            "tabs_config": kpi_cfg["tabs"],
+            "persona_kind": persona_kind,
             "summary_fields": summary_fields,
             "total_decisions": await _total_decisions(),
             "range_key": range_key,
