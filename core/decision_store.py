@@ -261,7 +261,17 @@ class DecisionStore:
 
         Wave 1: applications in ``entity_states`` with no decision output
                 yet for this decision_id.
-        Dependent: same, gated on all listed upstreams being present."""
+        Dependent: same, gated on every listed upstream being FINALIZED.
+
+        Finalization predicate (the human-approval gate):
+          - mode = 'auto_execute' — machine decided, no human needed
+          - mode IN ('human_approval', 'recommend')
+              AND human_action IS NOT NULL — a reviewer has acted
+
+        Without this gate the runner walks downstream as soon as upstream
+        rows exist, even if those rows are recommend/human_approval
+        proposals nobody has reviewed yet — and the pipeline becomes a
+        black box that hides whether decisions had real oversight."""
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             if not upstream_decision_ids:
@@ -294,6 +304,13 @@ class DecisionStore:
                         WHERE application_id = es.application_id
                           AND decision_id = ANY($3)
                           AND tenant_id = $1
+                          AND (
+                            mode = 'auto_execute'
+                            OR (
+                              mode IN ('human_approval', 'recommend')
+                              AND human_action IS NOT NULL
+                            )
+                          )
                       ) = $4
                     ORDER BY es.application_id
                     """,
