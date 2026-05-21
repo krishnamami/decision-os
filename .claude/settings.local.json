@@ -37,7 +37,11 @@
       "PowerShell(python -m core.cron.runner credit_assessment 10)",
       "PowerShell(python scripts/_verify_edms_writes.py)",
       "PowerShell(python scripts/run_tests.py 2>&1 | Select-Object -Last 30)",
-      "Bash(awk '/^def build_default_platform/,/^[a-zA-Z_]/' api/deps.py)"
+      "Bash(awk '/^def build_default_platform/,/^[a-zA-Z_]/' api/deps.py)",
+      "Bash(powershell -NoProfile -Command \"Get-NetTCPConnection -LocalPort 8000 -State Listen | Select-Object -First 1 -ExpandProperty OwningProcess\")",
+      "Bash(powershell -NoProfile -Command \"Stop-Process -Id 24408 -Force\")",
+      "Bash(powershell -NoProfile -Command \"\\(Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue | Measure-Object\\).Count\")",
+      "PowerShell(Get-NetTCPConnection *)"
     ]
   }
 }
