@@ -149,14 +149,22 @@ These constraints are enforced by the engine, not left to convention:
 ## Project Status
 
 Decision OS is an actively evolving platform. 
+
+
 **Working Today -emitting real,persisited traces:**
+
+
 - The ontology model
 - Policy / boundary engine + hard rules
 - Atomic decision tool (AtomicTool.run())
 - Independent critic
 - Audit gate (consent, protected-attribute leak check, regulation tags)
 - Append-only trace store
+
+
 **In progress — designed, not yet production:**
+
+
 - Connector & ingestion framework
 - DAG executor for dependent workflows
 - Persona workbench UI
