@@ -1,12 +1,12 @@
 # Decision OS
 
 **A governed, explainable, human-in-the-loop decision platform.**
+A governed, explainable, human-in-the-loop decision platform.
 A domain-agnostic decision engine with pluggable domain packs for each vertical.
-
 Decision OS treats a decision as a first-class, auditable object: every decision has an
 owner, every action is checked against policy, every piece of context carries lineage, and
-every execution leaves a trace. It is inspired by the design principles of enterprise
-ontology and operational-decisioning platforms, reimagined as an open, modular stack.
+every execution leaves a trace. It draws on the design principles of ontology-driven
+operational platforms (e.g. Palantir Foundry/AIP), reimagined as an open, modular stack.
 
 ---
 
@@ -148,11 +148,22 @@ These constraints are enforced by the engine, not left to convention:
 
 ## Project Status
 
-Decision OS is an actively evolving platform. The ontology model, policy engine, atomic
-decision tool, critic, audit gate, and append-only trace store are implemented and
-emitting real traces; the connector framework, DAG executor, and persona workbench UI are
-being built out incrementally. See [`docs/PRD.md`](docs/PRD.md) for the full product
-requirements and [`domains/`](domains/) for vertical-specific decision packs.
+Decision OS is an actively evolving platform. 
+**Working Today -emitting real,persisited traces:**
+- The ontology model
+- Policy / boundary engine + hard rules
+- Atomic decision tool (AtomicTool.run())
+- Independent critic
+- Audit gate (consent, protected-attribute leak check, regulation tags)
+- Append-only trace store
+**In progress — designed, not yet production:**
+- Connector & ingestion framework
+- DAG executor for dependent workflows
+- Persona workbench UI
+- DataOps quality monitoring
+
+See docs/PRD.md for the full product requirements and
+domains/ for vertical-specific decision packs.
 
 ---
 
