@@ -50,7 +50,7 @@ actually make a decision safe to operate in production:
 Architecture explains *how the platform is organized*. This example shows *how it
 operates* — what actually happens when a real borrower application enters Decision OS.
 
-![Underwriting workflow](docs/underwriter_flow.png)
+![Underwriting workflow](docs/underwriting_flow.png)
 
 ### The flow
 
