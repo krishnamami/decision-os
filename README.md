@@ -16,10 +16,15 @@ Most "AI decisioning" stops at a model score. Decision OS is built around the pa
 actually make a decision safe to operate in production:
 
 - **Ontology, not tables** — typed business objects with semantic links, so decisions reason over a shared model of the domain.
-- **Governed actions** — a boundary engine that decides whether to automate, recommend, escalate, or block.
-- **Lineage everywhere** — every context value is traceable to its source.
+- **Governed actions** — a boundary engine that decides whether to automate, recommend, escalate, or block; the policy engine has the last word, never the LLM.
+- **Lineage everywhere** — every context value and verified claim is frozen to its source on the trace.
 - **Human-in-the-loop by design** — overrides are captured as evidence and fed back as agent memory.
+- **Fair-lending aware** — protected-attribute leak detection and regulation tagging (FCRA, HMDA, ECOA) gate every decision before writeback.
 - **Operational, not analytical** — the output is a workflow action, not a dashboard.
+
+> **AI reasons. Code governs.** The LLM is consulted only inside the agent's `reason()`
+> step; context assembly, policy evaluation, critic review, audit, and trace-writing are
+> all code-enforced.
 
 ---
 
@@ -41,64 +46,79 @@ actually make a decision safe to operate in production:
 | **Ontology** | Typed business objects (the domain model) and system objects (decisions, traces) connected by semantic links. |
 | **Decision Engine** | A boundary engine that applies policy to choose automate / recommend / escalate / block; a DAG executor that fires dependent workflows as data changes; decision agents with independent critics and a reflection loop. |
 | **Persona Workbench** | Per-persona queues where humans review decisions, inspect supporting data as evidence, and override; snapshots surface bottlenecks. |
-| **Governance & Observability** | Lineage and audit trace on every value, DataOps quality monitoring across pipelines, and a registry of policies and hard rules. |
+| **Governance & Observability** | Lineage and audit trace on every value, fair-lending checks, DataOps quality monitoring, and a registry of policies and hard rules. |
 
 ---
 
-## Example: Underwriting Condition Review
+## The atomic decision
 
-Architecture explains *how the platform is organized*. This example shows *how it
-operates* — what actually happens when a real borrower application enters Decision OS.
+Every decision runs through one bundled, code-governed call (`AtomicTool.run()`):
 
-![Underwriting workflow](docs/underwriting_flow.png)
+1. **context_build** — assemble the typed `ContextBundle` for the application.
+2. **policy pre-check** — hard rules + boundary clauses, before the agent reasons.
+3. **agent reason** — the agent (LLM) produces a structured reasoning journal.
+4. **policy re-check** — re-evaluate the boundary against the agent's *computed* values; the policy engine, not the agent, sets the final outcome.
+5. **critic review** — an independent critic reviews medium+ risk decisions.
+6. **trace_write** — persist the full `DecisionTrace` (append-only).
+7. **audit gate** — build and persist an `AuditRecord` (consent, protected-attribute leak check, regulation tags) *before* any writeback.
+8. **mode_route** — write back / queue / shadow per the decision's mode and outcome.
 
-### The flow
+---
 
-1. **Application received** — a borrower's loan application enters intake.
-2. **Evidence pulled** — connectors retrieve paystub, bank statements, credit, and appraisal from EDMS.
-3. **Context built** — sources are normalized and hydrated into `Borrower`, `LoanTerms`, and `Property` objects in the ontology.
-4. **Agent assembles evidence** — the underwriting agent detects an income contradiction (W2 wages materially exceed paystub-annualized income).
-5. **Policy evaluated** — the boundary engine runs the income-verification rules; the variance fails tolerance, so the outcome is `ESCALATE`.
-6. **Recommendation generated** — the agent produces a recommendation and requests human approval.
-7. **Human decides** — the underwriter approves with a condition (document 2-year variable-income history).
-8. **Trace stored** — the full decision is persisted: context, evidence with lineage, policy results, owner, and timestamp — replayable on demand.
+## Example: a real decision trace
 
-The human's override (escalate → approve-with-condition) is captured as **agent memory**
-through the reflection loop, so the agent handles similar variable-income cases better next time.
+Architecture explains *how the platform is organized*. This shows *how it operates* —
+illustrated by the underwriting flow, then proven by a real trace pulled from the database.
 
-### What the decision leaves behind
+![Underwriting workflow](docs/underwriter_flow.png)
 
-Every decision produces an auditable, replayable trace. A trimmed example
-([full version](docs/decision_trace.json)):
+### What a decision leaves behind
+
+Every execution writes an append-only `DecisionTrace`. Below is **real output** from the
+engine — a `compliance_check` decision on a synthetic loan application
+([file](docs/decision_trace.json)):
 
 ```jsonc
 {
-  "decision_id": "dec_8f3a21c9-underwriting-condition-review",
-  "status": "approved_with_condition",
-  "owner": { "decision_owner": "agent.underwriting_v3", "approved_by": "user.j.martinez" },
-  "agent_analysis": {
-    "finding": "income_contradiction",
-    "detail": "W2 wages ($184,500) exceed paystub-annualized income ($123,600); 33% variance > 10% threshold.",
-    "recommendation": "escalate_to_human"
-  },
-  "policy_evaluation": {
-    "evaluated": [
-      { "rule": "income_variance_within_tolerance", "result": "FAIL", "threshold": 0.10, "observed": 0.33 },
-      { "rule": "dti_within_limit",                 "result": "PASS", "threshold": 0.45, "observed": 0.41 }
+  "id": "ae375173-3910-45a4-a9da-4e61b052d4e6",
+  "application_id": "APP-LOAN-20260328-08700",
+  "decision_id": "compliance_check",
+  "outcome": "allow",
+  "mode": "human_approval",
+  "risk_level": "high",
+  "confidence": 0.9,
+  "boundary_matched": "allow",
+  "boundary_rule": "hmda_complete=True, fair_lending_violation=False, missing_disclosures=False -> allow",
+  "reasoning": {
+    "hypothesis": "Application is compliant when all HMDA fields are present, no fair-lending flags exist, and state rules pass.",
+    "signals": [
+      { "name": "all_hmda_fields_complete", "value": true },
+      { "name": "fair_lending_violation", "value": false },
+      { "name": "missing_required_disclosures", "value": false },
+      { "name": "cd_timing_compliant", "value": false }
     ],
-    "boundary_outcome": "ESCALATE"
+    "conclusion": "hmda_complete=True, fair_lending_violation=False, missing_disclosures=False -> allow"
   },
-  "human_decision": {
-    "decision": "approve_with_condition",
-    "condition_added": "PTD: 2-year history of bonus/commission income."
-  },
-  "reflection": { "captured_as_memory": true }
+  "context_snapshot": { "compliance_cleared": true, "no_fair_lending_flags": true, "mixed_jurisdiction": false },
+  "sla_seconds": 60,
+  "actual_seconds": 0.167,
+  "version": 3,
+  "tenant_id": "default",
+  "decided_at": "2026-05-19T00:06:10Z"
 }
 ```
 
-This is the core thesis in one example: Decision OS does not just *search documents* — it
-**assembles decision context, evaluates policy, and produces auditable, governed decisions**
-with a human in the loop.
+Read it top to bottom and you can see the whole governance model: the **boundary rule**
+that fired, the agent's **reasoning journal** (hypothesis → signals → conclusion), the
+**fair-lending and HMDA signals** that were checked, the **SLA** (60s budget vs 0.167s
+actual), append-only **versioning**, and **multi-tenancy** — all on one persisted,
+replayable record. The `mode: human_approval` means this decision is queued for an
+underwriter; when they act, a `human_action` / `human_reviewer` is attached to the same
+trace without mutating its original reasoning.
+
+This is the core thesis: Decision OS does not just *score* an application — it
+**evaluates policy, records every signal and its outcome, and leaves an auditable,
+replayable trace** with a human in the loop.
 
 ---
 
@@ -128,10 +148,11 @@ These constraints are enforced by the engine, not left to convention:
 
 ## Project Status
 
-Decision OS is an actively evolving reference architecture. The ontology model and decision
-specifications are defined; the connector framework, DAG executor, decision agents, and
-persona workbench are being built out incrementally. See [`docs/PRD.md`](docs/PRD.md) for
-the full product requirements and [`domains/`](domains/) for vertical-specific decision packs.
+Decision OS is an actively evolving platform. The ontology model, policy engine, atomic
+decision tool, critic, audit gate, and append-only trace store are implemented and
+emitting real traces; the connector framework, DAG executor, and persona workbench UI are
+being built out incrementally. See [`docs/PRD.md`](docs/PRD.md) for the full product
+requirements and [`domains/`](domains/) for vertical-specific decision packs.
 
 ---
 
@@ -141,8 +162,11 @@ the full product requirements and [`domains/`](domains/) for vertical-specific d
 decision-os/
 ├── core/
 │   ├── ontology/           # object types, semantic links
-│   ├── policy_engine/      # boundary evaluation, hard rules
-│   ├── decision_agents/    # agents, critics, reflection
+│   ├── context_store/      # ContextBuilder, ContextBundle, EntityResolver
+│   ├── policy_engine/      # boundary evaluation, hard rules, policy versions
+│   ├── decision_agents/    # atomic_tool, agents, critics, mode router
+│   ├── trace/              # DecisionTrace, TraceWriter, claim provenance
+│   ├── audit/              # AuditEngine, fair-lending / regulation checks
 │   └── connectors/         # typed source connectors
 ├── domains/
 │   └── lending/            # lending decision pack (decisions.yaml)
@@ -151,6 +175,6 @@ decision-os/
 │   ├── architecture.md         # editable Mermaid diagram
 │   ├── architecture.svg        # architecture diagram
 │   ├── underwriter_flow.png    # underwriting workflow diagram
-│   └── decision_trace.json     # example decision trace
+│   └── decision_trace.json     # real example decision trace
 └── README.md
 ```
