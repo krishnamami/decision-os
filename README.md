@@ -45,6 +45,63 @@ actually make a decision safe to operate in production:
 
 ---
 
+## Example: Underwriting Condition Review
+
+Architecture explains *how the platform is organized*. This example shows *how it
+operates* — what actually happens when a real borrower application enters Decision OS.
+
+![Underwriting workflow](docs/underwriter_flow.png)
+
+### The flow
+
+1. **Application received** — a borrower's loan application enters intake.
+2. **Evidence pulled** — connectors retrieve paystub, bank statements, credit, and appraisal from EDMS.
+3. **Context built** — sources are normalized and hydrated into `Borrower`, `LoanTerms`, and `Property` objects in the ontology.
+4. **Agent assembles evidence** — the underwriting agent detects an income contradiction (W2 wages materially exceed paystub-annualized income).
+5. **Policy evaluated** — the boundary engine runs the income-verification rules; the variance fails tolerance, so the outcome is `ESCALATE`.
+6. **Recommendation generated** — the agent produces a recommendation and requests human approval.
+7. **Human decides** — the underwriter approves with a condition (document 2-year variable-income history).
+8. **Trace stored** — the full decision is persisted: context, evidence with lineage, policy results, owner, and timestamp — replayable on demand.
+
+The human's override (escalate → approve-with-condition) is captured as **agent memory**
+through the reflection loop, so the agent handles similar variable-income cases better next time.
+
+### What the decision leaves behind
+
+Every decision produces an auditable, replayable trace. A trimmed example
+([full version](docs/decision_trace.json)):
+
+```jsonc
+{
+  "decision_id": "dec_8f3a21c9-underwriting-condition-review",
+  "status": "approved_with_condition",
+  "owner": { "decision_owner": "agent.underwriting_v3", "approved_by": "user.j.martinez" },
+  "agent_analysis": {
+    "finding": "income_contradiction",
+    "detail": "W2 wages ($184,500) exceed paystub-annualized income ($123,600); 33% variance > 10% threshold.",
+    "recommendation": "escalate_to_human"
+  },
+  "policy_evaluation": {
+    "evaluated": [
+      { "rule": "income_variance_within_tolerance", "result": "FAIL", "threshold": 0.10, "observed": 0.33 },
+      { "rule": "dti_within_limit",                 "result": "PASS", "threshold": 0.45, "observed": 0.41 }
+    ],
+    "boundary_outcome": "ESCALATE"
+  },
+  "human_decision": {
+    "decision": "approve_with_condition",
+    "condition_added": "PTD: 2-year history of bonus/commission income."
+  },
+  "reflection": { "captured_as_memory": true }
+}
+```
+
+This is the core thesis in one example: Decision OS does not just *search documents* — it
+**assembles decision context, evaluates policy, and produces auditable, governed decisions**
+with a human in the loop.
+
+---
+
 ## Tech Stack
 
 | Area | Technology |
@@ -90,7 +147,10 @@ decision-os/
 ├── domains/
 │   └── lending/            # lending decision pack (decisions.yaml)
 ├── docs/
-│   ├── PRD.md              # product requirements
-│   └── architecture.md     # editable Mermaid diagram
+│   ├── PRD.md                  # product requirements
+│   ├── architecture.md         # editable Mermaid diagram
+│   ├── architecture.svg        # architecture diagram
+│   ├── underwriter_flow.png    # underwriting workflow diagram
+│   └── decision_trace.json     # example decision trace
 └── README.md
 ```
