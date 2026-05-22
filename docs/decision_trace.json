@@ -1,0 +1,109 @@
+{
+  "decision_id": "dec_8f3a21c9-underwriting-condition-review",
+  "decision_type": "underwriting.condition_review",
+  "domain": "lending",
+  "persona": "underwriter",
+  "status": "approved_with_condition",
+  "created_at": "2026-05-18T14:32:07Z",
+  "resolved_at": "2026-05-18T14:41:55Z",
+  "owner": {
+    "decision_owner": "agent.underwriting_v3",
+    "approved_by": "user.j.martinez (Underwriter II)",
+    "accountable_party": "user.j.martinez"
+  },
+
+  "subject": {
+    "loan_application_id": "LA-2026-0098213",
+    "borrower_id": "BR-44102",
+    "loan_amount": 612000,
+    "product": "30yr_fixed_conventional",
+    "occupancy": "primary"
+  },
+
+  "context": {
+    "assembled_from": [
+      { "object": "Borrower",  "object_id": "BR-44102",  "snapshot_version": 7 },
+      { "object": "LoanTerms", "object_id": "LT-0098213", "snapshot_version": 3 },
+      { "object": "Property",  "object_id": "PR-77310",   "snapshot_version": 2 }
+    ],
+    "context_complete": true,
+    "hydrated_at": "2026-05-18T14:32:09Z"
+  },
+
+  "evidence": [
+    {
+      "type": "income.w2_current",
+      "source": "EDMS",
+      "value": { "annual_wages": 184500 },
+      "lineage": "edms://docs/BR-44102/w2_2025.pdf#field:box1",
+      "captured_at": "2026-05-18T14:32:11Z"
+    },
+    {
+      "type": "income.paystub_current",
+      "source": "EDMS",
+      "value": { "ytd_gross": 41200, "pay_period_end": "2026-04-30", "annualized": 123600 },
+      "lineage": "edms://docs/BR-44102/paystub_apr2026.pdf#ocr:gross_ytd",
+      "captured_at": "2026-05-18T14:32:12Z"
+    },
+    {
+      "type": "credit.tri_merge",
+      "source": "EDMS",
+      "value": { "fico_mid": 742, "dti_back_end": 0.41 },
+      "lineage": "edms://docs/BR-44102/trimerge_20260512.xml#summary",
+      "captured_at": "2026-05-18T14:32:13Z"
+    },
+    {
+      "type": "property.appraisal_urar",
+      "source": "EDMS",
+      "value": { "appraised_value": 705000, "ltv": 0.868 },
+      "lineage": "edms://docs/PR-77310/appraisal_urar.pdf#reconciled_value",
+      "captured_at": "2026-05-18T14:32:14Z"
+    }
+  ],
+
+  "agent_analysis": {
+    "agent": "agent.underwriting_v3",
+    "finding": "income_contradiction",
+    "detail": "W2 annualized wages ($184,500) materially exceed paystub-annualized income ($123,600); 33% variance exceeds the 10% reconciliation threshold.",
+    "critic_review": {
+      "critic": "critic.income_consistency",
+      "agreed": true,
+      "note": "Variance confirmed. Likely bonus/commission income not reflected in current paystub; requires documentation to count."
+    },
+    "recommendation": "escalate_to_human",
+    "confidence": 0.88
+  },
+
+  "policy_evaluation": {
+    "rule_set": "lending/decisions.yaml#income_verification",
+    "evaluated": [
+      { "rule": "income_variance_within_tolerance", "result": "FAIL", "threshold": 0.10, "observed": 0.33 },
+      { "rule": "dti_within_limit",                 "result": "PASS", "threshold": 0.45, "observed": 0.41 },
+      { "rule": "ltv_within_limit",                 "result": "PASS", "threshold": 0.95, "observed": 0.868 }
+    ],
+    "hard_rules_checked": ["no_decision_without_owner", "no_action_without_policy", "no_context_without_lineage"],
+    "boundary_outcome": "ESCALATE"
+  },
+
+  "human_decision": {
+    "decision": "approve_with_condition",
+    "condition_added": "PTD: obtain 2-year history of bonus/commission income (paystubs + W2s) to support qualifying income.",
+    "rationale": "Variance explained by variable income; conditionally approvable pending documentation.",
+    "decided_by": "user.j.martinez",
+    "decided_at": "2026-05-18T14:41:50Z"
+  },
+
+  "reflection": {
+    "override_type": "agent_recommended_escalate__human_approved_with_condition",
+    "captured_as_memory": true,
+    "memory_note": "When W2 vs paystub variance is driven by variable income and DTI/LTV pass, the standard resolution is a PTD condition for 2-yr variable-income history rather than denial.",
+    "feeds": "agent.underwriting_v3"
+  },
+
+  "audit": {
+    "replayable": true,
+    "trace_hash": "sha256:0b9c…e41a",
+    "steps_logged": 8,
+    "lineage_complete": true
+  }
+}
