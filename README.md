@@ -70,7 +70,7 @@ Every decision runs through one bundled, code-governed call (`AtomicTool.run()`)
 Architecture explains *how the platform is organized*. This shows *how it operates* —
 illustrated by the underwriting flow, then proven by a real trace pulled from the database.
 
-![Underwriting workflow](docs/underwriter_flow.png)
+![Underwriting workflow](docs/underwriting_flow.png)
 
 ### What a decision leaves behind
 
