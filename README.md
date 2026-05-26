@@ -6,7 +6,7 @@ A domain-agnostic decision engine with pluggable domain packs for each vertical.
 Decision OS treats a decision as a first-class, auditable object: every decision has an
 owner, every action is checked against policy, every piece of context carries lineage, and
 every execution leaves a trace. It draws on the design principles of ontology-driven
-operational platforms (e.g. Palantir Foundry/AIP), reimagined as an open, modular stack.
+operational platforms , reimagined as an open, modular stack.
 
 ---
 
