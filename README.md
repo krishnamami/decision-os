@@ -1,12 +1,18 @@
 # Decision OS
 
 **A governed, explainable, human-in-the-loop decision platform.**
-A governed, explainable, human-in-the-loop decision platform.
-A domain-agnostic decision engine with pluggable domain packs for each vertical.
+A domain-agnostic decision engine — **lending ships as the complete reference pack today**; HR and insurance are scaffolding for the same engine.
 Decision OS treats a decision as a first-class, auditable object: every decision has an
 owner, every action is checked against policy, every piece of context carries lineage, and
 every execution leaves a trace. It draws on the design principles of ontology-driven
-operational platforms (e.g. Palantir Foundry/AIP), reimagined as an open, modular stack.
+operational platforms, reimagined as an open, modular stack.
+
+> **Scope, stated up front.** The engine is domain-agnostic by design, but **lending is the
+> only complete vertical today** (12 decisions, four personas, synthetic loan factory).
+> `domains/hr/` and `domains/insurance/` are scaffolding. Within the engine itself, the
+> governance core is live and emitting real traces; the connector/ingestion framework, DAG
+> executor, and persona workbench UI are built but not yet production — see
+> [Project Status](#project-status) and the dashed layers in the architecture diagram.
 
 ---
 
@@ -122,6 +128,19 @@ replayable trace** with a human in the loop.
 
 ---
 
+## Lessons from building the governance core
+
+The bugs that only surface when you actually enforce the rules — each caught by a test that
+now guards against regression:
+
+- **Every applicant tripped the ethics check.** `age` lived in both the `Applicant` entity *and* `PROTECTED_ATTRIBUTES`, so the protected-attribute leak scan flagged every decision. Fix: the factory keeps `age` as profile metadata and never writes it onto the entity — the leak detector stays strict instead of being softened.
+- **Protected-attribute scans missed real leaks.** A bundle-only scan couldn't see leaks on decisions whose read permissions excluded `Applicant`. Fix: `AtomicTool` now reads `Applicant` system-wide via the resolver for the audit input, so the check is global, not per-bundle — a governance hole closed by widening, not narrowing, scope.
+- **Every TRID/RESPA decision failed everywhere.** `disclosure_sent_from_bundle` defaulted to `False` when no `ComplianceRecord` was in scope, so compliance failed by absence. Fix: default `True`, fail only on *positive* evidence of a missing disclosure — fail-closed on real signal, not on missing data.
+- **Downstream decisions saw empty upstream outputs.** Only `auto_execute + ALLOW` triggered writeback, so `recommend` / `human_approval` outcomes never propagated their payloads; the gap was masked by entity-store fallbacks. Fix: those modes now write back to the scoped store *and* enqueue for review, so dependent decisions always see upstream values.
+- **A multi-provider income conflict was invisible.** Income verification returned `ALLOW @ 0.95` off a single provider's $92k. After reconciliation it correctly returns `RECOMMEND`, `verified=$96k (avg)`, `confidence=0.84`, `status=partial` — surfacing the cross-source disagreement instead of hiding it behind false confidence.
+
+---
+
 ## Tech Stack
 
 | Area | Technology |
@@ -131,6 +150,9 @@ replayable trace** with a human in the loop.
 | **Database** | Supabase (Postgres) |
 | **Cache** | Redis |
 | **Frontend** | Next.js, Tailwind CSS |
+
+> **Infrastructure today is local docker-compose** (Postgres + Redis); CI and cloud IaC
+> are on the roadmap — called out so neither is assumed.
 
 ---
 
@@ -151,15 +173,24 @@ These constraints are enforced by the engine, not left to convention:
 Decision OS is an actively evolving platform. 
 
 
-**Working Today -emitting real,persisited traces:**
-
+**Working Today — emitting real, persisted traces:**
 
 - The ontology model
 - Policy / boundary engine + hard rules
-- Atomic decision tool (AtomicTool.run())
-- Independent critic
-- Audit gate (consent, protected-attribute leak check, regulation tags)
-- Append-only trace store
+- Atomic decision tool (`AtomicTool.run()`)
+- Independent critic + reflection loop
+- Audit gate (consent, protected-attribute leak check, regulation tags, adverse-action notices)
+- Append-only trace store + replayer
+
+**Verified by 351 unit tests (~7s, all green)**, concentrated where the governance guarantees live:
+
+| Area | Tests | Area | Tests |
+|------|------:|------|------:|
+| Audit / fair-lending | 73 | Lending pack | 45 |
+| Policy engine | 61 | UI views | 45 |
+| Knowledge / retrieval | 26 | API routes | 34 |
+| Trace / reflection | 23 | Decision agents | 18 |
+| Simulation / replay | 17 | Context store | 9 |
 
 
 **In progress — designed, not yet production:**
