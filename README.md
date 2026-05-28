@@ -5,14 +5,7 @@ A domain-agnostic decision engine — **lending ships as the complete reference 
 Decision OS treats a decision as a first-class, auditable object: every decision has an
 owner, every action is checked against policy, every piece of context carries lineage, and
 every execution leaves a trace. It draws on the design principles of ontology-driven
-operational platforms, reimagined as an open, modular stack.
-
-> **Scope, stated up front.** The engine is domain-agnostic by design, but **lending is the
-> only complete vertical today** (12 decisions, four personas, synthetic loan factory).
-> `domains/hr/` and `domains/insurance/` are scaffolding. Within the engine itself, the
-> governance core is live and emitting real traces; the connector/ingestion framework, DAG
-> executor, and persona workbench UI are built but not yet production — see
-> [Project Status](#project-status) and the dashed layers in the architecture diagram.
+operational platforms (e.g. Palantir Foundry/AIP), reimagined as an open, modular stack.
 
 ---
 
