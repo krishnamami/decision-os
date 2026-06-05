@@ -9,7 +9,7 @@
   <span class="text-slate-900 mono">{{ application_id }}</span>
 </nav>
 
-<header class="mb-5 flex items-start gap-4">
+<header class="mb-4 flex items-start gap-4">
   <span class="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-{{ persona.color }}-100 text-{{ persona.color }}-700 text-lg">
     <i class="ti {{ persona.icon }}"></i>
   </span>
@@ -20,12 +20,29 @@
     </h1>
     <p class="text-xs text-slate-500 mt-0.5">{{ persona.description }}</p>
   </div>
-  <div class="text-right text-xs text-slate-500">
+  <div class="text-right text-xs text-slate-500 shrink-0">
     {% if queue_position %}
       <div><span class="font-semibold text-slate-900">{{ queue_position }}</span> of {{ queue_total }} in queue</div>
     {% endif %}
+    {% if decision and decision.decided_at %}
+      <div class="mt-0.5 text-slate-400">in queue {{ decision.decided_at | humanize_age }}</div>
+    {% endif %}
   </div>
 </header>
+
+{% if decision and decision.stale %}
+  <div class="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4 text-sm text-amber-800 flex items-start gap-2">
+    <span class="text-base leading-none">⚠</span>
+    <div>
+      <span class="font-semibold">This decision may be outdated</span> — an upstream
+      decision{% if revert_info and revert_info.persona_title %} ({{ revert_info.persona_title }}){% endif %}
+      was reverted{% if revert_info and revert_info.date %} {{ revert_info.date | humanize_age }}{% endif %}{% if revert_info and revert_info.reverter %} by {{ revert_info.reverter }}{% endif %}.
+      Re-run the decision pipeline to refresh.
+    </div>
+  </div>
+{% endif %}
+
+{% include "_special_banners.html" %}
 
 {% if not decision %}
   <div class="bg-amber-50 border border-amber-200 rounded p-4 text-sm text-amber-800">
@@ -35,6 +52,8 @@
 
 <div class="grid grid-cols-12 gap-5">
   <section class="col-span-7 space-y-4">
+
+    {% include "_why_card.html" %}
 
     <!-- Loan summary strip -->
     {% if entity %}
@@ -53,62 +72,34 @@
       </div>
     {% endif %}
 
-    <!-- Context card -->
-    <div class="bg-white border border-slate-200 rounded-lg p-5">
-      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
-        Context — {{ persona.title }}
-      </div>
-      <dl class="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-        {% for f in key_field_rows %}
-          <dt class="text-slate-500">{{ f.key }}</dt>
-          <dd class="text-slate-800">
-            {% if f.value is boolean %}
-              {% if f.value %}
-                <span class="text-emerald-700 font-medium">✓ yes</span>
-              {% else %}
-                <span class="text-rose-700 font-medium">✗ no</span>
-              {% endif %}
-            {% elif 'credit_score' in f.key %}
-              {% set cc = f.value | credit_color %}
-              <span class="text-{{ cc }}-700 font-medium">{{ f.value | fmt_value }}</span>
-            {% else %}
-              {{ f.key | fmt_field(f.value) if false else f.value | fmt_value }}
-            {% endif %}
-          </dd>
-        {% endfor %}
-      </dl>
-    </div>
+    {% include "_signals.html" %}
 
     <!-- Upstream decisions -->
     {% if upstreams %}
       <div class="bg-white border border-slate-200 rounded-lg p-5">
         <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
-          Upstream decisions
+          Upstream decisions <span class="text-slate-400 normal-case font-normal">— what prior personas decided</span>
         </div>
-        <table class="min-w-full text-sm">
-          <thead class="text-xs text-slate-500">
-            <tr><th class="text-left py-1.5">Decision</th><th class="text-left">Persona</th><th class="text-left">Outcome</th><th class="text-right">Confidence</th></tr>
-          </thead>
-          <tbody class="divide-y divide-slate-100">
-            {% for u in upstreams %}
-              {% set oc = u.outcome | outcome_color %}
-              <tr>
-                <td class="py-1.5 mono text-xs text-slate-600">{{ u.decision_id }}</td>
-                <td class="py-1.5">
-                  {% if u.persona_slug %}
-                    <a href="/workbench/{{ u.persona_slug }}" class="text-{{ u.persona_color }}-700 hover:underline">{{ u.persona_title }}</a>
-                  {% else %}
-                    {{ u.persona_title }}
-                  {% endif %}
-                </td>
-                <td class="py-1.5"><span class="text-xs px-2 py-0.5 rounded bg-{{ oc }}-100 text-{{ oc }}-700 font-medium">{{ u.outcome }}</span></td>
-                <td class="py-1.5 text-right mono">{{ '%.2f' % (u.confidence or 0) }}</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+        <div class="grid grid-cols-2 gap-2">
+          {% for u in upstreams %}
+            {% set oc = u.outcome | outcome_color %}
+            <div class="flex items-center justify-between gap-2 border border-slate-100 rounded px-3 py-2">
+              <div class="min-w-0">
+                {% if u.persona_slug %}
+                  <a href="/workbench/{{ u.persona_slug }}/completed/{{ application_id }}" class="text-sm text-{{ u.persona_color }}-700 hover:underline truncate block">{{ u.persona_title }}</a>
+                {% else %}
+                  <span class="text-sm text-slate-700 truncate block">{{ u.persona_title }}</span>
+                {% endif %}
+                <span class="text-[10px] text-slate-400 mono">conf {{ '%.2f' % (u.confidence or 0) }}</span>
+              </div>
+              <span class="text-[11px] px-2 py-0.5 rounded bg-{{ oc }}-100 text-{{ oc }}-700 font-medium uppercase shrink-0">{{ u.outcome }}</span>
+            </div>
+          {% endfor %}
+        </div>
       </div>
     {% endif %}
+
+    {% include "_documents.html" %}
 
   </section>
 
@@ -133,15 +124,15 @@
       </div>
       {% if decision.boundary_rule %}
         <div class="text-xs">
-          <div class="text-slate-500">Boundary rule</div>
-          <div class="text-slate-800 mt-0.5">{{ decision.boundary_rule }}</div>
+          <div class="text-slate-500">Matched rule</div>
+          <div class="text-slate-800 mt-0.5 mono text-[11px]">{{ decision.boundary_rule }}</div>
         </div>
       {% endif %}
     </div>
 
     {% if decision.reasoning %}
       <div class="bg-white border border-slate-200 rounded-lg p-5">
-        <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Reasoning</div>
+        <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">AI Reasoning</div>
         <div class="space-y-3 text-xs">
           {% if decision.reasoning.hypothesis %}
             <div><div class="text-slate-500 font-medium">Hypothesis</div><div class="text-slate-800 mt-0.5">{{ decision.reasoning.hypothesis }}</div></div>
@@ -149,26 +140,12 @@
           {% if decision.reasoning.conclusion %}
             <div><div class="text-slate-500 font-medium">Conclusion</div><div class="text-slate-800 mt-0.5">{{ decision.reasoning.conclusion }}</div></div>
           {% endif %}
-          {% if decision.reasoning.signals %}
-            <div>
-              <div class="text-slate-500 font-medium mb-1">Signals</div>
-              <ul class="space-y-0.5">
-                {% for s in decision.reasoning.signals %}
-                  <li class="flex items-center gap-2">
-                    <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
-                    <span class="mono text-slate-700">{{ s.name }}</span>
-                    <span class="ml-auto mono text-slate-500">{{ s.value | fmt_value }}</span>
-                  </li>
-                {% endfor %}
-              </ul>
-            </div>
-          {% endif %}
         </div>
       </div>
     {% endif %}
 
     <div class="bg-white border border-slate-200 rounded-lg p-5">
-      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Actions</div>
+      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Your Decision</div>
 
       {% if can_act %}
         <form method="post" action="/workbench/{{ persona.slug }}/review/{{ application_id }}/approve" class="space-y-3">
@@ -182,36 +159,51 @@
         </form>
 
         <div class="my-4 flex items-center gap-3 text-xs text-slate-400">
-          <div class="flex-1 border-t border-slate-200"></div>
-          <span>or override</span>
-          <div class="flex-1 border-t border-slate-200"></div>
+          <div class="flex-1 border-t border-slate-200"></div><span>or</span><div class="flex-1 border-t border-slate-200"></div>
         </div>
 
-        <form method="post" action="/workbench/{{ persona.slug }}/review/{{ application_id }}/override" class="space-y-3">
-          <div>
-            <label class="text-xs text-slate-600 block mb-1">Reviewer name</label>
-            <input name="reviewer" type="text" required class="w-full text-sm border border-slate-300 rounded px-2 py-1.5" placeholder="your name" />
-          </div>
-          <div>
-            <label class="text-xs text-slate-600 block mb-1">Override to</label>
-            <select name="new_outcome" required class="w-full text-sm border border-slate-300 rounded px-2 py-1.5">
-              <option value="allow">allow</option>
-              <option value="recommend">recommend</option>
-              <option value="escalate">escalate</option>
-              <option value="block">block</option>
-            </select>
-          </div>
-          <div>
-            <label class="text-xs text-slate-600 block mb-1">Reason</label>
-            <textarea name="reason" rows="3" required class="w-full text-sm border border-slate-300 rounded px-2 py-1.5" placeholder="why are you overriding?"></textarea>
-          </div>
-          <button type="submit" class="w-full bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold px-3 py-2 rounded">
-            Submit Override
-          </button>
-        </form>
+        <details class="mb-3">
+          <summary class="cursor-pointer text-sm font-medium text-rose-700 hover:text-rose-800">Override the decision</summary>
+          <form method="post" action="/workbench/{{ persona.slug }}/review/{{ application_id }}/override" class="space-y-3 mt-3">
+            <div>
+              <label class="text-xs text-slate-600 block mb-1">Reviewer name</label>
+              <input name="reviewer" type="text" required class="w-full text-sm border border-slate-300 rounded px-2 py-1.5" placeholder="your name" />
+            </div>
+            <div>
+              <label class="text-xs text-slate-600 block mb-1">Override to</label>
+              <select name="new_outcome" required class="w-full text-sm border border-slate-300 rounded px-2 py-1.5 bg-white">
+                <option value="allow">allow</option>
+                <option value="recommend">recommend</option>
+                <option value="escalate">escalate</option>
+                <option value="block">block</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs text-slate-600 block mb-1">Reason</label>
+              <textarea name="reason" rows="3" required class="w-full text-sm border border-slate-300 rounded px-2 py-1.5" placeholder="why are you overriding?"></textarea>
+            </div>
+            <button type="submit" class="w-full bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold px-3 py-2 rounded">Submit Override</button>
+          </form>
+        </details>
+
+        <details>
+          <summary class="cursor-pointer text-sm font-medium text-blue-700 hover:text-blue-800">Request more information</summary>
+          <form method="post" action="/workbench/{{ persona.slug }}/review/{{ application_id }}/request-info" class="space-y-3 mt-3">
+            <div>
+              <label class="text-xs text-slate-600 block mb-1">Reviewer name</label>
+              <input name="reviewer" type="text" required class="w-full text-sm border border-slate-300 rounded px-2 py-1.5" placeholder="your name" />
+            </div>
+            <div>
+              <label class="text-xs text-slate-600 block mb-1">What do you need?</label>
+              <textarea name="note" rows="2" required class="w-full text-sm border border-slate-300 rounded px-2 py-1.5" placeholder="e.g. updated W2, gap letter, appraisal review"></textarea>
+            </div>
+            <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-3 py-2 rounded">Request information</button>
+            <p class="text-[11px] text-slate-500">Logs the request and keeps this loan in your queue.</p>
+          </form>
+        </details>
       {% elif decision.human_action %}
         <div class="rounded bg-emerald-50 border border-emerald-200 p-3 text-xs">
-          <div class="font-semibold text-emerald-900">{{ decision.human_action }}</div>
+          <div class="font-semibold text-emerald-900">{{ decision.human_action | action_verb(decision.outcome) }}</div>
           {% if decision.human_reviewer %}<div class="text-emerald-700 mt-1">by {{ decision.human_reviewer }}</div>{% endif %}
           {% if decision.human_override_reason %}<div class="text-emerald-700 mt-2">{{ decision.human_override_reason }}</div>{% endif %}
         </div>

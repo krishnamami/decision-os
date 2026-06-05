@@ -1,0 +1,37 @@
+{# Shared revert form. Caller sets `revert_action` (POST target) and may
+   set `revert_compact` for the popover variant on the reviewed tab. #}
+<form method="post" action="{{ revert_action }}" class="space-y-2.5">
+  <div>
+    <label class="text-xs text-slate-600 block mb-1">Reviewer name</label>
+    <input name="reviewer" type="text" required
+           class="w-full text-sm border border-slate-300 rounded px-2 py-1.5"
+           placeholder="your name" />
+  </div>
+  <div>
+    <label class="text-xs text-slate-600 block mb-1">Reason for revert</label>
+    <select name="reason" required
+            class="w-full text-sm border border-slate-300 rounded px-2 py-1.5 bg-white">
+      <option value="" disabled selected>Select a reason…</option>
+      <option value="New information received">New information received</option>
+      <option value="Supervisor review required">Supervisor review required</option>
+      <option value="Audit flag raised">Audit flag raised</option>
+      <option value="Error in original review">Error in original review</option>
+      <option value="Regulatory requirement">Regulatory requirement</option>
+      <option value="Other">Other</option>
+    </select>
+  </div>
+  <div>
+    <label class="text-xs text-slate-600 block mb-1">Notes <span class="text-slate-400">(optional)</span></label>
+    <textarea name="notes" rows="2"
+              class="w-full text-sm border border-slate-300 rounded px-2 py-1.5"
+              placeholder="additional context"></textarea>
+  </div>
+  <div class="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+    This will reopen the decision for review. Downstream decisions will be
+    marked as stale.
+  </div>
+  <button type="submit"
+          class="w-full bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold px-3 py-2 rounded">
+    Revert decision
+  </button>
+</form>

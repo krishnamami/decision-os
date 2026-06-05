@@ -102,6 +102,12 @@
                 {% else %}
                   <span class="text-xs text-slate-400">not decided</span>
                 {% endif %}
+                {% if row.stale %}
+                  <span title="An upstream decision was reverted — may be outdated"
+                        class="ml-1 inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">
+                    <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>stale
+                  </span>
+                {% endif %}
               </td>
               <td class="px-4 py-2 mono text-xs">{% if row.confidence is not none %}{{ '%.2f' % row.confidence }}{% else %}—{% endif %}</td>
               <td class="px-4 py-2 text-xs text-slate-500">{{ row.decided_at | humanize_age }}</td>
@@ -123,33 +129,54 @@
           <tr>
             <th class="text-left px-4 py-2.5">Application</th>
             <th class="text-left px-4 py-2.5">Credit</th>
-            <th class="text-left px-4 py-2.5">Loan</th>
-            <th class="text-left px-4 py-2.5">Outcome</th>
-            <th class="text-left px-4 py-2.5">Action</th>
+            <th class="text-left px-4 py-2.5">LTV</th>
+            <th class="text-left px-4 py-2.5">DTI</th>
+            <th class="text-left px-4 py-2.5">Proposed</th>
+            <th class="text-left px-4 py-2.5">Final</th>
             <th class="text-left px-4 py-2.5">Reviewer</th>
-            <th class="text-left px-4 py-2.5">When</th>
+            <th class="text-left px-4 py-2.5">Reviewed at</th>
+            <th class="text-right px-4 py-2.5"></th>
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-100">
           {% for row in completed_rows %}
-            {% set color = row.outcome | outcome_color %}
+            {% set proposed = row.proposed_outcome or row.outcome %}
+            {% set pc = proposed | outcome_color %}
+            {% set fc = row.outcome | outcome_color %}
             <tr class="hover:bg-slate-50 cursor-pointer"
                 onclick="window.location='/workbench/{{ persona.slug }}/completed/{{ row.application_id }}'">
-              <td class="px-4 py-2 mono text-xs">{{ row.application_id }}</td>
+              <td class="px-4 py-2 mono text-xs">
+                {{ row.application_id }}
+                {% if row.stale %}
+                  <span title="An upstream decision was reverted — may be outdated"
+                        class="ml-1 inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">
+                    <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>stale
+                  </span>
+                {% endif %}
+              </td>
               <td class="px-4 py-2">{% set cc = row.mid_credit_score | credit_color %}<span class="text-{{ cc }}-700 font-medium">{{ row.mid_credit_score | fmt_value }}</span></td>
-              <td class="px-4 py-2">{{ row.loan_amount | fmt_money }}</td>
-              <td class="px-4 py-2"><span class="text-xs px-2 py-0.5 rounded bg-{{ color }}-100 text-{{ color }}-700 font-medium">{{ row.outcome }}</span></td>
-              <td class="px-4 py-2 text-xs">
+              <td class="px-4 py-2">{{ row.ltv | fmt_pct }}</td>
+              <td class="px-4 py-2">{{ row.dti_back | fmt_pct }}</td>
+              <td class="px-4 py-2"><span class="text-xs px-2 py-0.5 rounded bg-{{ pc }}-100 text-{{ pc }}-700 font-medium">{{ proposed }}</span></td>
+              <td class="px-4 py-2">
+                <span class="text-xs px-2 py-0.5 rounded bg-{{ fc }}-100 text-{{ fc }}-700 font-medium">{{ row.outcome }}</span>
                 {% if row.human_action == 'overridden' %}
-                  <span class="text-violet-700">Overridden</span>
-                {% elif row.human_action == 'approved' %}
-                  <span class="text-emerald-700">Approved</span>
-                {% else %}
-                  <span class="text-slate-400">—</span>
+                  <span class="ml-1 text-[10px] text-violet-600 uppercase tracking-wide">overridden</span>
                 {% endif %}
               </td>
               <td class="px-4 py-2 text-xs">{{ row.human_reviewer or '—' }}</td>
               <td class="px-4 py-2 text-xs text-slate-500">{{ row.acted_at | humanize_age }}</td>
+              <td class="px-4 py-2 text-right" onclick="event.stopPropagation()">
+                <details class="relative inline-block text-left">
+                  <summary class="list-none cursor-pointer text-xs px-2 py-1 rounded border border-amber-300 text-amber-700 hover:bg-amber-50">
+                    Revert
+                  </summary>
+                  <div class="absolute right-0 z-10 mt-1 w-72 bg-white border border-slate-200 rounded-lg shadow-lg p-3 text-left">
+                    {% set revert_action = '/workbench/' ~ persona.slug ~ '/review/' ~ row.application_id ~ '/revert' %}
+                    {% include "_revert_form.html" %}
+                  </div>
+                </details>
+              </td>
             </tr>
           {% endfor %}
         </tbody>

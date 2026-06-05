@@ -1,0 +1,35 @@
+{# Hard-stop banners for the highest-severity decisions. Expects
+   `persona` and `decision`. Rendered above the fold. #}
+{% set did = persona.decision_id %}
+{% set blocked = decision and decision.outcome == 'block' %}
+
+{% if did == 'fraud_screening' and blocked %}
+  <div class="bg-rose-600 text-white rounded-lg px-4 py-3 mb-4 flex items-start gap-3">
+    <i class="ti ti-alert-octagon text-lg leading-none mt-0.5"></i>
+    <div class="text-sm">
+      <div class="font-semibold">Pipeline halted</div>
+      All downstream personas are suspended pending resolution of this fraud block.
+    </div>
+  </div>
+{% elif did == 'compliance_check' and blocked %}
+  <div class="bg-rose-600 text-white rounded-lg px-4 py-3 mb-4 flex items-start gap-3">
+    <i class="ti ti-shield-x text-lg leading-none mt-0.5"></i>
+    <div class="text-sm">
+      <div class="font-semibold">Compliance block — closing stopped</div>
+      <span class="font-mono text-rose-100">compliance_block_stops_closing</span> is active.
+      The loan cannot proceed to closing until this is resolved.
+    </div>
+  </div>
+{% elif did == 'closing_readiness' and blocked %}
+  <div class="bg-rose-600 text-white rounded-lg px-4 py-3 mb-4 flex items-start gap-3">
+    <i class="ti ti-lock text-lg leading-none mt-0.5"></i>
+    <div class="text-sm">
+      <div class="font-semibold">Cannot close</div>
+      {% if decision.context_snapshot and decision.context_snapshot.get('compliance_check', {}).get('outcome') == 'block' %}
+        A compliance block is active — this loan cannot close until the compliance officer resolves it.
+      {% else %}
+        One or more closing conditions are unmet. Resolve the blocking conditions before clearing to close.
+      {% endif %}
+    </div>
+  </div>
+{% endif %}

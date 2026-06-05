@@ -1,0 +1,43 @@
+{# Signal checklist. Expects `signals` (list of rendered signals) and
+   optional `ungated_signals`. Each signal: {label, display, state,
+   ungated}. state ∈ good|bad|warn|neutral. #}
+{% set pill = {
+  'good':    ('emerald', '✓'),
+  'bad':     ('rose',    '✕'),
+  'warn':    ('amber',   '!'),
+  'neutral': ('slate',   '•'),
+  'missing': ('slate',   '–'),
+} %}
+<div class="bg-white border border-slate-200 rounded-lg p-5">
+  <div class="flex items-center justify-between mb-3">
+    <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">What the AI found</div>
+    <div class="text-[11px] text-slate-400">{{ signals | length }} signal{{ '' if signals|length == 1 else 's' }}</div>
+  </div>
+  {% if signals %}
+    <ul class="divide-y divide-slate-50">
+      {% for s in signals %}
+        {% set color = pill.get(s.state, pill['neutral'])[0] %}
+        {% set glyph = pill.get(s.state, pill['neutral'])[1] %}
+        <li class="flex items-center justify-between gap-3 py-2">
+          <span class="flex items-center gap-2 min-w-0">
+            <span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-{{ color }}-100 text-{{ color }}-700 text-[10px] font-bold shrink-0">{{ glyph }}</span>
+            <span class="text-sm text-slate-700 truncate">{{ s.label }}</span>
+            {% if s.ungated %}
+              <span title="This signal is present in context but the matched rule does not check it"
+                    class="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 shrink-0">logged · ungated</span>
+            {% endif %}
+          </span>
+          <span class="text-xs font-medium px-2 py-0.5 rounded bg-{{ color }}-50 text-{{ color }}-700 shrink-0">{{ s.display }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+    {% if ungated_signals %}
+      <div class="mt-3 pt-3 border-t border-slate-100 text-[11px] text-amber-700">
+        <span class="font-semibold">{{ ungated_signals | length }} signal{{ '' if ungated_signals|length == 1 else 's' }} logged but not gated</span>
+        by the matched rule — known to the system, not part of this decision's check.
+      </div>
+    {% endif %}
+  {% else %}
+    <div class="text-sm text-slate-400">No signals captured for this decision.</div>
+  {% endif %}
+</div>

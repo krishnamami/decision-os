@@ -33,6 +33,14 @@ from fastapi import APIRouter, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
+from ui.explanations import (
+    DECISION_LABELS,
+    action_label,
+    build_signals,
+    explain,
+    summarize_outcome,
+)
+
 
 # Load DATABASE_URL from .env if present. Mirrors core/cron/runner.py
 # so the app picks it up under uvicorn, python -m, and TestClient.
@@ -304,6 +312,22 @@ WAVE_FOR_DECISION: dict[str, int] = {
 }
 
 
+def _downstream_decisions(decision_id: str) -> list[str]:
+    """All decisions that transitively depend on ``decision_id`` by
+    walking the UPSTREAM edges forward (B is downstream of A when A is in
+    UPSTREAM[B], directly or via a chain). Used by the revert flow to mark
+    decisions that ran on now-reopened input as stale."""
+    result: set[str] = set()
+    frontier = [decision_id]
+    while frontier:
+        cur = frontier.pop()
+        for dec, upstreams in UPSTREAM.items():
+            if cur in upstreams and dec not in result:
+                result.add(dec)
+                frontier.append(dec)
+    return sorted(result)
+
+
 router = APIRouter(tags=["edms-workbench"])
 templates = Jinja2Templates(directory="ui/edms_templates")
 
@@ -324,7 +348,19 @@ async def _get_pool() -> Any:
         import asyncpg  # type: ignore
 
         _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+        await _ensure_stale_column(_pool)
     return _pool
+
+
+async def _ensure_stale_column(pool: Any) -> None:
+    """Idempotent migration — adds decision_outputs.stale so the revert
+    flow can flag downstream decisions as outdated. Runs once, the first
+    time the pool is created."""
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "ALTER TABLE decision_outputs "
+            "ADD COLUMN IF NOT EXISTS stale BOOLEAN DEFAULT false"
+        )
 
 
 def _get_edms() -> Any:
@@ -499,6 +535,7 @@ templates.env.filters["fmt_money"] = _fmt_money
 templates.env.filters["fmt_pct"] = _fmt_pct
 templates.env.filters["fmt_field"] = _fmt_field
 templates.env.filters["fmt_seconds"] = _fmt_seconds
+templates.env.filters["action_verb"] = action_label
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1212,57 +1249,59 @@ async def governance_export():
 # ─────────────────────────────────────────────────────────────────────
 
 
+# Every human-review persona (mode 'recommend' or 'human_approval')
+# shares ONE card set and tab layout — the human-review workflow is the
+# same regardless of which role is reviewing. The 4 cards map 1:1 onto
+# the lifecycle of a decision a human acts on:
+#
+#   Pending review → un-acted (human_action IS NULL); these need attention
+#   Approved       → human accepted the AI proposal as-is
+#   Overridden     → human changed the outcome
+#   Blocked        → current outcome is 'block' (hard stop)
+#
+# RECOMMEND / ESCALATE proposals that nobody has reviewed yet live under
+# "Pending review", not a separate "Flagged" card — once a human acts they
+# move to Approved or Overridden.
+HUMAN_REVIEW_CARDS: list[dict[str, Any]] = [
+    {"label": "Pending review", "query": "pending_human",       "color": "orange"},
+    {"label": "Approved",       "query": "count_human_approved", "color": "green"},
+    {"label": "Overridden",     "query": "count_overridden",     "color": "violet"},
+    {"label": "Blocked",        "query": "count_block",          "color": "red"},
+]
+HUMAN_REVIEW_TABS: list[tuple[str, str]] = [
+    ("pending", "Pending review"),
+    ("reviewed", "Reviewed"),
+    ("analytics", "Analytics"),
+]
+
+
+def _human_kpis() -> dict[str, Any]:
+    """Fresh copy of the shared human-review KPI config so per-persona
+    edits never alias the module-level card list."""
+    return {
+        "kind": "human",
+        "cards": [dict(c) for c in HUMAN_REVIEW_CARDS],
+        "tabs": list(HUMAN_REVIEW_TABS),
+    }
+
+
 PERSONA_KPIS: dict[str, dict[str, Any]] = {
-    "credit_underwriter": {
-        "kind": "auto",
-        "cards": [
-            {"label": "Total screened",    "query": "total",                     "color": "default"},
-            {"label": "Approved",          "query": "count_allow",               "color": "green"},
-            {"label": "Flagged",           "query": "count_recommend_escalate",  "color": "amber"},
-            {"label": "Blocked",           "query": "count_block",               "color": "red"},
-        ],
-        "tabs": [("all", "All decisions"), ("by_outcome", "By outcome"), ("analytics", "Analytics")],
-    },
-    "fraud_analyst": {
-        "kind": "auto",
-        "cards": [
-            {"label": "Total screened",    "query": "total",                     "color": "default"},
-            {"label": "Cleared",           "query": "count_allow",               "color": "green"},
-            {"label": "Under review",      "query": "count_recommend",           "color": "amber"},
-            {"label": "Blocked",           "query": "count_block",               "color": "red"},
-        ],
-        "tabs": [("all", "All decisions"), ("by_outcome", "By outcome"), ("analytics", "Analytics")],
-    },
-    "compliance_officer": {
-        "kind": "human",
-        "cards": [
-            {"label": "Pending review",    "query": "pending_human",             "color": "orange"},
-            {"label": "Cleared",           "query": "count_approved",            "color": "green"},
-            {"label": "Violations",        "query": "count_block",               "color": "red"},
-            {"label": "Avg review time",   "query": "avg_review_time",           "color": "default"},
-        ],
-        "tabs": [("pending", "Pending review"), ("reviewed", "Reviewed"), ("analytics", "Analytics")],
-    },
-    "employment_specialist": {
-        "kind": "human",
-        "cards": [
-            {"label": "Pending review",    "query": "pending_human",             "color": "orange"},
-            {"label": "Verified",          "query": "count_approved",            "color": "green"},
-            {"label": "Escalated",         "query": "count_escalate",            "color": "amber"},
-            {"label": "Avg review time",   "query": "avg_review_time",           "color": "default"},
-        ],
-        "tabs": [("pending", "Pending review"), ("reviewed", "Reviewed"), ("analytics", "Analytics")],
-    },
-    "income_underwriter": {
-        "kind": "human",
-        "cards": [
-            {"label": "Pending review",    "query": "pending_human",             "color": "orange"},
-            {"label": "Verified",          "query": "count_approved",            "color": "green"},
-            {"label": "Blocked",           "query": "count_block",               "color": "red"},
-            {"label": "Override rate",     "query": "override_rate",             "color": "default"},
-        ],
-        "tabs": [("pending", "Pending review"), ("reviewed", "Reviewed"), ("analytics", "Analytics")],
-    },
+    # ── Human-review personas (mode recommend / human_approval) ──────
+    # All 9 use kind='human' so their Pending review queue links to
+    # /review/ (Approve / Override / Revert), NOT the read-only
+    # /completed/ page. Cross-referenced against the modes in
+    # PERSONA_CONFIG and core/cron/runner.py DECISION_CONFIG.
+    "credit_underwriter":    _human_kpis(),   # recommend
+    "income_underwriter":    _human_kpis(),   # recommend
+    "employment_specialist": _human_kpis(),   # recommend
+    "fraud_analyst":         _human_kpis(),   # human_approval
+    "compliance_officer":    _human_kpis(),   # human_approval
+    "product_specialist":    _human_kpis(),   # recommend
+    "pricing_analyst":       _human_kpis(),   # recommend
+    "senior_underwriter":    _human_kpis(),   # human_approval
+    "closer":                _human_kpis(),   # human_approval
+    # ── Auto personas (mode auto_execute) — finalized by the system, ──
+    # no human queue. Only these two have workbench pages.
     "collateral_analyst": {
         "kind": "auto",
         "cards": [
@@ -1272,51 +1311,6 @@ PERSONA_KPIS: dict[str, dict[str, Any]] = {
             {"label": "LTV > 97%",         "query": "count_block",               "color": "red"},
         ],
         "tabs": [("all", "All decisions"), ("by_outcome", "By outcome"), ("analytics", "Analytics")],
-    },
-    "product_specialist": {
-        "kind": "human",
-        "cards": [
-            {"label": "Pending review",    "query": "pending_human",             "color": "orange"},
-            {"label": "Eligible",          "query": "count_allow",               "color": "green"},
-            {"label": "No products",       "query": "count_block",               "color": "red"},
-            {"label": "Exception rate",    "query": "count_escalate_pct",        "color": "default"},
-        ],
-        "tabs": [("pending", "Pending review"), ("reviewed", "Reviewed"), ("analytics", "Analytics")],
-    },
-    "pricing_analyst": {
-        # mode='recommend' → a human-review persona, so it needs a
-        # Pending review queue (links to /review/ with the Approve /
-        # Override forms). Was mistakenly kind='auto', which hid the
-        # In Queue tab and routed every row to the read-only /completed/
-        # page — so the Approve button was never reachable from the UI.
-        "kind": "human",
-        "cards": [
-            {"label": "Pending review",    "query": "pending_human",             "color": "orange"},
-            {"label": "Normal band",       "query": "count_allow",               "color": "green"},
-            {"label": "Exception pricing", "query": "count_recommend",           "color": "amber"},
-            {"label": "Usury blocked",     "query": "count_block",               "color": "red"},
-        ],
-        "tabs": [("pending", "Pending review"), ("reviewed", "Reviewed"), ("analytics", "Analytics")],
-    },
-    "senior_underwriter": {
-        "kind": "human",
-        "cards": [
-            {"label": "Pending decision",  "query": "pending_human",             "color": "orange"},
-            {"label": "Approved",          "query": "count_allow_approved",      "color": "green"},
-            {"label": "Denied",            "query": "count_block",               "color": "red"},
-            {"label": "Conditional",       "query": "count_recommend",           "color": "amber"},
-        ],
-        "tabs": [("pending", "Pending review"), ("reviewed", "Reviewed"), ("analytics", "Analytics")],
-    },
-    "closer": {
-        "kind": "human",
-        "cards": [
-            {"label": "Pending close",     "query": "pending_human",             "color": "orange"},
-            {"label": "Clear to close",    "query": "count_allow_approved",      "color": "green"},
-            {"label": "Blocked",           "query": "count_block",               "color": "red"},
-            {"label": "Avg days to close", "query": "avg_review_time_days",      "color": "default"},
-        ],
-        "tabs": [("pending", "Pending review"), ("reviewed", "Reviewed"), ("analytics", "Analytics")],
     },
     "post_closer": {
         "kind": "auto",
@@ -1337,6 +1331,7 @@ _KPI_COLOR_CLASS: dict[str, str] = {
     "green":   "text-emerald-700",
     "amber":   "text-amber-700",
     "orange":  "text-orange-600",
+    "violet":  "text-violet-700",
     "red":     "text-rose-700",
 }
 
@@ -1410,6 +1405,18 @@ async def _compute_kpi_card(
     if query_kind == "count_approved":
         n = await _scalar(
             f"SELECT COUNT(*) {base} AND human_action IS NOT NULL"
+        )
+        return {"value": int(n or 0), "display": f"{int(n or 0):,}"}
+    if query_kind == "count_human_approved":
+        # Reviewer accepted the AI proposal as-is (human_action='approved').
+        # Distinct from count_approved, which counts ANY human action.
+        n = await _scalar(
+            f"SELECT COUNT(*) {base} AND human_action = 'approved'"
+        )
+        return {"value": int(n or 0), "display": f"{int(n or 0):,}"}
+    if query_kind == "count_overridden":
+        n = await _scalar(
+            f"SELECT COUNT(*) {base} AND human_action = 'overridden'"
         )
         return {"value": int(n or 0), "display": f"{int(n or 0):,}"}
     if query_kind == "count_allow_approved":
@@ -1715,7 +1722,7 @@ async def persona_workbench(
         sql = f"""
             SELECT dout.application_id, dout.outcome,
                    dout.confidence, dout.decided_at,
-                   dout.boundary_rule,
+                   dout.boundary_rule, dout.stale,
                    es.mid_credit_score, es.ltv, es.dti_back,
                    es.loan_amount, es.status
             FROM decision_outputs dout
@@ -1745,7 +1752,15 @@ async def persona_workbench(
                    dout.confidence, dout.decided_at, dout.acted_at,
                    dout.human_action, dout.human_reviewer,
                    dout.human_override_reason,
-                   dout.boundary_rule, dout.reasoning,
+                   dout.boundary_rule, dout.reasoning, dout.stale,
+                   (
+                       SELECT t.from_state FROM decision_timeline t
+                       WHERE t.application_id = dout.application_id
+                         AND t.decision_id = dout.decision_id
+                         AND t.trigger IN ('human_approve', 'human_override')
+                       ORDER BY t.transition_at ASC
+                       LIMIT 1
+                   ) AS proposed_outcome,
                    es.mid_credit_score, es.ltv, es.dti_back, es.loan_amount
             FROM decision_outputs dout
             LEFT JOIN entity_states es
@@ -2083,6 +2098,15 @@ async def _render_review(
             "SELECT * FROM entity_states WHERE application_id = $1 LIMIT 1",
             application_id,
         )
+        doc_rows = await conn.fetch(
+            """
+            SELECT document_type, document_category, status, confidence_score
+            FROM document_index
+            WHERE application_id = $1 AND COALESCE(is_current, true)
+            ORDER BY document_category, document_type
+            """,
+            application_id,
+        )
         upstreams = UPSTREAM.get(decision_id, [])
         upstream_rows: list[dict[str, Any]] = []
         if upstreams:
@@ -2130,6 +2154,34 @@ async def _render_review(
                 decision_id,
             )
             nav_ids = [r["application_id"] for r in nav_rows]
+
+        # If this decision was flagged stale by an upstream revert, pull
+        # the most recent revert event for the application so the banner
+        # can name who reopened it and when.
+        revert_info: Optional[dict[str, Any]] = None
+        if decision is not None and decision.get("stale"):
+            rev = await conn.fetchrow(
+                """
+                SELECT decision_id, transition_at, waiting_on
+                FROM decision_timeline
+                WHERE application_id = $1 AND trigger = 'human_revert'
+                ORDER BY transition_at DESC
+                LIMIT 1
+                """,
+                application_id,
+            )
+            if rev is not None:
+                meta = _maybe_json(rev["waiting_on"])
+                meta = meta if isinstance(meta, dict) else {}
+                slug = DECISION_TO_SLUG.get(rev["decision_id"])
+                cfg = PERSONA_CONFIG.get(slug) if slug else None
+                revert_info = {
+                    "date": rev["transition_at"],
+                    "reverter": meta.get("reverted_by"),
+                    "reason": meta.get("reason"),
+                    "decision_id": rev["decision_id"],
+                    "persona_title": cfg["title"] if cfg else rev["decision_id"],
+                }
 
     # Persona context via EDMS view.
     try:
@@ -2189,6 +2241,43 @@ async def _render_review(
         and decision_dict.get("human_action") is None
     )
 
+    # ── Story-driven review copy ─────────────────────────────────────
+    # Merge the richest available context: entity summary < live view
+    # fields < the decision's frozen context_snapshot (what the AI
+    # actually evaluated wins). Drives the "Why" paragraph + signals.
+    merged_ctx: dict[str, Any] = {}
+    merged_ctx.update(entity_dict)
+    merged_ctx.update(flat_ctx)
+    snap = decision_dict.get("context_snapshot") if decision_dict else None
+    if isinstance(snap, dict):
+        merged_ctx.update(snap)
+
+    outcome = decision_dict.get("outcome") if decision_dict else None
+    boundary_rule = decision_dict.get("boundary_rule") if decision_dict else None
+    signals = build_signals(decision_id, merged_ctx, boundary_rule)
+    explanation = (
+        explain(outcome, boundary_rule, signals, DECISION_LABELS.get(decision_id))
+        if decision_dict is not None
+        else None
+    )
+    ungated_signals = [s for s in signals if s["ungated"]]
+    outcome_summary = summarize_outcome(outcome)
+
+    # Documents on file — grouped by category, deduped by type.
+    docs_by_cat: dict[str, dict[str, dict[str, Any]]] = {}
+    for d in doc_rows:
+        cat = (d["document_category"] or "other").replace("_", " ")
+        docs_by_cat.setdefault(cat, {})[d["document_type"]] = {
+            "type": (d["document_type"] or "").replace("_", " ").title(),
+            "status": d["status"],
+            "confidence": d["confidence_score"],
+        }
+    documents = [
+        {"category": cat.title(), "docs": list(items.values())}
+        for cat, items in sorted(docs_by_cat.items())
+    ]
+    document_count = sum(len(g["docs"]) for g in documents)
+
     prev_id: Optional[str] = None
     next_id: Optional[str] = None
     queue_position: Optional[int] = None
@@ -2212,6 +2301,13 @@ async def _render_review(
             "application_id": application_id,
             "decision": decision_dict,
             "can_act": can_act,
+            "revert_info": revert_info,
+            "explanation": explanation,
+            "signals": signals,
+            "ungated_signals": ungated_signals,
+            "outcome_summary": outcome_summary,
+            "documents": documents,
+            "document_count": document_count,
             "entity": _entity_summary(entity),
             "key_field_rows": key_field_rows,
             "raw_context_groups": raw_groups,
@@ -2291,6 +2387,97 @@ async def review_override(
         )
     return RedirectResponse(
         f"/workbench/{persona_slug}?tab=queue", status_code=303
+    )
+
+
+@router.post(
+    "/workbench/{persona_slug}/review/{application_id}/revert"
+)
+async def review_revert(
+    persona_slug: str,
+    application_id: str,
+    reviewer: str = Form(""),
+    reason: str = Form(""),
+    notes: str = Form(""),
+):
+    """Re-open a previously approved/overridden decision: a supervisor
+    action. Pushes a fresh un-acted version back into the pending queue
+    and marks downstream decisions stale."""
+    if not DATABASE_URL:
+        return RedirectResponse("/workbench", status_code=303)
+    persona = _persona_or_none(persona_slug)
+    if persona is None:
+        return RedirectResponse("/workbench", status_code=303)
+    await _record_revert(
+        application_id=application_id,
+        decision_id=persona["decision_id"],
+        reviewer=reviewer or "anonymous",
+        reason=reason or None,
+        notes=notes or None,
+    )
+    return RedirectResponse(
+        f"/workbench/{persona_slug}?tab=pending", status_code=303
+    )
+
+
+@router.post(
+    "/workbench/{persona_slug}/review/{application_id}/request-info"
+)
+async def review_request_info(
+    persona_slug: str,
+    application_id: str,
+    reviewer: str = Form(""),
+    note: str = Form(""),
+):
+    """Log a 'need more information' request. Leaves the decision in the
+    pending queue (human_action stays NULL) — the reviewer is waiting on
+    something — and appends a timeline entry recording what was asked."""
+    if not DATABASE_URL:
+        return RedirectResponse("/workbench", status_code=303)
+    persona = _persona_or_none(persona_slug)
+    if persona is None:
+        return RedirectResponse("/workbench", status_code=303)
+    pool = await _get_pool()
+    now = datetime.now(timezone.utc)
+    async with pool.acquire() as conn:
+        current = await conn.fetchrow(
+            """
+            SELECT outcome, wave, tenant_id FROM decision_outputs
+            WHERE application_id = $1 AND decision_id = $2
+              AND version = (
+                  SELECT MAX(version) FROM decision_outputs d2
+                  WHERE d2.application_id = decision_outputs.application_id
+                    AND d2.decision_id = decision_outputs.decision_id
+              )
+            LIMIT 1
+            """,
+            application_id,
+            persona["decision_id"],
+        )
+        if current is not None:
+            meta = json.dumps(
+                {"requested_by": reviewer or "anonymous", "note": note or None}
+            )
+            await conn.execute(
+                """
+                INSERT INTO decision_timeline (
+                    application_id, decision_id, wave, from_state,
+                    to_state, trigger, transition_at, waiting_on, tenant_id
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+                """,
+                application_id,
+                persona["decision_id"],
+                current["wave"],
+                current["outcome"],
+                current["outcome"],
+                "human_request_info",
+                now,
+                meta,
+                current["tenant_id"],
+            )
+    return RedirectResponse(
+        f"/workbench/{persona_slug}/review/{application_id}", status_code=303
     )
 
 
@@ -2380,6 +2567,128 @@ async def _record_review(
     return next_app
 
 
+async def _record_revert(
+    *,
+    application_id: str,
+    decision_id: str,
+    reviewer: str,
+    reason: Optional[str],
+    notes: Optional[str],
+) -> bool:
+    """Re-open a finalized decision. Writes a new un-acted version (with
+    the AI's original outcome restored), appends a ``human_revert``
+    timeline row carrying who/why, and flags every downstream decision
+    on the application as stale. Returns False if there's nothing to
+    revert."""
+    pool = await _get_pool()
+    now = datetime.now(timezone.utc)
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            current = await conn.fetchrow(
+                """
+                SELECT id, outcome, wave, version, tenant_id
+                FROM decision_outputs
+                WHERE application_id = $1 AND decision_id = $2
+                  AND version = (
+                      SELECT MAX(version) FROM decision_outputs d2
+                      WHERE d2.application_id = decision_outputs.application_id
+                        AND d2.decision_id = decision_outputs.decision_id
+                  )
+                LIMIT 1
+                """,
+                application_id,
+                decision_id,
+            )
+            if current is None or current["version"] is None:
+                return False
+
+            # Original AI proposal = the from_state of the FIRST human
+            # action on this decision (before any human touched it). Fall
+            # back to the current outcome if there's no human history.
+            ai_outcome = await conn.fetchval(
+                """
+                SELECT from_state FROM decision_timeline
+                WHERE application_id = $1 AND decision_id = $2
+                  AND trigger IN ('human_approve', 'human_override')
+                ORDER BY transition_at ASC
+                LIMIT 1
+                """,
+                application_id,
+                decision_id,
+            ) or current["outcome"]
+
+            new_version = int(current["version"]) + 1
+            # Copy the current row forward, restoring the AI outcome and
+            # clearing the human-action fields so it lands back in the
+            # pending queue as a fresh version.
+            await conn.execute(
+                """
+                INSERT INTO decision_outputs (
+                    application_id, decision_id, wave, outcome, mode,
+                    risk_level, boundary_matched, boundary_rule,
+                    context_snapshot, reasoning, confidence,
+                    upstream_decisions, human_action, human_override_reason,
+                    human_reviewer, decided_at, acted_at, sla_seconds,
+                    actual_seconds, version, tenant_id, stale
+                )
+                SELECT application_id, decision_id, wave, $1::varchar, mode,
+                       risk_level, boundary_matched, boundary_rule,
+                       context_snapshot, reasoning, confidence,
+                       upstream_decisions, NULL::varchar, NULL::text,
+                       NULL::varchar, decided_at, NULL::timestamptz, sla_seconds,
+                       actual_seconds, $2::integer, tenant_id, false
+                FROM decision_outputs WHERE id = $3
+                """,
+                ai_outcome,
+                new_version,
+                current["id"],
+            )
+
+            # Timeline row — state is unchanged (just reopened); the
+            # who/why/notes ride along in waiting_on.
+            meta = json.dumps(
+                {"reverted_by": reviewer, "reason": reason, "notes": notes}
+            )
+            await conn.execute(
+                """
+                INSERT INTO decision_timeline (
+                    application_id, decision_id, wave, from_state,
+                    to_state, trigger, transition_at, waiting_on, tenant_id
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+                """,
+                application_id,
+                decision_id,
+                current["wave"],
+                current["outcome"],
+                current["outcome"],
+                "human_revert",
+                now,
+                meta,
+                current["tenant_id"],
+            )
+
+            # Mark downstream decisions (those that ran on this input)
+            # stale so reviewers know to re-run the pipeline.
+            downstream = _downstream_decisions(decision_id)
+            if downstream:
+                await conn.execute(
+                    """
+                    UPDATE decision_outputs SET stale = true
+                    WHERE application_id = $1
+                      AND decision_id = ANY($2)
+                      AND version = (
+                          SELECT MAX(version) FROM decision_outputs d2
+                          WHERE d2.application_id = decision_outputs.application_id
+                            AND d2.decision_id = decision_outputs.decision_id
+                      )
+                    """,
+                    application_id,
+                    downstream,
+                )
+    return True
+
+
 # ─────────────────────────────────────────────────────────────────────
 # helpers
 # ─────────────────────────────────────────────────────────────────────
@@ -2407,7 +2716,14 @@ def _entity_summary(row: Any) -> Optional[dict[str, Any]]:
         "purchase_price", "combined_monthly_income", "completeness_pct",
         "total_liquid_assets", "qualifying_monthly", "piti_monthly",
     )
-    return {k: d.get(k) for k in keep}
+    summary = {k: d.get(k) for k in keep}
+    # A back/front DTI of exactly 0 means "not computed" in entity_states,
+    # not a borrower with zero debt — surface it as missing ("—") rather
+    # than a misleading 0.0%.
+    for f in ("dti_back", "dti_front"):
+        if summary.get(f) == 0:
+            summary[f] = None
+    return summary
 
 
 def _maybe_json(val: Any) -> Any:

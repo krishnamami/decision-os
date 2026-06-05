@@ -1,0 +1,27 @@
+{# Documents on file. Expects `documents` (list of {category, items[]})
+   and `document_count`. Each item: {type, status, confidence}. #}
+{% if document_count %}
+  <div class="bg-white border border-slate-200 rounded-lg p-5">
+    <div class="flex items-center justify-between mb-3">
+      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Documents on file</div>
+      <div class="text-[11px] text-slate-400">{{ document_count }} document{{ '' if document_count == 1 else 's' }}</div>
+    </div>
+    <div class="space-y-3">
+      {% for grp in documents %}
+        <div>
+          <div class="text-[11px] uppercase tracking-wider text-slate-400 mb-1.5">{{ grp.category }}</div>
+          <div class="flex flex-wrap gap-1.5">
+            {% for d in grp.docs %}
+              {% set ok = d.status in ('indexed', 'verified', 'received', 'complete') %}
+              {% set sc = 'emerald' if ok else 'slate' %}
+              <span class="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-{{ sc }}-200 bg-{{ sc }}-50 text-{{ sc }}-700"
+                    title="{{ d.status }}{% if d.confidence is not none %} · confidence {{ '%.0f' % (d.confidence * 100) }}%{% endif %}">
+                <i class="ti ti-file-text text-[12px]"></i>{{ d.type }}
+              </span>
+            {% endfor %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+{% endif %}

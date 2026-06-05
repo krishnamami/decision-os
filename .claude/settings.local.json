@@ -47,7 +47,24 @@
       "Bash(curl -s -m 8 -o /dev/null -w \"review status: %{http_code}\\\\n\" \"http://127.0.0.1:8000/workbench/pricing_analyst/review/APP-SC04-001\")",
       "Bash(curl -s -m 8 \"http://127.0.0.1:8000/workbench/pricing_analyst\")",
       "Bash(curl -s -m 8 \"http://127.0.0.1:8000/workbench/pricing_analyst?tab=pending\")",
-      "Bash(curl -s -m 8 \"http://127.0.0.1:8000/workbench/pricing_analyst?tab=pending&range=all_time\")"
+      "Bash(curl -s -m 8 \"http://127.0.0.1:8000/workbench/pricing_analyst?tab=pending&range=all_time\")",
+      "Skill(run)",
+      "Bash(netstat -ano)",
+      "Bash(curl -s -m 3 http://127.0.0.1:8000/health)",
+      "Bash(curl -s -m 5 http://127.0.0.1:8000/workbench)",
+      "Bash(curl -s -m 5 \"http://127.0.0.1:8000/workbench\")",
+      "Bash(curl -s -m 5 \"http://127.0.0.1:8000/workbench/pricing_analyst\")",
+      "Bash(curl -s -m 8 -o /dev/null -w 'approve -> %{http_code} \\(redirect\\)\\\\n' -X POST http://127.0.0.1:8000/workbench/credit_underwriter/review/APP-LOAN-NEW-00001/approve --data 'reviewer=Smoke Tester')",
+      "Bash(curl -s -m 8 http://127.0.0.1:8000/workbench/credit_underwriter?tab=reviewed)",
+      "Bash(curl -s -m 8 -o /dev/null -w 'approve -> %{http_code}\\\\n' -X POST http://127.0.0.1:8000/workbench/credit_underwriter/review/APP-LOAN-20260101-00001/approve --data reviewer=QA)",
+      "Bash(curl -s -m 8 -o /dev/null -w 'revert  -> %{http_code}\\\\n' -X POST http://127.0.0.1:8000/workbench/credit_underwriter/review/APP-LOAN-20260101-00001/revert --data 'reviewer=Supervisor&reason=Audit flag raised&notes=')",
+      "Bash(git --no-pager diff --stat)",
+      "Bash(PYTHONIOENCODING=utf-8 python -c ' *)",
+      "Bash(curl -s -m 10 http://127.0.0.1:8000/workbench/fraud_analyst/review/APP-SC02-005)",
+      "Bash(curl -s -m 10 http://127.0.0.1:8000/workbench/compliance_officer/review/APP-SC04-005)",
+      "Bash(ls tests/ui/)",
+      "Bash(ls tests/__init__.py tests/ui/__init__.py)",
+      "Bash(PYTHONIOENCODING=utf-8 python -m pytest tests/ui/test_explanations.py -q)"
     ]
   }
 }

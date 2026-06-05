@@ -4,7 +4,7 @@
 <nav class="text-xs text-slate-500 mb-3">
   <a href="/workbench" class="hover:underline">Home</a>
   <span class="mx-1">›</span>
-  <a href="/workbench/{{ persona.slug }}?tab=completed" class="hover:underline">{{ persona.title }} — Completed</a>
+  <a href="/workbench/{{ persona.slug }}?tab=reviewed" class="hover:underline">{{ persona.title }} — Reviewed</a>
   <span class="mx-1">›</span>
   <span class="text-slate-900 mono">{{ application_id }}</span>
 </nav>
@@ -13,7 +13,7 @@
   <span class="font-semibold">Decision is final.</span>
   {% if decision and decision.human_action %}
     <span class="text-slate-500">
-      {{ decision.human_action }}{% if decision.human_reviewer %} by {{ decision.human_reviewer }}{% endif %}{% if decision.acted_at %} · {{ decision.acted_at | humanize_age }}{% endif %}
+      {{ decision.human_action | action_verb(decision.outcome) }}{% if decision.human_reviewer %} by {{ decision.human_reviewer }}{% endif %}{% if decision.acted_at %} · {{ decision.acted_at | humanize_age }}{% endif %}
     </span>
   {% elif decision and decision.mode == 'auto_execute' %}
     <span class="text-slate-500">Auto-cleared{% if decision.decided_at %} · {{ decision.decided_at | humanize_age }}{% endif %}</span>
@@ -21,7 +21,21 @@
   <a href="/workbench/audit/{{ application_id }}" class="ml-auto text-blue-700 hover:underline text-xs">Full audit trail →</a>
 </div>
 
-<header class="mb-5 flex items-start gap-4">
+{% if decision and decision.stale %}
+  <div class="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4 text-sm text-amber-800 flex items-start gap-2">
+    <span class="text-base leading-none">⚠</span>
+    <div>
+      <span class="font-semibold">This decision may be outdated</span> — an upstream
+      decision{% if revert_info and revert_info.persona_title %} ({{ revert_info.persona_title }}){% endif %}
+      was reverted{% if revert_info and revert_info.date %} {{ revert_info.date | humanize_age }}{% endif %}{% if revert_info and revert_info.reverter %} by {{ revert_info.reverter }}{% endif %}.
+      Re-run the decision pipeline to refresh.
+    </div>
+  </div>
+{% endif %}
+
+{% include "_special_banners.html" %}
+
+<header class="mb-4 flex items-start gap-4">
   <span class="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-{{ persona.color }}-100 text-{{ persona.color }}-700 text-lg">
     <i class="ti {{ persona.icon }}"></i>
   </span>
@@ -43,6 +57,8 @@
 <div class="grid grid-cols-12 gap-5">
   <section class="col-span-7 space-y-4">
 
+    {% include "_why_card.html" %}
+
     {% if entity %}
       <div class="bg-white border border-slate-200 rounded-lg px-5 py-3">
         <div class="grid grid-cols-6 gap-3 text-xs">
@@ -56,45 +72,29 @@
       </div>
     {% endif %}
 
-    <div class="bg-white border border-slate-200 rounded-lg p-5">
-      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Context — {{ persona.title }}</div>
-      <dl class="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-        {% for f in key_field_rows %}
-          <dt class="text-slate-500">{{ f.key }}</dt>
-          <dd class="text-slate-800">
-            {% if f.value is boolean %}
-              {% if f.value %}<span class="text-emerald-700 font-medium">✓ yes</span>{% else %}<span class="text-rose-700 font-medium">✗ no</span>{% endif %}
-            {% elif 'credit_score' in f.key %}
-              {% set cc = f.value | credit_color %}<span class="text-{{ cc }}-700 font-medium">{{ f.value | fmt_value }}</span>
-            {% else %}
-              {{ f.value | fmt_value }}
-            {% endif %}
-          </dd>
-        {% endfor %}
-      </dl>
-    </div>
+    {% include "_signals.html" %}
 
     {% if upstreams %}
       <div class="bg-white border border-slate-200 rounded-lg p-5">
         <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Upstream decisions</div>
-        <table class="min-w-full text-sm">
-          <tbody class="divide-y divide-slate-100">
-            {% for u in upstreams %}
-              {% set oc = u.outcome | outcome_color %}
-              <tr>
-                <td class="py-1.5">
-                  {% if u.persona_slug %}
-                    <a href="/workbench/{{ u.persona_slug }}/completed/{{ application_id }}" class="text-{{ u.persona_color }}-700 hover:underline">{{ u.persona_title }}</a>
-                  {% else %}{{ u.persona_title }}{% endif %}
-                </td>
-                <td class="py-1.5"><span class="text-xs px-2 py-0.5 rounded bg-{{ oc }}-100 text-{{ oc }}-700 font-medium">{{ u.outcome }}</span></td>
-                <td class="py-1.5 text-right mono">{{ '%.2f' % (u.confidence or 0) }}</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+        <div class="grid grid-cols-2 gap-2">
+          {% for u in upstreams %}
+            {% set oc = u.outcome | outcome_color %}
+            <div class="flex items-center justify-between gap-2 border border-slate-100 rounded px-3 py-2">
+              <div class="min-w-0">
+                {% if u.persona_slug %}
+                  <a href="/workbench/{{ u.persona_slug }}/completed/{{ application_id }}" class="text-sm text-{{ u.persona_color }}-700 hover:underline truncate block">{{ u.persona_title }}</a>
+                {% else %}<span class="text-sm text-slate-700 truncate block">{{ u.persona_title }}</span>{% endif %}
+                <span class="text-[10px] text-slate-400 mono">conf {{ '%.2f' % (u.confidence or 0) }}</span>
+              </div>
+              <span class="text-[11px] px-2 py-0.5 rounded bg-{{ oc }}-100 text-{{ oc }}-700 font-medium uppercase shrink-0">{{ u.outcome }}</span>
+            </div>
+          {% endfor %}
+        </div>
       </div>
     {% endif %}
+
+    {% include "_documents.html" %}
 
   </section>
 
@@ -115,8 +115,8 @@
       </div>
       {% if decision.boundary_rule %}
         <div class="text-xs">
-          <div class="text-slate-500">Boundary rule</div>
-          <div class="text-slate-800 mt-0.5">{{ decision.boundary_rule }}</div>
+          <div class="text-slate-500">Matched rule</div>
+          <div class="text-slate-800 mt-0.5 mono text-[11px]">{{ decision.boundary_rule }}</div>
         </div>
       {% endif %}
     </div>
@@ -125,7 +125,7 @@
       <div class="bg-white border border-slate-200 rounded-lg p-5">
         <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Human action</div>
         <dl class="text-xs space-y-1.5">
-          <div class="flex justify-between"><dt class="text-slate-500">Action</dt><dd class="font-semibold text-slate-900">{{ decision.human_action }}</dd></div>
+          <div class="flex justify-between"><dt class="text-slate-500">Action</dt><dd class="font-semibold text-slate-900">{{ decision.human_action | action_verb(decision.outcome) }}</dd></div>
           <div class="flex justify-between"><dt class="text-slate-500">Reviewer</dt><dd class="font-medium text-slate-900">{{ decision.human_reviewer or '—' }}</dd></div>
           <div class="flex justify-between"><dt class="text-slate-500">At</dt><dd>{{ decision.acted_at | humanize_age }}</dd></div>
           {% if decision.human_override_reason %}
@@ -140,21 +140,22 @@
 
     {% if decision.reasoning %}
       <div class="bg-white border border-slate-200 rounded-lg p-5">
-        <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Reasoning</div>
+        <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">AI Reasoning</div>
         <div class="space-y-3 text-xs">
           {% if decision.reasoning.hypothesis %}<div><div class="text-slate-500 font-medium">Hypothesis</div><div class="text-slate-800 mt-0.5">{{ decision.reasoning.hypothesis }}</div></div>{% endif %}
           {% if decision.reasoning.conclusion %}<div><div class="text-slate-500 font-medium">Conclusion</div><div class="text-slate-800 mt-0.5">{{ decision.reasoning.conclusion }}</div></div>{% endif %}
-          {% if decision.reasoning.signals %}
-            <div>
-              <div class="text-slate-500 font-medium mb-1">Signals</div>
-              <ul class="space-y-0.5">
-                {% for s in decision.reasoning.signals %}
-                  <li class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span><span class="mono text-slate-700">{{ s.name }}</span><span class="ml-auto mono text-slate-500">{{ s.value | fmt_value }}</span></li>
-                {% endfor %}
-              </ul>
-            </div>
-          {% endif %}
         </div>
+      </div>
+    {% endif %}
+
+    {% if decision.human_action %}
+      <div id="revert" class="bg-white border border-amber-200 rounded-lg p-5">
+        <div class="text-xs font-semibold uppercase tracking-wider text-amber-700 mb-1">Revert decision</div>
+        <p class="text-xs text-slate-500 mb-3">
+          Re-open this finalized decision ({{ decision.human_action | action_verb(decision.outcome) }}) for another review.
+        </p>
+        {% set revert_action = '/workbench/' ~ persona.slug ~ '/review/' ~ application_id ~ '/revert' %}
+        {% include "_revert_form.html" %}
       </div>
     {% endif %}
   </aside>
