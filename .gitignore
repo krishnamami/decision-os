@@ -34,3 +34,7 @@ Thumbs.db
 .coverage
 htmlcov/
 coverage.xml
+
+# Runtime artifacts
+.health.json
+.uvicorn.log
