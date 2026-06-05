@@ -1284,14 +1284,19 @@ PERSONA_KPIS: dict[str, dict[str, Any]] = {
         "tabs": [("pending", "Pending review"), ("reviewed", "Reviewed"), ("analytics", "Analytics")],
     },
     "pricing_analyst": {
-        "kind": "auto",
+        # mode='recommend' → a human-review persona, so it needs a
+        # Pending review queue (links to /review/ with the Approve /
+        # Override forms). Was mistakenly kind='auto', which hid the
+        # In Queue tab and routed every row to the read-only /completed/
+        # page — so the Approve button was never reachable from the UI.
+        "kind": "human",
         "cards": [
-            {"label": "Total priced",      "query": "total",                     "color": "default"},
+            {"label": "Pending review",    "query": "pending_human",             "color": "orange"},
             {"label": "Normal band",       "query": "count_allow",               "color": "green"},
             {"label": "Exception pricing", "query": "count_recommend",           "color": "amber"},
             {"label": "Usury blocked",     "query": "count_block",               "color": "red"},
         ],
-        "tabs": [("all", "All decisions"), ("by_outcome", "By outcome"), ("analytics", "Analytics")],
+        "tabs": [("pending", "Pending review"), ("reviewed", "Reviewed"), ("analytics", "Analytics")],
     },
     "senior_underwriter": {
         "kind": "human",
@@ -2173,6 +2178,17 @@ async def _render_review(
         for k in ("context_snapshot", "reasoning", "upstream_decisions"):
             decision_dict[k] = _maybe_json(decision_dict.get(k))
 
+    # The review template gates the Approve/Override forms on can_act:
+    # an outcome exists, it hasn't been human-reviewed yet, and the mode
+    # is one a human acts on. auto_execute / already-reviewed rows fall
+    # through to the "Decision is final" banner instead.
+    can_act = (
+        not readonly
+        and decision_dict is not None
+        and decision_dict.get("mode") in ("human_approval", "recommend")
+        and decision_dict.get("human_action") is None
+    )
+
     prev_id: Optional[str] = None
     next_id: Optional[str] = None
     queue_position: Optional[int] = None
@@ -2195,6 +2211,7 @@ async def _render_review(
             "persona": persona,
             "application_id": application_id,
             "decision": decision_dict,
+            "can_act": can_act,
             "entity": _entity_summary(entity),
             "key_field_rows": key_field_rows,
             "raw_context_groups": raw_groups,

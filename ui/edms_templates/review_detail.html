@@ -170,13 +170,7 @@
     <div class="bg-white border border-slate-200 rounded-lg p-5">
       <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Actions</div>
 
-      {% if decision.human_action %}
-        <div class="rounded bg-emerald-50 border border-emerald-200 p-3 text-xs">
-          <div class="font-semibold text-emerald-900">{{ decision.human_action }}</div>
-          {% if decision.human_reviewer %}<div class="text-emerald-700 mt-1">by {{ decision.human_reviewer }}</div>{% endif %}
-          {% if decision.human_override_reason %}<div class="text-emerald-700 mt-2">{{ decision.human_override_reason }}</div>{% endif %}
-        </div>
-      {% else %}
+      {% if can_act %}
         <form method="post" action="/workbench/{{ persona.slug }}/review/{{ application_id }}/approve" class="space-y-3">
           <div>
             <label class="text-xs text-slate-600 block mb-1">Reviewer name</label>
@@ -215,6 +209,17 @@
             Submit Override
           </button>
         </form>
+      {% elif decision.human_action %}
+        <div class="rounded bg-emerald-50 border border-emerald-200 p-3 text-xs">
+          <div class="font-semibold text-emerald-900">{{ decision.human_action }}</div>
+          {% if decision.human_reviewer %}<div class="text-emerald-700 mt-1">by {{ decision.human_reviewer }}</div>{% endif %}
+          {% if decision.human_override_reason %}<div class="text-emerald-700 mt-2">{{ decision.human_override_reason }}</div>{% endif %}
+        </div>
+      {% else %}
+        <div class="rounded bg-slate-50 border border-slate-200 p-3 text-xs text-slate-600">
+          <span class="font-semibold text-slate-800">Decision is final.</span>
+          No human action is required for this decision.
+        </div>
       {% endif %}
     </div>
 

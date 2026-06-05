@@ -93,6 +93,19 @@ class DecisionStore:
         now = datetime.now(timezone.utc)
         decision_uuid = uuid4()
 
+        # Auto-execute decisions are finalized by the system the moment
+        # they're written — stamp human_action so downstream personas
+        # (which gate on human_action IS NOT NULL) can proceed. Human
+        # modes leave these NULL until a reviewer acts in the workbench.
+        if mode == "auto_execute":
+            human_action = "auto_approved"
+            human_reviewer = "system"
+            acted_at = now
+        else:
+            human_action = None
+            human_reviewer = None
+            acted_at = None
+
         async with pool.acquire() as conn:
             async with conn.transaction():
                 current_version = await conn.fetchval(
@@ -116,10 +129,11 @@ class DecisionStore:
                         risk_level, boundary_matched, boundary_rule,
                         context_snapshot, reasoning, confidence,
                         upstream_decisions, sla_seconds, actual_seconds,
-                        version, tenant_id, decided_at, created_at
+                        version, tenant_id, decided_at, created_at,
+                        human_action, human_reviewer, acted_at
                     )
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-                            $13, $14, $15, $16, $17, $18, $19)
+                            $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
                     """,
                     decision_uuid,
                     application_id,
@@ -140,6 +154,9 @@ class DecisionStore:
                     tenant_id,
                     now,
                     now,
+                    human_action,
+                    human_reviewer,
+                    acted_at,
                 )
 
                 prev = await conn.fetchrow(

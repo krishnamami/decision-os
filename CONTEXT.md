@@ -456,6 +456,84 @@ Connector layering — push vs pull (STEP 4 design)
 
 ## Session history
 
+### Session 13 — June 4 2026
+
+**Theme:** Bring up the EDMS workbenches locally and fix the broken
+human-review path on the `/workbench` (EDMS) surface — auto-execute
+finalization, the Approve/Override gating, and the pricing_analyst
+landing tab.
+**Commits:** none yet — all changes are uncommitted working-tree edits.
+**Tests:** unit suite not re-run this session; fixes verified live via
+`curl` against the running server (EDMS PostgreSQL mode) + EDMS DB
+queries. `ast.parse` / Jinja compile checks on every edited file.
+**Server:** `uvicorn api.main:get_app --factory --port 8000` run in the
+background (EDMS PG mode — `DATABASE_URL` in `.env` points at the AWS
+RDS `edms` instance, and it is reachable). NB: `--reload` proved
+unreliable on this OneDrive path (StatReload missed later edits, worker
+kept stale code) — running WITHOUT `--reload`; a manual restart is
+required after each code change.
+
+**What landed (working tree, uncommitted):**
+
+`core/decision_store.py` — `write_decision()` stamps auto-execute rows
+  - The `INSERT INTO decision_outputs` gained three columns —
+    `human_action, human_reviewer, acted_at` — taking it from 19 to 22
+    bind params (`$20–$22` appended at the end).
+  - When `mode == 'auto_execute'`: `human_action='auto_approved'`,
+    `human_reviewer='system'`, `acted_at=now`. Otherwise all three
+    `None` (a human finalizes via the workbench later).
+  - Why: downstream dependent personas gate on `human_action IS NOT
+    NULL` to confirm an upstream decision is finalized. Auto-execute
+    rows previously wrote `human_action = NULL` and silently blocked the
+    DAG. Transaction + version logic left intact.
+
+`ui/edms_templates/review_detail.html` — Approve/Override gated on `can_act`
+  - Actions block restructured into three mutually-exclusive states:
+    `{% if can_act %}` → Approve + Override forms · `{% elif
+    decision.human_action %}` → the existing emerald "reviewed" banner ·
+    `{% else %}` → a neutral "Decision is final. No human action is
+    required." banner.
+  - Old logic gated only on `{% if decision.human_action %}`, so the
+    forms rendered for ANY null `human_action` regardless of mode
+    (e.g. auto_execute rows wrongly showed action forms).
+  - NB: the literal "Decision is final." string referenced in the task
+    actually lived in `completed_detail.html`, not here.
+
+`ui/edms_routes.py` — `_render_review()` now computes + passes `can_act`
+  - Root cause of "no Approve button": the EDMS `/workbench` review
+    route never put `can_act` in the template context, so the new
+    `{% if can_act %}` gate was always falsy and the button vanished.
+    (The `can_act` at `ui/views.py:~3842` belongs to the *legacy* `/ui`
+    path, not the EDMS `/workbench` path.)
+  - Added `can_act = not readonly and decision_dict is not None and
+    mode in ('human_approval','recommend') and human_action is None`,
+    passed into both the review and completed template contexts.
+
+`ui/edms_routes.py` — `PERSONA_KPIS["pricing_analyst"]` fixed to human kind
+  - The actual "why I don't see the Approve button on Pricing Analyst"
+    bug. pricing_analyst's `mode` is `recommend` (a human-review
+    persona) but its KPI config was `kind="auto"` with tabs
+    `[all, by_outcome, analytics]` — no Pending review tab. So the
+    default landing (`tab=queue` → normalized to `all` for auto kind)
+    listed rows as read-only `/completed/` links; the In Queue tab that
+    links to `/review/` (where the Approve form lives) was never shown.
+    Only manually typing `?tab=pending` surfaced it.
+  - Changed to `kind="human"` with tabs `[pending, reviewed,
+    analytics]`, keeping pricing-relevant KPI cards (swapped "Total
+    priced" → "Pending review"). Default page now opens on In Queue and
+    links to `/review/`.
+
+**Known follow-ups (NOT done — left intentionally):**
+  - `credit_underwriter` has the same `mode='recommend'` vs
+    `kind='auto'` mismatch in `PERSONA_KPIS` — its Approve button is
+    likewise unreachable from the UI. User scoped this session to
+    pricing only ("for now fix pricing"). Sweep the remaining personas
+    for mode-vs-kind mismatches when picking this up.
+  - None of this is committed; no migration run. If `decision_outputs`
+    lacks `human_action / human_reviewer / acted_at` columns the
+    `write_decision` INSERT will fail — schema not verified this
+    session (PRD references the columns on `decision_outputs`).
+
 ### Session 12 — May 18 2026
 
 **Theme:** Move every UI read off the in-memory Platform onto live EDMS
@@ -2805,4 +2883,4 @@ How to run smoke tests:
 
 ---
 
-*Decision OS · CONTEXT.md · Updated May 18 2026 (Session 12 — UI rewired to live EDMS PG; persona workbench + cron runner shipped)*
+*Decision OS · CONTEXT.md · Updated June 4 2026 (Session 13 — EDMS workbench human-review path fixed: auto-execute finalization, can_act Approve/Override gating, pricing_analyst landing tab)*
