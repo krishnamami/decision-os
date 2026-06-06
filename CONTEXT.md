@@ -456,6 +456,104 @@ Connector layering — push vs pull (STEP 4 design)
 
 ## Session history
 
+### Session 14 — June 5–6 2026
+
+**Theme:** Make the `/workbench` review surface trustworthy — finish the
+human-review path (revert + stale), give every persona a story-driven
+review screen with ONE data-driven explanation generator, then fix
+routing personas reading applicant vocabulary on declined/blocked files.
+**Commits (pushed to `main`):**
+  - `82bbd56` — Fix human-review workflow for recommend-mode personas
+    (committed the Session-13 working-tree edits: auto-execute stamping,
+    `can_act` gating, pricing_analyst → human kind).
+  - `e633d9a` — Story-driven persona review UI + revert/stale workflow.
+  - `fa75b12` — Ignore runtime artifacts (`.health.json`, `.uvicorn.log`).
+  - `5e46512` — Persona kind + vocabulary so routers stop speaking
+    applicant language.
+**Tests:** new `tests/ui/test_explanations.py` (15) + `tests/ui/test_vocab.py`
+(17); full `tests/ui/` suite **77 passing**. Live-verified via `curl` against
+the running server (EDMS PG mode) + EDMS DB queries.
+**Server:** `uvicorn api.main:get_app --factory --port 8000` in the
+background, still WITHOUT `--reload` (StatReload unreliable on the
+OneDrive path) — manual restart after each Python change; Jinja templates
+hot-reload.
+**Remote:** origin moved to `https://github.com/krishnamami/Decision-OS.git`
+(capitalised) — `git remote set-url` applied so pushes no longer rely on
+the redirect.
+
+**What landed:**
+
+Revert + stale + request-info (`ui/edms_routes.py`, `_revert_form.html`)
+  - `POST /workbench/{persona}/review/{app}/revert` reopens a finalized
+    decision as a fresh un-acted version (AI outcome restored, human
+    fields cleared → back to pending), appends a `human_revert`
+    `decision_timeline` row (who/why/notes in `waiting_on` jsonb), and
+    flags every downstream decision `stale=true` via the forward
+    `UPSTREAM` walk. Idempotent `_ensure_stale_column()` migration runs
+    once on pool create (`ADD COLUMN IF NOT EXISTS stale`).
+  - `POST …/request-info` logs a `human_request_info` timeline row and
+    keeps the loan pending. Reviewed tab gained PROPOSED-vs-FINAL columns
+    (proposed = first human-action `from_state`) + a per-row revert
+    popover; amber "stale" badges; an outdated-decision banner.
+  - Two asyncpg bugs fixed in testing: bare `$n` params in the
+    `INSERT … SELECT` need casts + sequential numbering from `$1`.
+
+Story-driven review UI (`ui/explanations.py` + 5 template partials)
+  - Review/completed pages lead with a "Why this needs your review"
+    banner, a green/red/amber signal checklist, documents-on-file (from
+    `document_index`), an upstream grid, and clear actions
+    (Approve / Override / Request info / Revert). Partials: `_why_card`,
+    `_signals`, `_documents`, `_special_banners` (fraud/compliance/closing
+    hard-stop banners), `_revert_form`.
+
+ONE explanation generator (`ui/explanations.py`)
+  - Replaced per-persona narrative code (`EXPLANATION_TEMPLATES` +
+    `DERIVERS`, deleted) with a single `explain(outcome, matched_rule,
+    signals, labels)`. It names ONLY the driving signals — the matched
+    rule's gated conditions that fail (adverse) or satisfy (allow) —
+    never an ungated or passing signal; dedupes; renders empty-sample
+    inputs as "no data" (per-signal `data_gate`), never 0. Persona = data
+    (`SIGNAL_SPECS` + `DECISION_LABELS`). `action_label()` gives
+    outcome-correct verbs ("Confirmed block", not "approved"). The matched
+    `boundary_rule` is an evidence string (`score=660, band='near_prime',
+    … → recommend`) — that's what makes driver-from-rule detection work.
+  - `_entity_summary` treats a DTI of exactly 0 as missing ("—"); the DB
+    stores `entity_states.dti_back = 0.0` (not computed) so it had read as
+    a misleading 0.0% on every persona.
+
+Persona kind + vocabulary (`ui/explanations.py`, `5e46512`)
+  - `PERSONA_KIND` (`approval_routing` → routing, rest decision) +
+    `VOCAB[kind][outcome]{badge,tone,banner_verb,action_label}`. Every
+    user-facing verb/badge/button comes from vocab; removed hardcoded
+    approve strings + the green fallback (unknown → neutral). Routing
+    vocab is Auto-execute / Hold for ack / Escalate / Halted with NEUTRAL
+    tone (slate, never green). `explain()` branches by kind: routing
+    banner names what is routed — "Routing a DECLINE: emailing the decline
+    / adverse-action notice." — surfacing `underwriting_outcome` +
+    `routing_target`; never approve/allow.
+  - `canonical_underwriting_state()` — one mapping layer to {approve,
+    conditional_approve, decline, block}; Senior UW raw `block` renders
+    "Decline" (matching the router), no silent rename. Parses the
+    stringified `underwriting_decision` (`"{'outcome': 'decline'}"`).
+  - `halts_pipeline()` / `downstream_should_run()` — one tested policy
+    (user-confirmed): fraud/compliance block and an underwriting hard-block
+    halt downstream; an underwriting **decline** does NOT (routing must run
+    to send the adverse-action notice). Surfaced as a rose
+    "Ran under an upstream hard block" banner. Policy + UI only — engine
+    (`core/cron/runner.py`) and data untouched (the data actually shows
+    downstream rows DO exist under fraud blocks; not regenerated).
+  - `badge_for()` Jinja global renders kind-aware pills on every list
+    (pending / reviewed / all / by_outcome / analytics / upstream), so a
+    routing persona never shows "allow". Post-Closer copy → "Routes
+    finalized decisions — approvals and declines".
+
+**Known follow-ups (NOT done):**
+  - DTI is its own decision (`dti_calculation`) with no workbench page;
+    `entity_states.dti_back = 0.0` is upstream seed/ETL data, not fixed at
+    source (only masked in the UI summary).
+  - `halts_pipeline` is enforced at the UI/policy layer only — the
+    decision engine still generates downstream rows under a hard block.
+
 ### Session 13 — June 4 2026
 
 **Theme:** Bring up the EDMS workbenches locally and fix the broken
