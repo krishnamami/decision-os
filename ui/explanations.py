@@ -428,18 +428,185 @@ def build_signals(
 
 
 # ─────────────────────────────────────────────────────────────────────
-# explain() — the one banner generator
+# Persona KIND + VOCABULARY
+#
+# "decision" personas judge the APPLICANT (allow / escalate / decline /
+# block). "routing" personas judge THEIR OWN ACTION (execute / hold /
+# escalate) — they must NEVER speak applicant vocabulary ("approve",
+# "allow", "cleared to approve"). Every user-facing verb, badge, tone
+# and button label is pulled from this map; there is no approve-flavored
+# global fallback in the generator.
 # ─────────────────────────────────────────────────────────────────────
 
 
-_ADVERSE = ("block", "escalate", "recommend")
-_LEAD = {
-    "block": "Blocked",
-    "escalate": "Escalated for senior review",
-    "recommend": "Flagged for your decision",
-    "allow": "Cleared to approve",
+PERSONA_KIND: dict[str, str] = {
+    "approval_routing": "routing",
+    # everything else is a "decision" persona (default)
 }
+
+
+def persona_kind(decision_id: Optional[str]) -> str:
+    return PERSONA_KIND.get(decision_id or "", "decision")
+
+
+# tone → tailwind colour. 'neutral' (slate) is deliberately NOT green:
+# a routing auto-execute must never read as a loan approval.
+TONE_COLOR: dict[str, str] = {
+    "good": "emerald", "warn": "amber", "bad": "rose",
+    "neutral": "slate", "info": "blue",
+}
+
+
+VOCAB: dict[str, dict[str, dict[str, str]]] = {
+    "decision": {
+        "allow":               {"badge": "Allow",       "tone": "good",    "banner_verb": "Cleared to approve",          "action_label": "Approve"},
+        "approve":             {"badge": "Approve",     "tone": "good",    "banner_verb": "Cleared to approve",          "action_label": "Approve"},
+        "conditional_approve": {"badge": "Conditional", "tone": "warn",    "banner_verb": "Conditional approval",        "action_label": "Confirm conditional approval"},
+        "recommend":           {"badge": "Recommend",   "tone": "warn",    "banner_verb": "Flagged for your decision",   "action_label": "Confirm recommendation"},
+        "escalate":            {"badge": "Escalate",    "tone": "warn",    "banner_verb": "Escalated for senior review", "action_label": "Confirm escalation"},
+        "decline":             {"badge": "Decline",     "tone": "bad",     "banner_verb": "Declined",                    "action_label": "Confirm decline"},
+        "block":               {"badge": "Block",       "tone": "bad",     "banner_verb": "Blocked",                     "action_label": "Confirm block"},
+    },
+    "routing": {
+        "allow":     {"badge": "Auto-execute", "tone": "neutral", "banner_verb": "cleared to auto-execute",    "action_label": "Confirm routing"},
+        "execute":   {"badge": "Auto-execute", "tone": "neutral", "banner_verb": "cleared to auto-execute",    "action_label": "Confirm routing"},
+        "recommend": {"badge": "Hold for ack", "tone": "neutral", "banner_verb": "held for acknowledgement",   "action_label": "Hold routing"},
+        "hold":      {"badge": "Hold for ack", "tone": "neutral", "banner_verb": "held for acknowledgement",   "action_label": "Hold routing"},
+        "escalate":  {"badge": "Escalate",     "tone": "warn",    "banner_verb": "escalated for review",       "action_label": "Escalate"},
+        "block":     {"badge": "Halted",       "tone": "bad",     "banner_verb": "routing halted",             "action_label": "Hold routing"},
+    },
+}
+
+
+def resolve_vocab(decision_id: Optional[str], outcome: Optional[str]) -> dict:
+    """The vocabulary entry for a persona/outcome, enriched with kind +
+    colour. Unknown outcomes get a NEUTRAL, non-approve entry — never a
+    green/approve fallback."""
+    kind = persona_kind(decision_id)
+    entry = VOCAB[kind].get(str(outcome or "").lower())
+    if entry is None:
+        entry = {
+            "badge": _title(outcome) if outcome else "Pending",
+            "tone": "neutral",
+            "banner_verb": "reviewed" if kind == "routing" else "Reviewed",
+            "action_label": "Confirm",
+        }
+    return {**entry, "kind": kind, "color": TONE_COLOR.get(entry["tone"], "slate")}
+
+
+def vocab_badge(decision_id: Optional[str], outcome: Optional[str]) -> dict:
+    """Just the badge for list rows / pills: {text, color, tone}."""
+    v = resolve_vocab(decision_id, outcome)
+    return {"text": v["badge"], "color": v["color"], "tone": v["tone"]}
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Canonical underwriting state — ONE mapping layer.
+#
+# The engine stores a coarse outcome (block / recommend / …) while the
+# business state lives in underwriting_outcome (decline / conditional_
+# approve / approve). They describe the SAME event; everything renders
+# from this canonical value so Senior UW and the router never disagree.
+# A propagated hard block stays 'block' (halts); an underwriting adverse
+# decision is 'decline' (routable).
+# ─────────────────────────────────────────────────────────────────────
+
+
+UNDERWRITING_STATES = ("approve", "conditional_approve", "decline", "block")
+_STATE_WORD = {
+    "approve": "APPROVAL",
+    "conditional_approve": "CONDITIONAL APPROVAL",
+    "decline": "DECLINE",
+    "block": "BLOCK",
+}
+
+
+def _norm_uw(s: Any) -> Optional[str]:
+    s = str(s or "").lower()
+    if s in UNDERWRITING_STATES:
+        return s
+    if s in ("approved",):
+        return "approve"
+    if s in ("conditional", "conditional_approval", "counter_offer"):
+        return "conditional_approve"
+    if s in ("declined", "deny", "denied", "decline_notice"):
+        return "decline"
+    return None
+
+
+def _parse_embedded_outcome(v: Any) -> Optional[str]:
+    """Pull an outcome out of an embedded decision value, which may be a
+    dict or a stringified dict like \"{'outcome': 'decline'}\"."""
+    if isinstance(v, dict):
+        return v.get("outcome")
+    if isinstance(v, str):
+        m = re.search(r"outcome['\"]?\s*[:=]\s*['\"]?([A-Za-z_]+)", v)
+        if m:
+            return m.group(1)
+    return None
+
+
+def canonical_underwriting_state(outcome: Optional[str], ctx: Optional[dict]) -> str:
+    """Map a (raw outcome, context) pair to one of UNDERWRITING_STATES."""
+    ctx = ctx or {}
+    for key in ("underwriting_outcome", "underwriting_decision"):
+        norm = _norm_uw(_parse_embedded_outcome(ctx.get(key)) if key == "underwriting_decision"
+                        else ctx.get(key))
+        if norm:
+            return norm
+    rt = _norm_uw(ctx.get("routing_target"))
+    if rt:
+        return rt
+    if _as_bool(ctx.get("any_upstream_hard_block")):
+        return "block"
+    o = str(outcome or "").lower()
+    return {"allow": "approve", "recommend": "conditional_approve",
+            "escalate": "conditional_approve", "block": "decline"}.get(o, "decline")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Pipeline-halt policy — ONE place. A hard block (fraud / compliance, or
+# an underwriting decision that canonicalises to 'block') halts ALL
+# downstream personas, including routing. An underwriting DECLINE does
+# NOT halt: routing must run to send the adverse-action / decline notice.
+# ─────────────────────────────────────────────────────────────────────
+
+
+HARD_BLOCK_DECISIONS = ("fraud_screening", "compliance_check")
+
+
+def halts_pipeline(decision_id: str, outcome: Optional[str], ctx: Optional[dict] = None) -> bool:
+    o = str(outcome or "").lower()
+    if decision_id in HARD_BLOCK_DECISIONS and o == "block":
+        return True
+    if decision_id == "underwriting_decision":
+        return canonical_underwriting_state(outcome, ctx) == "block"
+    return False
+
+
+def downstream_should_run(upstream: list[tuple]) -> bool:
+    """Given upstream (decision_id, outcome, ctx) triples, should a
+    downstream persona run? No, if any upstream hard-blocks."""
+    return not any(halts_pipeline(d, o, c) for (d, o, c) in upstream)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# explain() — the one banner generator (branches by persona kind)
+# ─────────────────────────────────────────────────────────────────────
+
+
+_SATISFIED = ("allow", "approve", "execute")
 _STATE_RANK = {"bad": 0, "warn": 1, "missing": 2}
+
+ROUTING_ACTIONS = {
+    "decline_notice": "emailing the decline / adverse-action notice",
+    "adverse_action": "emailing the adverse-action notice",
+    "counter_offer": "sending a counter-offer",
+    "approval": "sending the approval package",
+    "approval_package": "sending the approval package",
+    "clear_to_close": "routing to clear-to-close",
+    "fund": "routing to funding",
+}
 
 
 def _natural_join(items: list[str]) -> str:
@@ -453,10 +620,10 @@ def _natural_join(items: list[str]) -> str:
 
 
 def _drivers(outcome: str, matched_rule: Optional[str], signals: list[dict]) -> list[dict]:
-    """The signals that actually drove the outcome: gated conditions the
-    application fails (adverse) or satisfies (allow). When the rule text
-    is known, an ungated signal can never be a driver."""
-    adverse = outcome in _ADVERSE
+    """The signals that drove the outcome: gated conditions the subject
+    fails (adverse) or satisfies (allow/approve/execute). When the rule
+    text is known, an ungated signal is never a driver."""
+    adverse = outcome not in _SATISFIED
     out = []
     for s in signals:
         if not s.get("present"):
@@ -466,7 +633,7 @@ def _drivers(outcome: str, matched_rule: Optional[str], signals: list[dict]) -> 
         st = s.get("state")
         if adverse and st in ("bad", "warn", "missing"):
             out.append(s)
-        elif outcome == "allow" and st == "good":
+        elif not adverse and st == "good":
             out.append(s)
     if adverse:
         out.sort(key=lambda s: _STATE_RANK.get(s.get("state"), 9))
@@ -477,7 +644,7 @@ def _phrase(signal: dict, outcome: str) -> str:
     if signal.get("state") == "missing":
         return f"{signal['label'].lower()}: no data"
     if signal.get("kind") == "bool":
-        if outcome == "allow":
+        if outcome in _SATISFIED:
             return signal.get("ok") or f"{signal['label'].lower()} confirmed"
         return signal.get("fail") or signal["label"].lower()
     value = signal["display"]
@@ -501,32 +668,56 @@ def _cap(text: str) -> str:
     return text[:1].upper() + text[1:] if text else text
 
 
+def _explain_routing(outcome: str, matched_rule, signals, labels) -> str:
+    """Router banner: names WHAT is being routed (the upstream decision)
+    and the action — never applicant approve/allow vocabulary."""
+    routing = labels.get("routing") or {}
+    vocab = labels.get("vocab") or {}
+    state = routing.get("underwriting_state") or "decision"
+    state_word = _STATE_WORD.get(state, state.upper())
+    action = routing.get("routing_action") or "executing the routing step"
+    verb = vocab.get("banner_verb", "executed")
+
+    drivers = _drivers(outcome, matched_rule, signals)
+    phrases = _dedup([_phrase(s, outcome) for s in drivers])
+    base = f"Routing a {state_word}: {action}."
+    if outcome in _SATISFIED or outcome in ("allow", "recommend"):
+        cond = _natural_join(phrases)
+        if cond:
+            return _cap(f"{base} {_cap(cond)} — so this routing is {verb}.")
+        return _cap(f"{base} This routing is {verb}.")
+    cond = _natural_join(phrases)
+    tail = f" — {cond}" if cond else ""
+    return _cap(f"{base} Routing {verb}{tail}.")
+
+
 def explain(
     outcome: Optional[str],
     matched_rule: Optional[str],
     signals: list[dict],
     labels: Optional[dict] = None,
 ) -> str:
-    """The plain-English "Why this needs your review" banner. Names only
-    the driving signals, deduplicated, with no template tokens and 'no
-    data' for missing inputs. Identical for every persona."""
+    """The "Why this needs your review" banner. Names only the driving
+    signals, deduplicated, with no template tokens and 'no data' for
+    missing inputs. ONE generator; the verb comes from the persona's
+    vocab, and routing personas get an action-framed sentence."""
     outcome = (outcome or "").lower()
     labels = labels or {}
+    if labels.get("kind") == "routing":
+        return _explain_routing(outcome, matched_rule, signals, labels)
+
+    vocab = labels.get("vocab") or resolve_vocab(None, outcome)
+    lead = vocab.get("banner_verb") or "Needs your review"
     subject = labels.get("subject")
     drivers = _drivers(outcome, matched_rule, signals)
     phrases = _dedup([_phrase(s, outcome) for s in drivers])
-    lead = _LEAD.get(outcome, "Needs your review")
 
-    if outcome == "allow":
+    if outcome in _SATISFIED:
         if phrases:
-            body = f"{lead}: {_natural_join(phrases)} — all within the rule's thresholds."
-        else:
-            body = f"{lead}: all gated checks pass."
-        return _cap(body)
+            return _cap(f"{lead}: {_natural_join(phrases)} — all within the rule's thresholds.")
+        return _cap(f"{lead}: all gated checks pass.")
 
     if not phrases:
-        # Gated drivers couldn't be identified — state the outcome plainly
-        # rather than inventing a reason.
         noun = f" {subject}" if subject else ""
         return _cap(f"{lead} — the matched{noun} rule's thresholds were not met.")
 
@@ -538,26 +729,21 @@ def explain(
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Outcome / action vocabulary
+# Action vocabulary (recorded human actions)
 # ─────────────────────────────────────────────────────────────────────
 
 
-_OUTCOME_META = {
-    "allow": ("emerald", "Approve recommended"),
-    "recommend": ("amber", "Recommendation — needs a decision"),
-    "escalate": ("orange", "Escalated — senior review"),
-    "block": ("rose", "Hard block"),
-}
-
-
-def summarize_outcome(outcome: Optional[str]) -> dict:
-    color, label = _OUTCOME_META.get(str(outcome or "").lower(), ("slate", "Pending"))
-    return {"color": color, "label": label}
+def summarize_outcome(outcome: Optional[str], decision_id: Optional[str] = None) -> dict:
+    """Pill colour + short label, kind-aware. Kept for callers that want
+    a one-shot badge without resolving full vocab."""
+    v = resolve_vocab(decision_id, outcome)
+    return {"color": v["color"], "label": v["badge"], "tone": v["tone"]}
 
 
 def action_label(human_action: Optional[str], outcome: Optional[str] = None) -> Optional[str]:
     """Outcome-correct verb for a recorded human action. A confirmed
-    BLOCK reads 'Confirmed block', never 'approved'."""
+    BLOCK reads 'Confirmed block', a confirmed routing reads 'Routing
+    confirmed' — never 'approved'."""
     a = str(human_action or "").lower()
     o = str(outcome or "").lower()
     if not a:
@@ -571,8 +757,13 @@ def action_label(human_action: Optional[str], outcome: Optional[str] = None) -> 
     if a == "approved":
         return {
             "block": "Confirmed block",
+            "decline": "Confirmed decline",
             "escalate": "Confirmed escalation",
             "recommend": "Confirmed recommendation",
+            "conditional_approve": "Confirmed conditional approval",
+            "execute": "Routing confirmed",
+            "hold": "Routing held",
             "allow": "Approved (allow)",
-        }.get(o, "Approved")
+            "approve": "Approved",
+        }.get(o, "Confirmed")
     return a.replace("_", " ").capitalize()

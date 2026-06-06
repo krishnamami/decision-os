@@ -35,10 +35,14 @@ from fastapi.templating import Jinja2Templates
 
 from ui.explanations import (
     DECISION_LABELS,
+    ROUTING_ACTIONS,
     action_label,
     build_signals,
+    canonical_underwriting_state,
     explain,
-    summarize_outcome,
+    halts_pipeline,
+    resolve_vocab,
+    vocab_badge,
 )
 
 
@@ -230,7 +234,7 @@ PERSONA_CONFIG: dict[str, dict[str, Any]] = {
         "decision_id": "approval_routing",
         "title": "Post-Closer",
         "view": "vw_approval_routing_context",
-        "description": "Routes approved loans — notification, delivery, investor assignment",
+        "description": "Routes finalized decisions — approvals and declines (notice delivery, investor assignment)",
         "key_fields": ["applicant_id", "status", "completeness_pct"],
         "summary_fields": ["status"],
         "mode": "auto_execute",
@@ -536,6 +540,9 @@ templates.env.filters["fmt_pct"] = _fmt_pct
 templates.env.filters["fmt_field"] = _fmt_field
 templates.env.filters["fmt_seconds"] = _fmt_seconds
 templates.env.filters["action_verb"] = action_label
+# Persona-kind-aware badge for list rows / pills — routing personas show
+# "Auto-execute" (neutral), never "ALLOW" (green).
+templates.env.globals["badge_for"] = vocab_badge
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -2255,13 +2262,42 @@ async def _render_review(
     outcome = decision_dict.get("outcome") if decision_dict else None
     boundary_rule = decision_dict.get("boundary_rule") if decision_dict else None
     signals = build_signals(decision_id, merged_ctx, boundary_rule)
+
+    # Render from the CANONICAL underwriting state, not the raw engine
+    # outcome, so Senior UW and the router never disagree (block↔decline).
+    if decision_id == "underwriting_decision":
+        effective_outcome = canonical_underwriting_state(outcome, merged_ctx)
+    else:
+        effective_outcome = outcome
+
+    vocab = resolve_vocab(decision_id, effective_outcome)
+    labels = {**DECISION_LABELS.get(decision_id, {}), "kind": vocab["kind"], "vocab": vocab}
+    if vocab["kind"] == "routing":
+        rt = str(merged_ctx.get("routing_target") or "")
+        labels["routing"] = {
+            "underwriting_state": canonical_underwriting_state(outcome, merged_ctx),
+            "routing_action": ROUTING_ACTIONS.get(rt, f"executing the {rt or 'routing'} step"),
+        }
     explanation = (
-        explain(outcome, boundary_rule, signals, DECISION_LABELS.get(decision_id))
+        explain(effective_outcome, boundary_rule, signals, labels)
         if decision_dict is not None
         else None
     )
     ungated_signals = [s for s in signals if s["ungated"]]
-    outcome_summary = summarize_outcome(outcome)
+    outcome_badge = vocab_badge(decision_id, effective_outcome)
+    action_label_text = vocab["action_label"]
+
+    # Downstream-of-hard-block flag: a fraud/compliance hard block should
+    # have suspended this persona. Surface it so a reviewer isn't misled.
+    halted_by_upstream = next(
+        (
+            {"persona": u.get("persona_title") or u.get("decision_id"),
+             "decision_id": u.get("decision_id")}
+            for u in upstream_rows
+            if halts_pipeline(u.get("decision_id"), u.get("outcome"), None)
+        ),
+        None,
+    )
 
     # Documents on file — grouped by category, deduped by type.
     docs_by_cat: dict[str, dict[str, dict[str, Any]]] = {}
@@ -2305,7 +2341,9 @@ async def _render_review(
             "explanation": explanation,
             "signals": signals,
             "ungated_signals": ungated_signals,
-            "outcome_summary": outcome_summary,
+            "outcome_badge": outcome_badge,
+            "action_label_text": action_label_text,
+            "halted_by_upstream": halted_by_upstream,
             "documents": documents,
             "document_count": document_count,
             "entity": _entity_summary(entity),

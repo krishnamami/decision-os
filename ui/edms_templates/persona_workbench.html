@@ -85,7 +85,7 @@
         </thead>
         <tbody class="divide-y divide-slate-100">
           {% for row in queue_rows %}
-            {% set color = row.outcome | outcome_color %}
+            {% set b = badge_for(persona.decision_id, row.outcome) %}
             <tr class="hover:bg-slate-50 cursor-pointer"
                 onclick="window.location='/workbench/{{ persona.slug }}/review/{{ row.application_id }}'">
               <td class="px-4 py-2 mono text-xs">{{ row.application_id }}</td>
@@ -98,7 +98,7 @@
               <td class="px-4 py-2">{{ row.loan_amount | fmt_money }}</td>
               <td class="px-4 py-2">
                 {% if row.outcome %}
-                  <span class="text-xs px-2 py-0.5 rounded bg-{{ color }}-100 text-{{ color }}-700 font-medium">{{ row.outcome }}</span>
+                  <span class="text-xs px-2 py-0.5 rounded bg-{{ b.color }}-100 text-{{ b.color }}-700 font-medium">{{ b.text }}</span>
                 {% else %}
                   <span class="text-xs text-slate-400">not decided</span>
                 {% endif %}
@@ -140,9 +140,8 @@
         </thead>
         <tbody class="divide-y divide-slate-100">
           {% for row in completed_rows %}
-            {% set proposed = row.proposed_outcome or row.outcome %}
-            {% set pc = proposed | outcome_color %}
-            {% set fc = row.outcome | outcome_color %}
+            {% set pb = badge_for(persona.decision_id, row.proposed_outcome or row.outcome) %}
+            {% set fb = badge_for(persona.decision_id, row.outcome) %}
             <tr class="hover:bg-slate-50 cursor-pointer"
                 onclick="window.location='/workbench/{{ persona.slug }}/completed/{{ row.application_id }}'">
               <td class="px-4 py-2 mono text-xs">
@@ -157,9 +156,9 @@
               <td class="px-4 py-2">{% set cc = row.mid_credit_score | credit_color %}<span class="text-{{ cc }}-700 font-medium">{{ row.mid_credit_score | fmt_value }}</span></td>
               <td class="px-4 py-2">{{ row.ltv | fmt_pct }}</td>
               <td class="px-4 py-2">{{ row.dti_back | fmt_pct }}</td>
-              <td class="px-4 py-2"><span class="text-xs px-2 py-0.5 rounded bg-{{ pc }}-100 text-{{ pc }}-700 font-medium">{{ proposed }}</span></td>
+              <td class="px-4 py-2"><span class="text-xs px-2 py-0.5 rounded bg-{{ pb.color }}-100 text-{{ pb.color }}-700 font-medium">{{ pb.text }}</span></td>
               <td class="px-4 py-2">
-                <span class="text-xs px-2 py-0.5 rounded bg-{{ fc }}-100 text-{{ fc }}-700 font-medium">{{ row.outcome }}</span>
+                <span class="text-xs px-2 py-0.5 rounded bg-{{ fb.color }}-100 text-{{ fb.color }}-700 font-medium">{{ fb.text }}</span>
                 {% if row.human_action == 'overridden' %}
                   <span class="ml-1 text-[10px] text-violet-600 uppercase tracking-wide">overridden</span>
                 {% endif %}
@@ -204,14 +203,14 @@
         </thead>
         <tbody class="divide-y divide-slate-100">
           {% for row in completed_rows %}
-            {% set color = row.outcome | outcome_color %}
+            {% set b = badge_for(persona.decision_id, row.outcome) %}
             <tr class="hover:bg-slate-50 cursor-pointer"
                 onclick="window.location='/workbench/{{ persona.slug }}/completed/{{ row.application_id }}'">
               <td class="px-4 py-2 mono text-xs">{{ row.application_id }}</td>
               <td class="px-4 py-2">{% set cc = row.mid_credit_score | credit_color %}<span class="text-{{ cc }}-700 font-medium">{{ row.mid_credit_score | fmt_value }}</span></td>
               <td class="px-4 py-2">{{ row.ltv | fmt_pct }}</td>
               <td class="px-4 py-2">{{ row.dti_back | fmt_pct }}</td>
-              <td class="px-4 py-2"><span class="text-xs px-2 py-0.5 rounded bg-{{ color }}-100 text-{{ color }}-700 font-medium">{{ row.outcome }}</span></td>
+              <td class="px-4 py-2"><span class="text-xs px-2 py-0.5 rounded bg-{{ b.color }}-100 text-{{ b.color }}-700 font-medium">{{ b.text }}</span></td>
               <td class="px-4 py-2 mono text-xs">{% if row.confidence is not none %}{{ '%.2f' % row.confidence }}{% else %}—{% endif %}</td>
               <td class="px-4 py-2 text-xs text-slate-500">{{ row.decided_at | humanize_age }}</td>
             </tr>
@@ -228,10 +227,10 @@
   <section class="space-y-4">
     {% if by_outcome_groups %}
       {% for grp in by_outcome_groups %}
-        {% set oc = grp.outcome | outcome_color %}
+        {% set gb = badge_for(persona.decision_id, grp.outcome) %}
         <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
           <div class="flex items-center gap-3 px-5 py-3 border-b border-slate-100 bg-slate-50">
-            <span class="px-2.5 py-1 rounded bg-{{ oc }}-100 text-{{ oc }}-700 font-semibold text-sm uppercase tracking-wider">{{ grp.outcome }}</span>
+            <span class="px-2.5 py-1 rounded bg-{{ gb.color }}-100 text-{{ gb.color }}-700 font-semibold text-sm uppercase tracking-wider">{{ gb.text }}</span>
             <span class="text-2xl font-semibold text-slate-900">{{ '{:,}'.format(grp.count) }}</span>
             <span class="text-xs text-slate-500 ml-auto">sample of {{ grp.samples | length }} most recent</span>
           </div>
@@ -277,10 +276,11 @@
         {% for outcome in ['allow', 'recommend', 'escalate', 'block'] %}
           {% set n = analytics.outcomes.get(outcome, 0) %}
           {% set pct = (n * 100 / analytics.total) if analytics.total else 0 %}
-          {% set oc = outcome | outcome_color %}
+          {% set ab = badge_for(persona.decision_id, outcome) %}
+          {% set oc = ab.color %}
           <div>
             <div class="flex items-baseline gap-2">
-              <span class="text-xs px-2 py-0.5 rounded bg-{{ oc }}-100 text-{{ oc }}-700 font-medium">{{ outcome }}</span>
+              <span class="text-xs px-2 py-0.5 rounded bg-{{ oc }}-100 text-{{ oc }}-700 font-medium">{{ ab.text }}</span>
               <span class="font-semibold">{{ n }}</span>
               <span class="text-xs text-slate-500">{{ '%.1f' % pct }}%</span>
             </div>

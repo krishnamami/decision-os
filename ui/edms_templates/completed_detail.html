@@ -35,6 +35,16 @@
 
 {% include "_special_banners.html" %}
 
+{% if halted_by_upstream %}
+  <div class="bg-rose-50 border border-rose-200 rounded-lg px-4 py-3 mb-4 text-sm text-rose-800 flex items-start gap-2">
+    <i class="ti ti-alert-octagon text-base leading-none mt-0.5"></i>
+    <div>
+      <span class="font-semibold">Ran under an upstream hard block</span> — {{ halted_by_upstream.persona }}
+      issued a hard block, which should have suspended this step. Treat this result as void pending resolution.
+    </div>
+  </div>
+{% endif %}
+
 <header class="mb-4 flex items-start gap-4">
   <span class="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-{{ persona.color }}-100 text-{{ persona.color }}-700 text-lg">
     <i class="ti {{ persona.icon }}"></i>
@@ -79,7 +89,7 @@
         <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Upstream decisions</div>
         <div class="grid grid-cols-2 gap-2">
           {% for u in upstreams %}
-            {% set oc = u.outcome | outcome_color %}
+            {% set ub = badge_for(u.decision_id, u.outcome) %}
             <div class="flex items-center justify-between gap-2 border border-slate-100 rounded px-3 py-2">
               <div class="min-w-0">
                 {% if u.persona_slug %}
@@ -87,7 +97,7 @@
                 {% else %}<span class="text-sm text-slate-700 truncate block">{{ u.persona_title }}</span>{% endif %}
                 <span class="text-[10px] text-slate-400 mono">conf {{ '%.2f' % (u.confidence or 0) }}</span>
               </div>
-              <span class="text-[11px] px-2 py-0.5 rounded bg-{{ oc }}-100 text-{{ oc }}-700 font-medium uppercase shrink-0">{{ u.outcome }}</span>
+              <span class="text-[11px] px-2 py-0.5 rounded bg-{{ ub.color }}-100 text-{{ ub.color }}-700 font-medium uppercase shrink-0">{{ ub.text }}</span>
             </div>
           {% endfor %}
         </div>
@@ -100,10 +110,10 @@
 
   <aside class="col-span-5 space-y-4">
     <div class="bg-white border border-slate-200 rounded-lg p-5">
-      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Final Decision</div>
-      {% set color = decision.outcome | outcome_color %}
+      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Final {{ 'Routing' if outcome_badge and outcome_badge.tone == 'neutral' else 'Decision' }}</div>
+      {% set color = outcome_badge.color if outcome_badge else 'slate' %}
       <div class="flex items-center gap-3 mb-4">
-        <span class="px-3 py-1.5 rounded text-sm font-semibold bg-{{ color }}-100 text-{{ color }}-800 uppercase tracking-wider">{{ decision.outcome }}</span>
+        <span class="px-3 py-1.5 rounded text-sm font-semibold bg-{{ color }}-100 text-{{ color }}-800 uppercase tracking-wider">{{ outcome_badge.text if outcome_badge else decision.outcome }}</span>
         <span class="text-xs text-slate-500">mode {{ decision.mode }}</span>
       </div>
       <div class="mb-3 text-xs">

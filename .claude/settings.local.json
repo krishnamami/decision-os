@@ -64,7 +64,9 @@
       "Bash(curl -s -m 10 http://127.0.0.1:8000/workbench/compliance_officer/review/APP-SC04-005)",
       "Bash(ls tests/ui/)",
       "Bash(ls tests/__init__.py tests/ui/__init__.py)",
-      "Bash(PYTHONIOENCODING=utf-8 python -m pytest tests/ui/test_explanations.py -q)"
+      "Bash(PYTHONIOENCODING=utf-8 python -m pytest tests/ui/test_explanations.py -q)",
+      "Bash(git remote *)",
+      "Bash(PYTHONIOENCODING=utf-8 python -m pytest tests/ui/test_vocab.py tests/ui/test_explanations.py -q)"
     ]
   }
 }

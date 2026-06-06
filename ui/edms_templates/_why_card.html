@@ -1,14 +1,11 @@
-{# Lead card: "Why this needs your review". Expects `outcome_summary`
-   ({color, label}), `explanation` (paragraph), `decision`. #}
-{% set oc = outcome_summary.color if outcome_summary else 'slate' %}
+{# Lead card: "Why this needs your review". Expects `outcome_badge`
+   ({text, color, tone}) from the persona's vocab, and `explanation`. #}
+{% set oc = outcome_badge.color if outcome_badge else 'slate' %}
 <div class="bg-white border-l-4 border-{{ oc }}-400 border border-slate-200 rounded-lg p-5">
   <div class="flex items-center gap-2 mb-2">
     <span class="text-xs font-semibold uppercase tracking-wider text-{{ oc }}-700">Why this needs your review</span>
-    {% if decision and decision.outcome %}
-      <span class="text-[11px] px-2 py-0.5 rounded-full bg-{{ oc }}-100 text-{{ oc }}-700 font-medium uppercase tracking-wide">{{ decision.outcome }}</span>
-    {% endif %}
-    {% if outcome_summary %}
-      <span class="text-[11px] text-slate-400 ml-auto">{{ outcome_summary.label }}</span>
+    {% if outcome_badge %}
+      <span class="text-[11px] px-2 py-0.5 rounded-full bg-{{ oc }}-100 text-{{ oc }}-700 font-medium uppercase tracking-wide">{{ outcome_badge.text }}</span>
     {% endif %}
   </div>
   <p class="text-sm text-slate-800 leading-relaxed">
