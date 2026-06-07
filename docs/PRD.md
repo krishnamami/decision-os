@@ -1,8 +1,18 @@
 # DECISION OS — PRODUCT REQUIREMENTS DOCUMENT
 
-**Version:** 0.13 &nbsp;·&nbsp; **Updated:** May 2026 &nbsp;·&nbsp; Source of truth for Claude Code every session.
+**Version:** 0.14 &nbsp;·&nbsp; **Updated:** June 2026 &nbsp;·&nbsp; Source of truth for Claude Code every session.
 
 > **Strategic note (Session 8):** the user committed to PATH C — full DecisionOS as system of record (12–18 month roadmap). See §19 for the tier breakdown that drives every following session.
+
+### Session 13–14 deltas (v0.13 → v0.14) — 5 commits · 77/77 UI tests · live EDMS data
+
+Made the `/workbench` review surface trustworthy: finished the human-review path, gave every persona a story-driven review screen driven by ONE explanation generator, and fixed routing/workflow personas that were reading applicant vocabulary on declined/blocked files. **Decision-flow semantics changed — see updated §11.3 and the new §13.1.**
+
+- **Human-review workflow completed** (`82bbd56`, `e633d9a`) — auto-execute rows stamp `human_action='auto_approved'` so dependents that gate on `human_action IS NOT NULL` proceed; Approve/Override forms gate on a real `can_act`; every `recommend`/`human_approval` persona uses a human kind with a Pending-review queue that links to `/review/` (where the Approve form lives). Added **Revert** (`POST …/review/{app}/revert`: reopens a finalized decision as a fresh pending version, logs a `human_revert` timeline row with who/why in `waiting_on`, and flags downstream decisions `stale=true` via the forward `UPSTREAM` walk; idempotent `ADD COLUMN IF NOT EXISTS stale`) and **Request-info** (`POST …/request-info`: logs the ask, keeps the loan pending).
+- **Story-driven review UI + ONE explanation generator** (`e633d9a`) — `ui/explanations.py` replaces per-persona narrative code (deleted `EXPLANATION_TEMPLATES` + `DERIVERS`) with a single `explain(outcome, matched_rule, signals, labels)`. The "Why this needs your review" banner names ONLY the driving signals — the matched rule's gated conditions that fail (adverse) or satisfy (allow) — deduped, with "no data" (never 0) for empty-sample inputs. Persona = data (`SIGNAL_SPECS` + `DECISION_LABELS`). The matched `boundary_rule` is an evidence string (`score=660, band='near_prime', … → recommend`) — that's what makes driver-from-rule detection work. Review/completed pages lead with the banner + a green/red/amber signal checklist + documents-on-file + an upstream grid; partials `_why_card` / `_signals` / `_documents` / `_special_banners` / `_revert_form`. `action_label()` gives outcome-correct verbs ("Confirmed block", not "approved").
+- **Persona kind + vocabulary** (`5e46512`) — `PERSONA_KIND` (`approval_routing` → routing, rest decision) + `VOCAB[kind][outcome]{badge,tone,banner_verb,action_label}`. Routing personas judge their OWN action (Auto-execute / Hold for ack / Escalate / Halted, NEUTRAL tone — never green/"ALLOW"); their banner names what is routed ("Routing a DECLINE: emailing the decline / adverse-action notice."). `canonical_underwriting_state()` is the single mapping layer to `{approve, conditional_approve, decline, block}` so Senior UW (raw `block`) and the router (`decline`) render the SAME state. `halts_pipeline()` / `downstream_should_run()` encode the halt policy (user-confirmed): **fraud/compliance block and an underwriting hard-block halt downstream; an underwriting decline does NOT** (routing must run to send the notice) — enforced at the UI/policy layer with a "Ran under an upstream hard block" banner; the decision engine and data are untouched.
+- **Tests** — `tests/ui/test_explanations.py` (15) + `tests/ui/test_vocab.py` (17); full `tests/ui/` suite 77 passing.
+- Runtime artifacts git-ignored (`fa75b12`); origin remote renamed to `Decision-OS`.
 
 ### Session 12 deltas (v0.12 → v0.13) — 8 commits · 351/351 tests · live EDMS data
 
@@ -514,13 +524,37 @@ flowchart TD
 └────┴──────────────────────────┴──────────────────────────────────────┴────────┴────────┴─────────────────┘
 ```
 
-### 11.3 Hard stops
+### 11.3 Hard stops & adverse-decision routing
+
+A **hard block** halts work; an **underwriting decline** is an adverse
+*decision* that must still be routed (the borrower is owed an adverse-action
+notice). The two are different states and must never be conflated.
 
 ```
-  fraud_screening     = BLOCK  →  STOPS ALL downstream. No exceptions.
-  compliance_check    = BLOCK  →  STOPS closing_readiness. No exceptions.
-  any upstream        = BLOCK  →  contamination_guard blocks all dependents.
+  fraud_screening    = BLOCK    →  HARD STOP. Halts ALL downstream, incl. routing.
+  compliance_check   = BLOCK    →  HARD STOP. Halts closing_readiness.
+  underwriting       = block(*) →  HARD STOP only when it is a PROPAGATED hard
+                                   block (any_upstream_hard_block). Else it is a
+                                   DECLINE.
+  underwriting       = DECLINE  →  NOT a hard stop. approval_routing RUNS to send
+                                   the adverse-action / decline notice.
+  any upstream       = hard BLOCK → contamination_guard suspends dependents.
 ```
+
+**Canonical underwriting states** — the UI renders from these, never the raw
+engine outcome, so Senior Underwriter and the downstream router never disagree
+(`core` may store a coarse `block`; the business state lives in
+`underwriting_outcome`). Mapping layer: `canonical_underwriting_state()`.
+
+```
+  approve  ·  conditional_approve  ·  decline  ·  block (hard)
+```
+
+**Halt policy** (single tested function — `halts_pipeline()` /
+`downstream_should_run()`): a *decline* lets downstream routing run; a *hard
+block* suspends everything downstream. Enforced at the UI/policy layer today;
+engine-level suppression is a follow-up (the engine currently still generates
+downstream rows under a hard block — the UI flags them).
 
 ---
 
@@ -573,7 +607,10 @@ stateDiagram-v2
     queue_human --> human_review
     human_review --> human_approves: approve
     human_review --> human_overrides: override
+    human_review --> human_requests_info: request more info
     human_review --> human_sends_back: request evidence (planned)
+
+    human_requests_info --> queue_human: logged, stays pending
 
     human_approves --> writeback
     auto_writeback --> writeback
@@ -587,6 +624,11 @@ stateDiagram-v2
     publish_record_updated --> wake_dependents: DAG executor + event bus
     wake_dependents --> [*]
 
+    publish_record_updated --> human_reverts: supervisor revert
+    human_reverts --> queue_human: new un-acted version
+    human_reverts --> mark_downstream_stale: forward UPSTREAM walk
+    mark_downstream_stale --> [*]
+
     block_outcome --> trace_only: no writeback
     trace_only --> notify_downstream: upstream_block_propagates
     notify_downstream --> [*]
@@ -597,6 +639,38 @@ stateDiagram-v2
     human_sends_back --> upstream_persona_planned
     upstream_persona_planned --> evaluating: re-runs with new evidence
 ```
+
+### 13.1 Review workbench — persona vocabulary, canonical states, halt policy
+
+The `/workbench` review surface renders from persona **data**, not hardcoded
+copy. This is where outcome routing meets the human.
+
+- **Persona KIND.** A `decision` persona judges the APPLICANT
+  (allow / escalate / decline / block). A `routing` persona (Post-Closer /
+  `approval_routing`) judges its OWN action (execute / hold / escalate) and must
+  never speak applicant vocabulary. Each persona declares `kind` +
+  `VOCAB[outcome]{badge, tone, banner_verb, action_label}`. Routing badges are
+  NEUTRAL (slate) — green reads as a loan approval. A router routing a declined
+  file shows **"Auto-execute"** + *"Routing a DECLINE: emailing the decline /
+  adverse-action notice."* — never "ALLOW / Cleared to approve".
+
+- **ONE explanation generator** (`ui/explanations.py` → `explain()`). The
+  "Why this needs your review" banner names ONLY the **driving** signals — the
+  matched rule's gated conditions that fail (adverse) or satisfy (allow) —
+  deduplicated, with **"no data"** (never `0`) for empty-sample inputs. No
+  per-persona narrative code; persona = data (`SIGNAL_SPECS` + `DECISION_LABELS`).
+
+- **Canonical underwriting state** (§11.3). One mapping layer; Senior UW and the
+  router both render the canonical value, so a `block` upstream and a `decline`
+  downstream can never describe the same event with two words.
+
+- **Halt policy** (§11.3). Hard block halts downstream; decline routes. Policy +
+  UI today (a "Ran under an upstream hard block" banner flags rows that ran
+  anyway); engine-level suppression is a follow-up.
+
+- **Human actions.** Approve · Override · Request-info · **Revert**. Revert
+  reopens a finalized decision as a fresh pending version (AI outcome restored),
+  logs a `human_revert` timeline row, and marks downstream decisions `stale`.
 
 ---
 
