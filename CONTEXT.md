@@ -470,6 +470,9 @@ routing personas reading applicant vocabulary on declined/blocked files.
   - `fa75b12` — Ignore runtime artifacts (`.health.json`, `.uvicorn.log`).
   - `5e46512` — Persona kind + vocabulary so routers stop speaking
     applicant language.
+  - `339fbda` — PRD v0.14: decision-flow semantics (§11.3 canonical
+    underwriting states + halt policy; new §13.1 review-workbench model;
+    revert/stale/request-info edges in the §13 outcome-routing diagram).
 **Tests:** new `tests/ui/test_explanations.py` (15) + `tests/ui/test_vocab.py`
 (17); full `tests/ui/` suite **77 passing**. Live-verified via `curl` against
 the running server (EDMS PG mode) + EDMS DB queries.
