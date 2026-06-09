@@ -68,7 +68,26 @@
       "Bash(git remote *)",
       "Bash(PYTHONIOENCODING=utf-8 python -m pytest tests/ui/test_vocab.py tests/ui/test_explanations.py -q)",
       "Bash(git log *)",
-      "Bash(git --no-pager diff .claude/settings.local.json)"
+      "Bash(git --no-pager diff .claude/settings.local.json)",
+      "Bash(git fetch *)",
+      "Bash(ls scripts/)",
+      "Bash(ls scripts/migrations/)",
+      "Bash(sed -n '1,40p' scripts/_verify_edms_writes.py)",
+      "Bash(PYTHONIOENCODING=utf-8 python scripts/mirofish.py migrate)",
+      "Bash(PYTHONIOENCODING=utf-8 python scripts/mirofish.py debate APP-SC04-001)",
+      "Bash(PYTHONIOENCODING=utf-8 python scripts/mirofish.py simulate --list)",
+      "Bash(PYTHONIOENCODING=utf-8 python scripts/mirofish.py simulate --scenario \"LTV cap: 97% → 90%\")",
+      "Bash(PYTHONIOENCODING=utf-8 python scripts/mirofish.py swarm --severity critical)",
+      "Bash(PYTHONIOENCODING=utf-8 python scripts/mirofish.py swarm)",
+      "Bash(PYTHONIOENCODING=utf-8 python scripts/mirofish.py simulate --scenario \"Nope\")",
+      "Bash(echo \"exit=$?\")",
+      "Bash(PYTHONIOENCODING=utf-8 python scripts/mirofish.py --no-save debate APP-SC02-001 --question \"Is this fraud?\")",
+      "Bash(PYTHONIOENCODING=utf-8 python scripts/mirofish.py --help)",
+      "Bash(PYTHONIOENCODING=utf-8 python scripts/mirofish.py --no-save debate APP-SC04-001)",
+      "Bash(sed -n '/EMERGENT INSIGHTS/,/debate /p')",
+      "Bash(PYTHONIOENCODING=utf-8 python scripts/mirofish.py debate APP-SC02-001)",
+      "Bash(PYTHONIOENCODING=utf-8 python scripts/mirofish.py --no-save debate APP-SC02-001)",
+      "Bash(PYTHONIOENCODING=utf-8 python scripts/mirofish.py --no-save debate APP-SC01-001)"
     ]
   }
 }
