@@ -66,7 +66,9 @@
       "Bash(ls tests/__init__.py tests/ui/__init__.py)",
       "Bash(PYTHONIOENCODING=utf-8 python -m pytest tests/ui/test_explanations.py -q)",
       "Bash(git remote *)",
-      "Bash(PYTHONIOENCODING=utf-8 python -m pytest tests/ui/test_vocab.py tests/ui/test_explanations.py -q)"
+      "Bash(PYTHONIOENCODING=utf-8 python -m pytest tests/ui/test_vocab.py tests/ui/test_explanations.py -q)",
+      "Bash(git log *)",
+      "Bash(git --no-pager diff .claude/settings.local.json)"
     ]
   }
 }
