@@ -1,0 +1,9 @@
+@import "tailwindcss";
+
+/* Accord brand palette — primary green #0F6E56. Tailwind v4 generates
+   utilities (bg-brand, text-brand, border-brand, ring-brand, …) from these. */
+@theme {
+  --color-brand: #0f6e56;
+  --color-brand-dark: #0a5743;
+  --color-brand-light: #e7f2ee;
+}

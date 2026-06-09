@@ -179,7 +179,27 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.platform = platform
+
+    # CORS — the Accord React frontend calls the API from a separate origin.
+    from fastapi.middleware.cors import CORSMiddleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     app.include_router(router)
+
+    # Accord product API (/api/accord/*) — reads the EDMS PG tables for the
+    # React frontend. Wrapped like the EDMS router: a missing optional dep
+    # (asyncpg) must not take down the rest of the app.
+    try:
+        from api.accord import routers as accord_routers
+        for accord_router in accord_routers:
+            app.include_router(accord_router)
+    except Exception as err:  # pragma: no cover — visible in dev only
+        print(f"[accord] product API not mounted: {err}")
 
     if mount_ui:
         # Local import — ui/ depends on the api package, so we resolve

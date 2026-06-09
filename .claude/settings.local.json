@@ -87,7 +87,24 @@
       "Bash(sed -n '/EMERGENT INSIGHTS/,/debate /p')",
       "Bash(PYTHONIOENCODING=utf-8 python scripts/mirofish.py debate APP-SC02-001)",
       "Bash(PYTHONIOENCODING=utf-8 python scripts/mirofish.py --no-save debate APP-SC02-001)",
-      "Bash(PYTHONIOENCODING=utf-8 python scripts/mirofish.py --no-save debate APP-SC01-001)"
+      "Bash(PYTHONIOENCODING=utf-8 python scripts/mirofish.py --no-save debate APP-SC01-001)",
+      "Bash(curl -s -m 30 \"http://127.0.0.1:8000/api/accord/loans/APP-SC04-001\")",
+      "Bash(curl -s -m 15 -X POST __TRACKED_VAR__/loans/__TRACKED_VAR__/decisions/__TRACKED_VAR__/approve -H 'Content-Type: application/json' -d '{\"reviewer\":\"APITest\",\"notes\":\"looks good\"}')",
+      "Bash(curl -s -m 30 '__TRACKED_VAR__/pipeline?status=halted&limit=1')",
+      "Bash(curl -s -m 40 -X POST __TRACKED_VAR__/mirofish/simulate -H 'Content-Type: application/json' -d '{\"scenario_name\":\"Rate shock +200bps\"}')",
+      "Bash(curl -s -m 20 __TRACKED_VAR__/APP-SC04-001)",
+      "Bash(npm --version)",
+      "Bash(echo \"npm: $\\(npm --version 2>&1\\)\")",
+      "Bash(npm ping *)",
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "Read(//mnt/user-data/outputs/**)",
+      "Read(//c//**)",
+      "Bash(curl -s -m 30 \"http://localhost:8000/api/accord/pipeline?limit=2\")",
+      "Bash(curl -s -m 20 \"http://localhost:8000/api/accord/loans/APP-SC04-001\")",
+      "Bash(curl -s -m 20 \"http://localhost:8000/api/accord/analytics/overview\")",
+      "Bash(curl -s -m 30 -X POST \"http://localhost:8000/api/accord/mirofish/debate\" -H \"Content-Type: application/json\" -d '{\"application_id\":\"APP-SC04-001\"}')",
+      "Bash(curl -s -m 8 -o /dev/null -D - -H \"Origin: http://localhost:5173\" \"http://localhost:8000/api/accord/pipeline?limit=1\")"
     ]
   }
 }
