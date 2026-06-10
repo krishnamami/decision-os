@@ -2613,6 +2613,71 @@ get_app() so the 4 scenarios are pre-loaded.
 
 ---
 
+### Session 14–20 — June 5–10 2026 — Accord customer product + Dockerization
+
+Built **Accord**, the customer-facing lending-decision product on top of the
+Decision OS engine, end-to-end, and Dockerized it for AWS.
+
+**MiroFish multi-agent simulation engine** — `core/mirofish/`
+  - `DebateEngine` (12 agents, 3 rounds, wave-directional + hard-block-aware
+    cross-agent contamination), `PolicySimulator` (what-if rule changes across
+    the book), `SwarmAnalyzer` (portfolio-wide pattern scan). Deterministic-first
+    with optional Claude (`claude-sonnet-4-6`). CLI: `scripts/mirofish.py`.
+
+**Accord API** — `api/accord/` (mounted via `api.accord.routers`)
+  - Endpoints: pipeline (list + KPIs), loans/{id}, mirofish (debate / simulate /
+    swarm + prebuilt + history + latest), analytics (overview / funnel / agents /
+    risk), audit (compliance-health / {app} trail / adverse-action / reports).
+  - asyncpg pool over `DATABASE_URL` (AWS RDS); `DISTINCT ON … version DESC` for
+    latest-version reads; 60s in-process TTL aggregate cache w/ write-invalidation.
+  - Fix: `mirofish_routes` simulate INSERT is idempotent (`ON CONFLICT DO UPDATE`)
+    so re-running a scenario no longer 500s on the deterministic simulation_id.
+
+**React frontend** — `frontend/` (Vite 6 + React 18 + TS + Tailwind v4 + recharts)
+  - 4 products behind one nav (`components/Header.tsx`): **Pipeline · Analytics ·
+    Simulation · Audit**. Products dropdown; exactly one nav "Pipeline".
+  - **Pipeline**: 5 lifecycle stage columns (VERIFY / UNDERWRITE / ELIGIBILITY /
+    DECIDE / CLOSE, with tooltips) summarising the 12 personas; colored word-chip
+    status cells + legend; typeahead `LoanSearch`; dynamic loan-type + colored-dot
+    status filters (synced with KPI cards); date-range filter; `ExportMenu`
+    (CSV / PDF-print / JSON); single-status KPI cards (Total / Clear to Close /
+    Blocked / Halted); server-side pagination (`?limit=&offset=`, 25/50/100);
+    skeleton / error-retry / empty states.
+  - **Analytics**: 5 KPIs + recharts — funnel stacked bar, approval donut, agent
+    allow/block grouped bars, employer concentration bar, product-mix pie.
+  - **Simulation**: Agent Debate (plain-English verdict + editable question),
+    Policy Simulator (plain-English summary → impact cards → status-change table →
+    per-loan WHY/WHAT-TO-DO → recommendation), **Portfolio Health Check**
+    (renamed from "Swarm"; findings grouped Urgent/Warning/Info in plain English,
+    expandable agent summaries).
+  - **Audit**: compliance-health KPIs, trail search (version timeline + authority
+    chain + SLA bars), adverse-action tracker, reports library + examiner export.
+  - Status "Pipeline Halted" → "Halted". Loading/error/empty via
+    `components/states.tsx`; `components/Pagination.tsx`; `utils/export.ts`.
+
+**Dockerization** (this session)
+  - `Dockerfile` (API: `uvicorn api.main:get_app --factory`), `frontend/Dockerfile`
+    (Vite build → nginx), `frontend/nginx.conf` (proxies `/api/` → `api:8000`,
+    SPA fallback). Frontend built with empty `VITE_API_URL` → same-origin `/api`
+    (client.ts uses `??` not `||`). `.dockerignore` keeps `.env`/secrets out.
+  - `docker-compose.yml` — merged the existing postgres/redis infra with new
+    `api` + `frontend` services. `.env.example` template; `scripts/deploy.sh`
+    (ECR login → build/push → ECS force-redeploy; prerequisites documented).
+  - Verified the full local stack on **http://localhost** (port 80) end-to-end
+    through nginx → api → RDS (8,896 loans, charts, real data). API endpoints
+    all 200, no 500s. (`?format=csv` returns JSON — CSV export is client-side.)
+  - Env note: this machine blocks CloudFront, so Docker Hub / ECR-Public base
+    image pulls fail (`EOF`); workaround = pull via `mirror.gcr.io` and re-tag.
+    To persist: add `registry-mirrors: ["https://mirror.gcr.io"]` to daemon.json.
+  - `.env` currently holds only `DATABASE_URL`; add `ANTHROPIC_API_KEY` to enable
+    the Claude-enhanced MiroFish paths (deterministic fallbacks run without it).
+
+**Open / next:** actual AWS deploy (ECR/ECS/ALB + domain + SSL); optional
+backend `?format=csv` for full-portfolio export; donut is approval-rate 2-way
+(no per-loan review split in the analytics payload).
+
+---
+
 ## How to resume next session
 
 Open Claude Code:
@@ -2984,4 +3049,4 @@ How to run smoke tests:
 
 ---
 
-*Decision OS · CONTEXT.md · Updated June 4 2026 (Session 13 — EDMS workbench human-review path fixed: auto-execute finalization, can_act Approve/Override gating, pricing_analyst landing tab)*
+*Decision OS · CONTEXT.md · Updated June 10 2026 (Accord customer product built end-to-end — MiroFish engine, Accord API over RDS, React frontend with 4 products (Pipeline/Analytics/Simulation/Audit), and Dockerized stack verified on http://localhost)*

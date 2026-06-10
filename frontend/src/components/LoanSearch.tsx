@@ -81,6 +81,7 @@ export default function LoanSearch({
 
   return (
     <div ref={ref} className={`relative ${className}`}>
+      <span className="pointer-events-none absolute left-3 top-[9px] text-sm text-slate-400">🔍</span>
       <input
         value={q}
         onChange={(e) => setQ(e.target.value)}
@@ -89,8 +90,8 @@ export default function LoanSearch({
           if (e.key === 'Enter') submit()
           else if (e.key === 'Escape') setOpen(false)
         }}
-        placeholder="🔍  Search borrower or application ID…"
-        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+        placeholder="Search borrower or application ID…"
+        className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-brand"
       />
       {open && (
         <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
@@ -101,7 +102,7 @@ export default function LoanSearch({
             </div>
           )}
           {!loading && searched && results.length === 0 && (
-            <div className="px-4 py-3 text-sm text-slate-400">No results found</div>
+            <div className="px-4 py-3 text-sm text-slate-400">No loans match “{q.trim()}”</div>
           )}
           {!loading &&
             results.map((r) => (

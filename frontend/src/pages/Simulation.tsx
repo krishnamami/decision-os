@@ -4,6 +4,8 @@ import DebateRunner from '../components/DebateRunner'
 import PolicySimRunner, { type PolicySimHandle } from '../components/PolicySimRunner'
 import SwarmRunner from '../components/SwarmRunner'
 import PeriodFilter, { type Period } from '../components/PeriodFilter'
+import ExportMenu from '../components/ExportMenu'
+import { downloadCsv, downloadJson, printPdf } from '../utils/export'
 
 const PERIOD_DAYS: Record<Period, number | null> = {
   month: 30, quarter: 90, year: 365, all: null,
@@ -41,6 +43,22 @@ export default function Simulation() {
     cutoff == null
       ? history
       : history.filter((h) => h.created_at && new Date(h.created_at).getTime() >= cutoff)
+
+  function exportCsv() {
+    const headers = ['Date', 'Type', 'Scenario', 'Total Apps', 'Affected', 'Volume Change']
+    const out = visibleHistory.map((h) => [
+      h.created_at ?? '', h.scenario_type, h.scenario_name, h.total_apps, h.affected_apps, h.impact?.volume_change ?? '',
+    ])
+    downloadCsv(headers, out, 'accord_simulations')
+  }
+  function exportJson() {
+    downloadJson({ exported_at: new Date().toISOString(), period, simulations: visibleHistory }, 'accord_simulations')
+  }
+  const exportItems = [
+    { label: 'Export as CSV', run: exportCsv },
+    { label: 'Export as PDF', run: printPdf },
+    { label: 'Export raw JSON', run: exportJson },
+  ]
 
   function scrollTo(key: string) {
     const ref = key === 'debate' ? debateRef : key === 'simulate' ? simRef : swarmRef
@@ -108,10 +126,13 @@ export default function Simulation() {
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-bold text-slate-900">Simulation History</h2>
-            <PeriodFilter value={period} onChange={setPeriod} />
+            <div className="flex items-center gap-3">
+              <PeriodFilter value={period} onChange={setPeriod} />
+              <ExportMenu items={exportItems} />
+            </div>
           </div>
           {history.length === 0 ? (
-            <p className="text-sm text-slate-400">No simulations run yet.</p>
+            <p className="text-sm text-slate-400">No simulations yet. Run your first one above.</p>
           ) : visibleHistory.length === 0 ? (
             <p className="text-sm text-slate-400">No simulations in this period.</p>
           ) : (

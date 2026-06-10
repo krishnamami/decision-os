@@ -1,20 +1,17 @@
-# Decision OS — local dev infrastructure
-# Brings up Postgres + Redis so the production backends in
-# core/context_store/ (PostgresDurableStore, RedisHotCache) can run
-# end-to-end. The in-memory variants used in tests do not need this.
+# Decision OS / Accord — full local stack.
+#
+#   postgres + redis : dev infrastructure for core/context_store
+#   api              : Accord FastAPI backend (reads real data from
+#                      DATABASE_URL in .env — e.g. AWS RDS)
+#   frontend         : React app served by nginx, proxying /api/ → api
 #
 # Quick start:
-#   docker-compose up -d
-#   psql postgresql://decisionos:decisionos@localhost:5432/decisionos \
-#     -f core/context_store/schema.sql
+#   docker-compose up --build
+#     http://localhost            → React app
+#     http://localhost/api/...    → API (proxied to the api service)
 #
-# Or apply schema from Python:
-#   store = await PostgresDurableStore.connect(
-#       "postgresql://decisionos:decisionos@localhost:5432/decisionos"
-#   )
-#   await store.init_schema()
-
-version: "3.9"
+# The api connects to whatever DATABASE_URL points at (.env). The local
+# postgres/redis are for core/context_store and optional caching.
 
 services:
   postgres:
@@ -48,6 +45,30 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
+
+  api:
+    build: .
+    container_name: accord-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: accord-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - api
     restart: unless-stopped
 
 volumes:

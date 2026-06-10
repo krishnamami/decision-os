@@ -12,6 +12,8 @@ import type {
   ReportRow,
 } from '../types/accord'
 import PeriodFilter, { type Period, periodParam } from '../components/PeriodFilter'
+import { CardSkeleton, ErrorState } from '../components/states'
+import { downloadJson } from '../utils/export'
 
 // Report metadata not in the API — frequency + display status per report id.
 const REPORT_META: Record<string, { frequency: string; status: string; action: string }> = {
@@ -51,6 +53,8 @@ export default function Audit() {
   const [adverseTotal, setAdverseTotal] = useState(0)
   const [reports, setReports] = useState<ReportRow[]>([])
   const [period, setPeriod] = useState<Period>('all')
+  const [dashError, setDashError] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
 
   // Audit trail search
   const [appInput, setAppInput] = useState('')
@@ -59,16 +63,26 @@ export default function Audit() {
   const [trailError, setTrailError] = useState<string | null>(null)
 
   useEffect(() => {
+    let alive = true
     const p = periodParam(period)
-    fetchComplianceHealth(p).then(setHealth).catch(() => undefined)
-    fetchAdverseAction(p)
-      .then((r) => {
-        setAdverse(r.adverse_actions)
-        setAdverseTotal(r.total)
+    setDashError(false)
+    setHealth(null)
+    Promise.all([fetchComplianceHealth(p), fetchAdverseAction(p), fetchReports(p)])
+      .then(([h, a, r]) => {
+        if (!alive) return
+        setHealth(h)
+        setAdverse(a.adverse_actions)
+        setAdverseTotal(a.total)
+        setReports(r.reports)
       })
-      .catch(() => undefined)
-    fetchReports(p).then((r) => setReports(r.reports)).catch(() => undefined)
-  }, [period])
+      .catch((e) => {
+        console.error('Audit load failed:', e)
+        if (alive) setDashError(true)
+      })
+    return () => {
+      alive = false
+    }
+  }, [period, reloadKey])
 
   async function searchTrail(id: string) {
     const appId = id.trim()
@@ -79,13 +93,31 @@ export default function Audit() {
     try {
       setTrail(await fetchAudit(appId))
     } catch (e) {
-      setTrailError(e instanceof Error ? e.message : 'Application not found')
+      console.error('Audit trail load failed:', e)
+      setTrailError('No audit records found for this application ID.')
     } finally {
       setTrailLoading(false)
     }
   }
 
   const overdue = adverse.filter((a) => (a.days_since_decision ?? 0) > OVERDUE_DAYS)
+
+  // Examiner package: compliance health + adverse actions + reports + any
+  // searched decision trail (versions, authority chain, SLA), as JSON.
+  // (A true ZIP needs backend support; JSON carries the same records for now.)
+  function exportExaminerPackage() {
+    downloadJson(
+      {
+        exported_at: new Date().toISOString(),
+        period,
+        compliance_health: health,
+        adverse_actions: { total: adverseTotal, items: adverse },
+        reports,
+        audit_trail: trail,
+      },
+      'accord_examiner_package',
+    )
+  }
 
   return (
     <div className="mx-auto max-w-6xl space-y-10 px-6 py-6">
@@ -97,23 +129,32 @@ export default function Audit() {
         </div>
         <div className="flex items-center gap-3">
           <PeriodFilter value={period} onChange={setPeriod} />
-          <button className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
-            Export Examiner Package
+          <button
+            onClick={exportExaminerPackage}
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            📦 Export Examiner Package
           </button>
         </div>
       </div>
 
       {/* 2. Compliance health */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <KpiCard label="HMDA Completeness" value={health ? `${health.hmda_pct}%` : '—'}
-          color={health ? kpiColor(health.hmda_pct, 95, 80) : 'text-slate-900'} />
-        <KpiCard label="Adverse Action Pending" value={health ? health.adverse_pending.toLocaleString() : '—'}
-          color={health && health.adverse_pending > 0 ? 'text-amber-600' : 'text-slate-900'} />
-        <KpiCard label="Overrides This Month" value={health ? health.overrides.toLocaleString() : '—'}
-          color={health && health.overrides > 0 ? 'text-amber-600' : 'text-slate-900'} />
-        <KpiCard label="SLA Compliance" value={health ? `${health.sla_pct}%` : '—'}
-          color={health ? kpiColor(health.sla_pct, 90, 75) : 'text-slate-900'} />
-      </div>
+      {dashError ? (
+        <ErrorState message="Could not load compliance data." onRetry={() => setReloadKey((k) => k + 1)} />
+      ) : !health ? (
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => <CardSkeleton key={i} />)}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <KpiCard label="HMDA Completeness" value={`${health.hmda_pct}%`} color={kpiColor(health.hmda_pct, 95, 80)} />
+          <KpiCard label="Adverse Action Pending" value={health.adverse_pending.toLocaleString()}
+            color={health.adverse_pending > 0 ? 'text-amber-600' : 'text-slate-900'} />
+          <KpiCard label="Overrides This Month" value={health.overrides.toLocaleString()}
+            color={health.overrides > 0 ? 'text-amber-600' : 'text-slate-900'} />
+          <KpiCard label="SLA Compliance" value={`${health.sla_pct}%`} color={kpiColor(health.sla_pct, 90, 75)} />
+        </div>
+      )}
 
       {/* 3. Audit trail search */}
       <section className="space-y-3">

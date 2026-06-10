@@ -1,7 +1,14 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import {
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  PieChart, Pie, Cell,
+} from 'recharts'
 import { fetchAgents, fetchAnalytics, fetchFunnel, fetchRisk } from '../api/client'
 import type { AgentStat, AnalyticsOverview, FunnelStep, RiskData } from '../types/accord'
 import PeriodFilter, { type Period, periodParam } from '../components/PeriodFilter'
+import ExportMenu from '../components/ExportMenu'
+import { ErrorState } from '../components/states'
+import { downloadCsv, downloadJson, printPdf } from '../utils/export'
 
 // Auto-execute personas (system-finalized) — get an "auto" review badge.
 const AUTO_DECISIONS = new Set([
@@ -11,6 +18,13 @@ const AUTO_DECISIONS = new Set([
 const WAVE_NAME: Record<number, string> = {
   1: 'Pre-UW', 2: 'Underwriting', 3: 'Product', 4: 'Decision', 5: 'Closing',
 }
+
+// Chart palette.
+const C_GREEN = '#22C55E'
+const C_RED = '#EF4444'
+const C_BRAND = '#0F6E56'
+const PRODUCT_COLORS = ['#0F6E56', '#1D9E75', '#5DCAA5', '#F59E0B', '#EF4444', '#6366F1']
+const prettyName = (s: string) => s.replace(/_/g, '-').replace(/\b\w/g, (c) => c.toUpperCase())
 
 function money(v: number) {
   if (v >= 1e9) return `$${(v / 1e9).toFixed(2)}B`
@@ -25,9 +39,9 @@ function reviewTime(minutes: number | null, auto: boolean): string {
   return `${(minutes / 1440).toFixed(1)}d`
 }
 
-function Section({ title, subtext, children }: { title: string; subtext?: string; children: ReactNode }) {
+function Section({ title, subtext, children, className = '' }: { title: string; subtext?: string; children: ReactNode; className?: string }) {
   return (
-    <section className="space-y-3">
+    <section className={`space-y-3 ${className}`}>
       <div>
         <h2 className="text-lg font-bold text-gray-900">{title}</h2>
         {subtext && <p className="text-sm text-gray-500">{subtext}</p>}
@@ -51,6 +65,7 @@ export default function Analytics() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [period, setPeriod] = useState<Period>('all')
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
     let alive = true
@@ -65,12 +80,15 @@ export default function Analytics() {
         setAgents(a.agents)
         setRisk(r)
       })
-      .catch((e) => alive && setError(e instanceof Error ? e.message : 'Failed to load analytics'))
+      .catch((e) => {
+        console.error('Analytics load failed:', e)
+        if (alive) setError('Could not load analytics data.')
+      })
       .finally(() => alive && setLoading(false))
     return () => {
       alive = false
     }
-  }, [period])
+  }, [period, reloadKey])
 
   if (loading && !overview) {
     return (
@@ -86,7 +104,11 @@ export default function Analytics() {
     )
   }
   if (error) {
-    return <div className="mx-auto max-w-6xl px-6 py-12 text-center text-red-600">{error}</div>
+    return (
+      <div className="mx-auto max-w-6xl px-6 py-12">
+        <ErrorState message={error} onRetry={() => setReloadKey((k) => k + 1)} />
+      </div>
+    )
   }
   if (!overview) {
     return <div className="mx-auto max-w-6xl px-6 py-12 text-center text-gray-400">No data available.</div>
@@ -110,6 +132,23 @@ export default function Analytics() {
 
   const highOverride = (agents ?? []).filter((a) => a.override_pct > 5)
 
+  // Export: agent table as CSV; everything (overview + funnel + agents + risk) as JSON.
+  function exportCsv() {
+    const headers = ['Persona', 'Decision', 'Decisions', 'Allow %', 'Block %', 'Recommend %', 'Escalate %', 'Override %', 'Avg Review (min)']
+    const out = (agents ?? []).map((a) => [
+      a.persona, a.decision_id, a.total, a.allow_pct, a.block_pct, a.recommend_pct, a.escalate_pct, a.override_pct, a.avg_review_minutes ?? '',
+    ])
+    downloadCsv(headers, out, 'accord_analytics_agents')
+  }
+  function exportJson() {
+    downloadJson({ exported_at: new Date().toISOString(), period, overview, funnel, agents, risk }, 'accord_analytics')
+  }
+  const exportItems = [
+    { label: 'Export as CSV', run: exportCsv },
+    { label: 'Export as PDF', run: printPdf },
+    { label: 'Export raw JSON', run: exportJson },
+  ]
+
   return (
     <div className="mx-auto max-w-6xl space-y-10 px-6 py-6">
       {/* 1. Header */}
@@ -122,9 +161,7 @@ export default function Analytics() {
         </div>
         <div className="flex items-center gap-3">
           <PeriodFilter value={period} onChange={setPeriod} />
-          <button className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
-            Export Report
-          </button>
+          <ExportMenu items={exportItems} />
         </div>
       </div>
 
@@ -143,58 +180,76 @@ export default function Analytics() {
         ))}
       </div>
 
-      {/* 3. Funnel */}
-      <Section title="Pipeline Funnel">
-        <Card>
-          {!funnel || funnel.length === 0 ? (
-            <p className="text-sm text-gray-400">No data available.</p>
-          ) : (
-            <div className="space-y-3">
-              {funnel.map((f) => {
-                const width = (f.entered / maxEntered) * 100
-                const passW = f.entered ? (f.passed / f.entered) * 100 : 0
-                const blockW = f.entered ? (f.blocked / f.entered) * 100 : 0
-                return (
-                  <div key={f.wave} className="flex items-center gap-3">
-                    <div className="w-40 shrink-0 text-sm">
-                      <span className="font-medium text-gray-800">Wave {f.wave}</span>{' '}
-                      <span className="text-gray-400">({WAVE_NAME[f.wave] ?? ''})</span>
-                    </div>
-                    <div className="flex-1">
-                      <div className="h-6 w-full overflow-hidden rounded bg-gray-100" style={{ maxWidth: `${width}%` }}>
-                        <div className="flex h-full">
-                          <div className="bg-green-500" style={{ width: `${passW}%` }} />
-                          <div className="bg-red-400" style={{ width: `${blockW}%` }} />
-                        </div>
-                      </div>
-                    </div>
-                    <div className="w-56 shrink-0 text-right text-xs text-gray-500">
-                      {f.entered.toLocaleString()} entered ·{' '}
-                      <span className="font-medium text-green-700">{f.passed.toLocaleString()} passed</span> ·{' '}
-                      <span className="font-medium text-red-600">{f.blocked.toLocaleString()} blocked</span> ·{' '}
-                      {(f.pass_rate * 100).toFixed(0)}%
-                    </div>
-                  </div>
-                )
-              })}
-              <div className="flex flex-wrap gap-x-8 gap-y-1 border-t border-gray-100 pt-3 text-sm">
-                <span className="text-gray-600">
+      {/* 3. Funnel chart + approval donut */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <Section title="Pipeline Funnel" className="lg:col-span-2">
+          <Card>
+            {!funnel || funnel.length === 0 ? (
+              <p className="text-sm text-gray-400">No data available.</p>
+            ) : (
+              <>
+                <ResponsiveContainer width="100%" height={260}>
+                  <BarChart
+                    layout="vertical"
+                    data={funnel.map((f) => ({ wave: `W${f.wave} ${WAVE_NAME[f.wave] ?? ''}`, passed: f.passed, blocked: f.blocked }))}
+                    margin={{ left: 10, right: 24, top: 8, bottom: 8 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" tickFormatter={(v) => v.toLocaleString()} tick={{ fontSize: 11 }} />
+                    <YAxis type="category" dataKey="wave" width={120} tick={{ fontSize: 11 }} />
+                    <Tooltip formatter={(v: any) => v.toLocaleString()} />
+                    <Legend />
+                    <Bar dataKey="passed" stackId="a" fill={C_GREEN} name="Passed" radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="blocked" stackId="a" fill={C_RED} name="Blocked" radius={[0, 2, 2, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+                <div className="mt-2 border-t border-gray-100 pt-3 text-sm text-gray-600">
                   Fallout rate: <span className="font-semibold text-red-600">{fallout}%</span>
-                </span>
-                {primaryBlocker && (
-                  <span className="text-gray-600">
-                    Primary blocker:{' '}
-                    <span className="font-semibold text-gray-900">
-                      Wave {primaryBlocker.wave} ({WAVE_NAME[primaryBlocker.wave]})
-                    </span>{' '}
-                    — {primaryBlocker.blocked.toLocaleString()} blocked
-                  </span>
-                )}
+                  {primaryBlocker && (
+                    <> — biggest drop at <span className="font-semibold text-gray-900">Wave {primaryBlocker.wave} ({WAVE_NAME[primaryBlocker.wave]})</span> ({primaryBlocker.blocked.toLocaleString()} blocked)</>
+                  )}
+                </div>
+              </>
+            )}
+          </Card>
+        </Section>
+
+        <Section title="Approval Rate">
+          <Card>
+            <div className="relative">
+              <ResponsiveContainer width="100%" height={220}>
+                <PieChart>
+                  <Pie
+                    data={[
+                      { name: 'Approved', value: Math.round(overview.approval_rate * overview.total_loans) },
+                      { name: 'Not approved', value: overview.total_loans - Math.round(overview.approval_rate * overview.total_loans) },
+                    ]}
+                    dataKey="value"
+                    nameKey="name"
+                    innerRadius={60}
+                    outerRadius={85}
+                    paddingAngle={2}
+                    startAngle={90}
+                    endAngle={-270}
+                  >
+                    <Cell fill={C_GREEN} />
+                    <Cell fill={C_RED} />
+                  </Pie>
+                  <Tooltip formatter={(v: any) => v.toLocaleString()} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                <div className="text-2xl font-bold text-brand">{(overview.approval_rate * 100).toFixed(1)}%</div>
+                <div className="text-xs text-gray-500">approval rate</div>
               </div>
             </div>
-          )}
-        </Card>
-      </Section>
+            <div className="mt-2 flex justify-center gap-4 text-xs text-gray-500">
+              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: C_GREEN }} /> Approved</span>
+              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: C_RED }} /> Not approved</span>
+            </div>
+          </Card>
+        </Section>
+      </div>
 
       {/* 4. Agent performance */}
       <Section
@@ -263,6 +318,25 @@ export default function Analytics() {
             ? `⚠ ${highOverride.length} persona(s) have override rates above 5% — consider adjusting boundaries.`
             : 'No personas exceed a 5% override rate.'}
         </p>
+
+        {/* Allow vs Block per persona — see who blocks the most at a glance */}
+        <Card>
+          <div className="mb-2 text-sm font-semibold text-gray-900">Allow vs Block rate by persona</div>
+          <ResponsiveContainer width="100%" height={340}>
+            <BarChart
+              data={(agents ?? []).map((a) => ({ persona: a.persona, 'Allow %': a.allow_pct, 'Block %': a.block_pct }))}
+              margin={{ top: 8, right: 16, left: 0, bottom: 90 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="persona" angle={-45} textAnchor="end" interval={0} height={100} tick={{ fontSize: 11 }} />
+              <YAxis unit="%" tick={{ fontSize: 11 }} />
+              <Tooltip formatter={(v: any) => `${v}%`} />
+              <Legend verticalAlign="top" />
+              <Bar dataKey="Allow %" fill={C_GREEN} radius={[2, 2, 0, 0]} />
+              <Bar dataKey="Block %" fill={C_RED} radius={[2, 2, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </Card>
       </Section>
 
       {/* 5. Risk concentration */}
@@ -297,6 +371,56 @@ export default function Analytics() {
                     {risk.total ? `${((risk.high_dti / risk.total) * 100).toFixed(1)}% of book` : ''}
                   </span>
                 </div>
+              </Card>
+            </div>
+
+            {/* Risk charts: top concentration bar + product-mix pie */}
+            <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <Card>
+                <div className="mb-2 text-sm font-semibold text-gray-900">
+                  Top {(risk.by_geography.length ? 'regions' : 'employers')} by loan count
+                </div>
+                {(() => {
+                  const conc = (risk.by_geography.length ? risk.by_geography : risk.by_employer).slice(0, 5)
+                  return conc.length === 0 ? (
+                    <p className="py-8 text-center text-sm text-gray-400">No concentration data available.</p>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={220}>
+                      <BarChart layout="vertical" data={conc} margin={{ left: 10, right: 24 }}>
+                        <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                        <XAxis type="number" tick={{ fontSize: 11 }} />
+                        <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11 }} />
+                        <Tooltip formatter={(v: any) => v.toLocaleString()} />
+                        <Bar dataKey="count" fill={C_BRAND} radius={[0, 2, 2, 0]} name="Loans" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )
+                })()}
+              </Card>
+
+              <Card>
+                <div className="mb-2 text-sm font-semibold text-gray-900">Product mix</div>
+                {risk.by_product.length === 0 ? (
+                  <p className="py-8 text-center text-sm text-gray-400">No product data available.</p>
+                ) : (
+                  <ResponsiveContainer width="100%" height={220}>
+                    <PieChart>
+                      <Pie
+                        data={risk.by_product.map((p) => ({ name: prettyName(p.name), value: p.count }))}
+                        dataKey="value"
+                        nameKey="name"
+                        outerRadius={80}
+                        label={(e: any) => `${e.name} ${Math.round((e.percent ?? 0) * 100)}%`}
+                        labelLine={false}
+                      >
+                        {risk.by_product.map((_, i) => (
+                          <Cell key={i} fill={PRODUCT_COLORS[i % PRODUCT_COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(v: any) => v.toLocaleString()} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
               </Card>
             </div>
           </>

@@ -16,7 +16,11 @@ import type {
   SwarmResult,
 } from '../types/accord'
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+// In production the app is built with VITE_API_URL="" so requests go to
+// /api/... on the same origin (nginx proxies them). `??` (not `||`) keeps the
+// empty string instead of falling back, while an unset var in dev still uses
+// the local backend.
+const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`)

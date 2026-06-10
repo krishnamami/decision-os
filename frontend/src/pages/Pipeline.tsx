@@ -12,6 +12,10 @@ import MirofishDebate from '../components/MirofishDebate'
 import LoanSearch from '../components/LoanSearch'
 import StatusFilter from '../components/StatusFilter'
 import PeriodFilter, { type Period } from '../components/PeriodFilter'
+import ExportMenu from '../components/ExportMenu'
+import Pagination from '../components/Pagination'
+import { ErrorState, EmptyState, SkeletonRows, CardSkeleton } from '../components/states'
+import { downloadCsv, downloadJson, printPdf } from '../utils/export'
 
 // ── 5 lifecycle stages grouping the 12 personas ──────────────────────
 const STAGES: Array<{ key: string; label: string; tip: string; wave: number; personas: string[] }> = [
@@ -80,21 +84,23 @@ const STATUS_SORT: Record<string, number> = {
   halted: 0, blocked: 1, in_review: 2, in_progress: 3, clear_to_close: 4,
 }
 
-const CARDS: Array<{ key: string; label: string; statuses: string[]; count: (k: PipelineKPIs) => number; accent: string }> = [
-  { key: 'all', label: 'Total', statuses: [], count: (k) => k.total, accent: 'text-slate-900' },
-  { key: 'clear_to_close', label: 'Clear to Close', statuses: ['clear_to_close'], count: (k) => k.clear_to_close, accent: 'text-green-600' },
-  { key: 'in_review', label: 'In Review', statuses: ['in_review'], count: (k) => k.in_review, accent: 'text-amber-600' },
-  { key: 'blocked', label: 'Blocked / Halted', statuses: ['blocked', 'halted'], count: (k) => k.blocked + k.halted, accent: 'text-rose-600' },
+// Single-status cards (key === the status filter value) so the view is always
+// one status → clean server-side pagination.
+const CARDS: Array<{ key: string; label: string; count: (k: PipelineKPIs) => number; accent: string }> = [
+  { key: 'all', label: 'Total', count: (k) => k.total, accent: 'text-slate-900' },
+  { key: 'clear_to_close', label: 'Clear to Close', count: (k) => k.clear_to_close, accent: 'text-green-600' },
+  { key: 'blocked', label: 'Blocked', count: (k) => k.blocked, accent: 'text-rose-600' },
+  { key: 'halted', label: 'Halted', count: (k) => k.halted, accent: 'text-red-700' },
 ]
-// Built from the distinct loan_type values that actually exist in the data
-// (conforming / government / jumbo / non_qm) so every option filters real rows.
-const LOAN_TYPES: Array<{ value: string; label: string }> = [
-  { value: '', label: 'All Loan Types' },
-  { value: 'conforming', label: 'Conforming' },
-  { value: 'government', label: 'Government (FHA/VA)' },
-  { value: 'jumbo', label: 'Jumbo' },
-  { value: 'non_qm', label: 'Non-QM' },
-]
+// Loan-type dropdown options are populated dynamically from the distinct
+// loan_type values in the API response (see `loanTypes` state). These are the
+// display labels for known codes; anything else is title-cased generically.
+const LOAN_TYPE_LABEL: Record<string, string> = {
+  conforming: 'Conforming', government: 'Government (FHA/VA)', jumbo: 'Jumbo',
+  non_qm: 'Non-QM', fha: 'FHA', va: 'VA', usda: 'USDA', other: 'Other',
+}
+const prettyLoanType = (t: string) =>
+  LOAN_TYPE_LABEL[t] ?? t.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 
 function money(v: number | null) {
   if (v == null) return '—'
@@ -116,15 +122,17 @@ function stageState(personas: string[], wave: number, decisions: PipelineRow['de
   return 'pending'
 }
 
-async function loadPipeline(statuses: string[], type: string, search: string, period: Period): Promise<PipelineResponse> {
-  const common = { type, search, limit: 200, period: period === 'all' ? undefined : period }
-  if (statuses.length <= 1) return fetchPipeline({ ...common, status: statuses[0] })
-  const parts = await Promise.all(statuses.map((s) => fetchPipeline({ ...common, status: s })))
-  return {
-    kpis: parts[0].kpis,
-    total: parts.reduce((a, p) => a + p.total, 0),
-    applications: parts.flatMap((p) => p.applications).slice(0, 200),
-  }
+function loadPipeline(
+  status: string, type: string, search: string, period: Period, limit: number, offset: number,
+): Promise<PipelineResponse> {
+  return fetchPipeline({
+    status: status || undefined,
+    type,
+    search,
+    period: period === 'all' ? undefined : period,
+    limit,
+    offset,
+  })
 }
 
 export default function Pipeline() {
@@ -135,13 +143,24 @@ export default function Pipeline() {
   const [search, setSearch] = useState('')
   const [type, setType] = useState('')
   const [period, setPeriod] = useState<Period>('all')
-  // statuses = actual query filter; statusSel = the dropdown's single selection
-  // (also drives KPI-card highlight, keeping cards and dropdown in sync).
-  const [statuses, setStatuses] = useState<string[]>([])
-  const [statusSel, setStatusSel] = useState('')
+  const [statusSel, setStatusSel] = useState('') // single status filter; '' = all
+  const [limit, setLimit] = useState(50)
+  const [offset, setOffset] = useState(0)
+  const [reloadKey, setReloadKey] = useState(0) // bump to retry after an error
   const [expanded, setExpanded] = useState<{ appId: string; stage: string } | null>(null)
   const [loanCache, setLoanCache] = useState<Record<string, LoanDetail>>({})
   const [loanLoading, setLoanLoading] = useState<string | null>(null)
+  const [loanTypes, setLoanTypes] = useState<string[]>([])
+
+  // One-time: collect the distinct loan_type values to populate the dropdown.
+  useEffect(() => {
+    fetchPipeline({ limit: 500 })
+      .then((r) => {
+        const uniq = [...new Set(r.applications.map((a) => a.loan_type).filter(Boolean))] as string[]
+        setLoanTypes(uniq.sort())
+      })
+      .catch(() => undefined)
+  }, [])
 
   useEffect(() => {
     let alive = true
@@ -150,10 +169,11 @@ export default function Pipeline() {
       setError(null)
       setExpanded(null)
       try {
-        const res = await loadPipeline(statuses, type, search, period)
+        const res = await loadPipeline(statusSel, type, search, period, limit, offset)
         if (alive) setData(res)
       } catch (e) {
-        if (alive) setError(e instanceof Error ? e.message : 'Failed to load pipeline')
+        console.error('Pipeline load failed:', e)
+        if (alive) setError('Could not load pipeline data.')
       } finally {
         if (alive) setLoading(false)
       }
@@ -162,33 +182,28 @@ export default function Pipeline() {
       alive = false
       clearTimeout(t)
     }
-  }, [search, type, period, statuses])
+  }, [search, type, period, statusSel, limit, offset, reloadKey])
 
-  // Clicking a KPI card sets the status filter (and syncs the dropdown).
+  // Any filter change resets back to page 1.
+  function applySearch(q: string) { setSearch(q); setOffset(0) }
+  function applyType(v: string) { setType(v); setOffset(0) }
+  function applyPeriod(p: Period) { setPeriod(p); setOffset(0) }
+  function applyLimit(l: number) { setLimit(l); setOffset(0) }
   function pickCard(card: (typeof CARDS)[number]) {
-    const isActive = cardActive(card.key)
-    setStatuses(isActive && card.key !== 'all' ? [] : card.statuses)
-    setStatusSel(isActive && card.key !== 'all' ? '' : card.key === 'all' ? '' : card.key)
+    setStatusSel(cardActive(card.key) && card.key !== 'all' ? '' : card.key === 'all' ? '' : card.key)
+    setOffset(0)
   }
-  // Dropdown selection sets a single granular status (and syncs the card).
-  function pickStatus(val: string) {
-    setStatusSel(val)
-    setStatuses(val ? [val] : [])
-  }
-  // A card is "active" when its key matches the current selection
-  // (the Blocked card also lights up for the granular "Halted").
+  function pickStatus(val: string) { setStatusSel(val); setOffset(0) }
   function cardActive(key: string): boolean {
-    if (key === 'all') return statusSel === ''
-    if (key === 'blocked') return statusSel === 'blocked' || statusSel === 'halted'
-    return statusSel === key
+    return key === 'all' ? statusSel === '' : statusSel === key
   }
 
   function resetFilters() {
     setSearch('')
     setType('')
     setPeriod('all')
-    setStatuses([])
     setStatusSel('')
+    setOffset(0)
   }
 
   function toggleStage(appId: string, stageKey: string, e: React.MouseEvent) {
@@ -213,57 +228,81 @@ export default function Pipeline() {
   const kpis = data?.kpis
   const COLS = 4 + STAGES.length
 
+  // Export the current (filtered) grid — one row per loan, one column per stage.
+  function exportCsv() {
+    const headers = ['Application', 'Borrower', 'Loan', 'Type', 'Status', ...STAGES.map((s) => s.label)]
+    const out = rows.map((r) => {
+      const halted = r.status === 'halted' || r.decisions['fraud_screening']?.outcome === 'block'
+      return [
+        r.application_id, r.borrower_name, r.loan_amount ?? '', r.loan_type ?? '',
+        STATUS_BADGE[r.status]?.label ?? r.status,
+        ...STAGES.map((s) => STAGE_ICON[stageState(s.personas, s.wave, r.decisions, halted)].label),
+      ]
+    })
+    downloadCsv(headers, out, 'accord_pipeline')
+  }
+  function exportJson() {
+    downloadJson(
+      { exported_at: new Date().toISOString(), count: rows.length, filters: { search, type, status: statusSel, period }, applications: rows },
+      'accord_pipeline',
+    )
+  }
+  const exportItems = [
+    { label: 'Export as CSV', run: exportCsv },
+    { label: 'Export as PDF', run: printPdf },
+    { label: 'Export raw JSON', run: exportJson },
+  ]
+
   return (
     <div className="mx-auto max-w-7xl px-6 py-6">
-      <div className="mb-5 flex items-baseline justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-slate-900">All Applications</h1>
-          <p className="text-sm text-slate-500">
-            {data ? `${data.total.toLocaleString()} loans across 5 lifecycle stages` : ' '}
-          </p>
-        </div>
-        <span className="text-sm text-slate-500">
-          {data ? `${rows.length} of ${data.total.toLocaleString()} applications` : ' '}
-        </span>
+      <div className="mb-5">
+        <h1 className="text-xl font-semibold text-slate-900">All Applications</h1>
+        <p className="text-sm text-slate-500">
+          {data ? `${data.total.toLocaleString()} loans across 5 lifecycle stages` : ' '}
+        </p>
       </div>
 
       {/* KPI filter cards */}
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {CARDS.map((c) => {
-          const active = cardActive(c.key)
-          return (
-            <button
-              key={c.key}
-              onClick={() => pickCard(c)}
-              className={`rounded-xl border bg-white p-4 text-left transition hover:shadow-sm ${
-                active ? 'border-brand ring-1 ring-brand/30' : 'border-slate-200'
-              }`}
-            >
-              <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{c.label}</div>
-              <div className={`mt-1 text-3xl font-semibold ${c.accent}`}>
-                {kpis ? c.count(kpis).toLocaleString() : '—'}
-              </div>
-            </button>
-          )
-        })}
+        {!kpis
+          ? Array.from({ length: 4 }).map((_, i) => <CardSkeleton key={i} />)
+          : CARDS.map((c) => {
+              const active = cardActive(c.key)
+              return (
+                <button
+                  key={c.key}
+                  onClick={() => pickCard(c)}
+                  className={`rounded-xl border bg-white p-4 text-left transition hover:shadow-sm ${
+                    active ? 'border-brand ring-1 ring-brand/30' : 'border-slate-200'
+                  }`}
+                >
+                  <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{c.label}</div>
+                  <div className={`mt-1 text-3xl font-semibold ${c.accent}`}>{c.count(kpis).toLocaleString()}</div>
+                </button>
+              )
+            })}
       </div>
 
       {/* Filters: search (≈40%) + loan type + status + date range, one row */}
       <div className="mb-2 flex flex-wrap items-center gap-3">
-        <LoanSearch value={search} onSubmit={setSearch} className="min-w-[260px] flex-[2]" />
+        <LoanSearch value={search} onSubmit={applySearch} className="min-w-[260px] flex-[2]" />
         <select
           value={type}
-          onChange={(e) => setType(e.target.value)}
+          onChange={(e) => applyType(e.target.value)}
           className="min-w-[150px] flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-brand"
         >
-          {LOAN_TYPES.map((t) => (
-            <option key={t.value} value={t.value}>
-              {t.label}
+          <option value="">All Loan Types</option>
+          {loanTypes.map((t) => (
+            <option key={t} value={t}>
+              {prettyLoanType(t)}
             </option>
           ))}
         </select>
         <StatusFilter value={statusSel} onChange={pickStatus} className="min-w-[150px] flex-1" />
-        <PeriodFilter value={period} onChange={setPeriod} className="min-w-[140px] flex-1" />
+        <div className="ml-auto flex items-center gap-3">
+          <PeriodFilter value={period} onChange={applyPeriod} />
+          <ExportMenu items={exportItems} />
+        </div>
       </div>
       <div className="mb-4 h-5">
         {(search || type || statusSel || period !== 'all') && (
@@ -298,26 +337,39 @@ export default function Pipeline() {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {/* Legend row — colored word chips matching the grid cells */}
-            <tr>
-              <td colSpan={COLS} className="bg-gray-50 px-4 py-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  {LEGEND.map((l) => (
-                    <span key={l.label} className={`rounded-md px-2 py-0.5 text-[11px] font-semibold ${l.pill}`}>
-                      {l.label}
-                    </span>
-                  ))}
-                </div>
-              </td>
-            </tr>
-
-            {loading && (
-              <tr><td colSpan={COLS} className="px-4 py-12 text-center text-slate-400">Loading pipeline…</td></tr>
+            {!error && !(!loading && rows.length === 0) && (
+              <tr>
+                <td colSpan={COLS} className="bg-gray-50 px-4 py-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {LEGEND.map((l) => (
+                      <span key={l.label} className={`rounded-md px-2 py-0.5 text-[11px] font-semibold ${l.pill}`}>
+                        {l.label}
+                      </span>
+                    ))}
+                  </div>
+                </td>
+              </tr>
             )}
+
+            {loading && <SkeletonRows rows={8} cols={COLS} />}
             {error && !loading && (
-              <tr><td colSpan={COLS} className="px-4 py-12 text-center text-rose-600">{error}</td></tr>
+              <tr>
+                <td colSpan={COLS} className="p-4">
+                  <ErrorState message="Could not load pipeline data." onRetry={() => setReloadKey((k) => k + 1)} />
+                </td>
+              </tr>
             )}
             {!loading && !error && rows.length === 0 && (
-              <tr><td colSpan={COLS} className="px-4 py-12 text-center text-slate-400">No applications match these filters.</td></tr>
+              <tr>
+                <td colSpan={COLS} className="p-4">
+                  <EmptyState
+                    title="No loans match this filter"
+                    hint="Try adjusting your search or filters."
+                    actionLabel="Clear filters"
+                    onAction={resetFilters}
+                  />
+                </td>
+              </tr>
             )}
 
             {!loading && !error && rows.map((r) => {
@@ -378,6 +430,9 @@ export default function Pipeline() {
             })}
           </tbody>
         </table>
+        {!loading && !error && data && data.total > 0 && (
+          <Pagination total={data.total} limit={limit} offset={offset} onOffset={setOffset} onLimit={applyLimit} />
+        )}
       </div>
     </div>
   )

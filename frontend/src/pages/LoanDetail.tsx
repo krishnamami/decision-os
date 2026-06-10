@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import ExportMenu from '../components/ExportMenu'
+import { downloadCsv, downloadJson, printPdf } from '../utils/export'
 import { fetchLoan } from '../api/client'
 import type { LoanDetail as LoanDetailT } from '../types/accord'
 import BorrowerCard from '../components/BorrowerCard'
@@ -58,11 +60,27 @@ export default function LoanDetail() {
 
   const persona = loan.blocking_persona?.replace(/_/g, ' ')
 
+  function exportLoanCsv() {
+    const headers = ['Persona', 'Wave', 'Outcome', 'Confidence', 'Mode', 'Reviewed', 'Reviewer', 'Explanation']
+    const out = loan!.decisions.map((d) => [
+      d.persona_name, d.wave, d.outcome, d.confidence ?? '', d.mode, d.reviewed, d.reviewer ?? '', d.explanation,
+    ])
+    downloadCsv(headers, out, `accord_loan_${loan!.application_id}`)
+  }
+  const exportItems = [
+    { label: 'Export as JSON', run: () => downloadJson(loan, `accord_loan_${loan!.application_id}`) },
+    { label: 'Export as CSV', run: exportLoanCsv },
+    { label: 'Export as PDF', run: printPdf },
+  ]
+
   return (
     <div className="mx-auto max-w-6xl px-6 py-6">
-      <Link to="/pipeline" className="text-sm font-medium text-brand hover:underline">
-        ← Back to Pipeline
-      </Link>
+      <div className="flex items-center justify-between">
+        <Link to="/pipeline" className="text-sm font-medium text-brand hover:underline">
+          ← Back to Pipeline
+        </Link>
+        <ExportMenu label="📄 Export this loan" items={exportItems} />
+      </div>
 
       <div className="mt-4 space-y-5">
         <BorrowerCard loan={loan} />
