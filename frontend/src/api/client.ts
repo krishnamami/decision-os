@@ -127,8 +127,15 @@ export function fetchSimHistory(): Promise<{ simulations: SimHistoryRow[] }> {
   return getJSON(`/api/accord/mirofish/simulate/history`)
 }
 
-export function runSimulationCustom(scenarioName: string): Promise<SimulationResult> {
-  return runSimulation(scenarioName)
+// Custom what-if: send overrides via `custom` (NOT scenario_name — the backend
+// checks scenario_name first and 404s on unknown names). `custom.name` becomes
+// the scenario label.
+export function runSimulationCustom(
+  name: string,
+  overrides: Record<string, unknown>,
+  type?: 'policy' | 'stress' | 'regulatory',
+): Promise<SimulationResult> {
+  return postJSON<SimulationResult>(`/api/accord/mirofish/simulate`, { custom: { name, type, overrides } })
 }
 
 // ── Analytics ────────────────────────────────────────────────────────

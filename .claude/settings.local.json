@@ -210,7 +210,9 @@
       "Bash(node _a2.mjs)",
       "Bash(rm -f _a2.mjs)",
       "Bash(node _full.mjs)",
-      "Bash(rm -f _full.mjs)"
+      "Bash(rm -f _full.mjs)",
+      "Bash(node _ctr.mjs)",
+      "Bash(rm -f _ctr.mjs)"
     ]
   }
 }
