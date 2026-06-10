@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import date, datetime, timezone
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from fastapi import APIRouter, Body, HTTPException, Query
 
@@ -113,6 +114,32 @@ def _require_db() -> None:
         raise HTTPException(503, "DATABASE_URL not configured")
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Tiny in-process TTL cache for portfolio-wide AGGREGATES (KPIs, analytics,
+# compliance health). These scan the whole decision table and change
+# slowly; per-loan reads are never cached, so an edit shows immediately.
+# Writes (approve / override / revert) clear the cache so aggregates stay
+# correct. Single event loop → a plain dict is safe (no locks).
+# ─────────────────────────────────────────────────────────────────────
+
+AGG_TTL_SECONDS = 60.0
+_AGG_CACHE: dict[str, tuple[float, Any]] = {}
+
+
+async def cached_agg(key: str, producer: Callable[[], Awaitable[Any]], ttl: float = AGG_TTL_SECONDS) -> Any:
+    now = time.monotonic()
+    hit = _AGG_CACHE.get(key)
+    if hit is not None and (now - hit[0]) < ttl:
+        return hit[1]
+    value = await producer()
+    _AGG_CACHE[key] = (now, value)
+    return value
+
+
+def invalidate_agg_cache() -> None:
+    _AGG_CACHE.clear()
+
+
 def _J(v: Any) -> Any:
     if isinstance(v, (bytes, bytearray)):
         v = v.decode("utf-8", "replace")
@@ -177,6 +204,12 @@ def _derive_urgency(flags: dict, lock_days: Optional[int]) -> str:
     return "ON TRACK"
 
 
+async def _flags_producer(tenant_id: str) -> dict[str, dict]:
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        return await _decision_flags(conn, tenant_id)
+
+
 async def _decision_flags(conn, tenant_id: str) -> dict[str, dict]:
     """One pass over the latest decision per (app, decision) → per-app
     flags used for status, urgency, and KPIs across the whole tenant."""
@@ -221,17 +254,18 @@ async def list_pipeline(
 ) -> dict:
     _require_db()
     pool = await _get_pool()
+
+    # Portfolio flags + KPIs are cached (the whole-table scan); the list
+    # query below is per-request (cheap, filter-dependent).
+    flags_by_app = await cached_agg(f"flags:{tenant_id}", lambda: _flags_producer(tenant_id))
+    kpis = {"total": 0, "in_review": 0, "blocked": 0, "clear_to_close": 0, "halted": 0}
+    for flags in flags_by_app.values():
+        kpis["total"] += 1
+        st = _derive_status(flags)
+        if st in kpis:
+            kpis[st] += 1
+
     async with pool.acquire() as conn:
-        flags_by_app = await _decision_flags(conn, tenant_id)
-
-        # KPIs over the full portfolio (independent of list filters).
-        kpis = {"total": 0, "in_review": 0, "blocked": 0, "clear_to_close": 0, "halted": 0}
-        for flags in flags_by_app.values():
-            kpis["total"] += 1
-            st = _derive_status(flags)
-            if st in kpis:
-                kpis[st] += 1
-
         where = ["es.tenant_id = $1"]
         params: list[Any] = [tenant_id]
         if type:
@@ -697,6 +731,7 @@ async def approve_decision(
                                 actor=reviewer, action="decision_approved",
                                 target=decision_id, detail={"notes": notes})
             updated = await _latest_decision(conn, application_id, decision_id, tenant_id)
+    invalidate_agg_cache()  # portfolio aggregates changed
     return {"ok": True, "decision": _decision_view(updated)}
 
 
@@ -739,6 +774,7 @@ async def override_decision(
                                 target=decision_id,
                                 detail={"from": cur["outcome"], "to": new_outcome, "reason": reason})
             updated = await _latest_decision(conn, application_id, decision_id, tenant_id)
+    invalidate_agg_cache()  # portfolio aggregates changed
     return {"ok": True, "decision": _decision_view(updated)}
 
 
@@ -812,4 +848,5 @@ async def revert_decision(
                                 target=decision_id,
                                 detail={"reason": reason, "stale_downstream": downstream})
             updated = await _latest_decision(conn, application_id, decision_id, tenant_id)
+    invalidate_agg_cache()  # portfolio aggregates changed
     return {"ok": True, "decision": _decision_view(updated), "stale_downstream": downstream}
