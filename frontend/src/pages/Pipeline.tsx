@@ -14,12 +14,12 @@ import StatusFilter from '../components/StatusFilter'
 import PeriodFilter, { type Period } from '../components/PeriodFilter'
 
 // ── 5 lifecycle stages grouping the 12 personas ──────────────────────
-const STAGES: Array<{ key: string; label: string; wave: number; personas: string[] }> = [
-  { key: 'pre_uw', label: 'PRE-UNDERWRITING', wave: 1, personas: ['credit_assessment', 'fraud_screening', 'compliance_check', 'employment_reconciliation'] },
-  { key: 'uw', label: 'UNDERWRITING', wave: 2, personas: ['income_verification', 'ltv_assessment', 'dti_calculation'] },
-  { key: 'product', label: 'PRODUCT', wave: 3, personas: ['product_eligibility', 'rate_pricing'] },
-  { key: 'decision', label: 'DECISION', wave: 4, personas: ['underwriting_decision'] },
-  { key: 'closing', label: 'CLOSING', wave: 5, personas: ['approval_routing', 'closing_readiness'] },
+const STAGES: Array<{ key: string; label: string; tip: string; wave: number; personas: string[] }> = [
+  { key: 'pre_uw', label: 'VERIFY', tip: 'Credit, fraud, compliance & employment checks', wave: 1, personas: ['credit_assessment', 'fraud_screening', 'compliance_check', 'employment_reconciliation'] },
+  { key: 'uw', label: 'UNDERWRITE', tip: 'Income verification, property value & debt analysis', wave: 2, personas: ['income_verification', 'ltv_assessment', 'dti_calculation'] },
+  { key: 'product', label: 'ELIGIBILITY', tip: 'Loan program & pricing eligibility', wave: 3, personas: ['product_eligibility', 'rate_pricing'] },
+  { key: 'decision', label: 'DECIDE', tip: 'Senior underwriter final review', wave: 4, personas: ['underwriting_decision'] },
+  { key: 'closing', label: 'CLOSE', tip: 'Routing & closing readiness', wave: 5, personas: ['approval_routing', 'closing_readiness'] },
 ]
 
 const PERSONA_NAME: Record<string, string> = {
@@ -292,7 +292,7 @@ export default function Pipeline() {
               <th className="px-4 py-3 text-left">Type</th>
               <th className="px-4 py-3 text-left">Status</th>
               {STAGES.map((s) => (
-                <th key={s.key} className="px-2 py-3 text-center">{s.label}</th>
+                <th key={s.key} title={s.tip} className="cursor-help px-2 py-3 text-center">{s.label}</th>
               ))}
             </tr>
           </thead>

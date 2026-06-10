@@ -152,7 +152,9 @@
       "Bash(node _e2e.mjs)",
       "Bash(rm -f _e2e.mjs)",
       "Bash(node _ps.mjs)",
-      "Bash(rm -f _ps.mjs)"
+      "Bash(rm -f _ps.mjs)",
+      "Bash(node _h.mjs)",
+      "Bash(rm -f _h.mjs)"
     ]
   }
 }
