@@ -13,7 +13,7 @@ export default function ActivityFeed({ activity }: { activity: LoanDetail['activ
     <div className="rounded-xl border border-slate-200 bg-white p-5">
       <div className="mb-3 text-sm font-semibold text-slate-900">Activity</div>
       {activity.length === 0 ? (
-        <p className="text-sm text-slate-400">No activity yet.</p>
+        <p className="text-sm text-slate-400">No data available.</p>
       ) : (
         <ul className="space-y-3">
           {activity.map((a, i) => (

@@ -53,12 +53,15 @@ export default function LoanDetail() {
     setNote(msg)
     setTimeout(() => setNote(null), 2500)
   }
+  const scrollToDebate = () =>
+    document.getElementById('mirofish-debate')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 
   if (loading) return <div className="p-12 text-center text-slate-400">Loading {appId}…</div>
   if (error) return <div className="p-12 text-center text-red-600">{error}</div>
   if (!loan) return null
 
   const persona = loan.blocking_persona?.replace(/_/g, ' ')
+  const blockReason = loan.decisions.find((d) => d.outcome === 'block')?.explanation
 
   function exportLoanCsv() {
     const headers = ['Persona', 'Wave', 'Outcome', 'Confidence', 'Mode', 'Reviewed', 'Reviewer', 'Explanation']
@@ -77,7 +80,7 @@ export default function LoanDetail() {
     <div className="mx-auto max-w-6xl px-6 py-6">
       <div className="flex items-center justify-between">
         <Link to="/pipeline" className="text-sm font-medium text-brand hover:underline">
-          ← Back to Pipeline
+          ← All Applications
         </Link>
         <ExportMenu label="📄 Export this loan" items={exportItems} />
       </div>
@@ -87,29 +90,36 @@ export default function LoanDetail() {
 
         {/* Block / halt action bar */}
         {loan.status === 'halted' && (
-          <div className="flex flex-wrap items-center gap-3 rounded-xl bg-red-700 px-5 py-4 text-white">
-            <span className="text-lg">⛔</span>
-            <span className="font-semibold tracking-wide">PIPELINE HALTED — Fraud block</span>
-            <div className="ml-auto flex gap-2">
-              <button onClick={() => act('Referred to SAR (demo)')} className="rounded-lg bg-white/15 px-3 py-1.5 text-sm font-medium hover:bg-white/25">
-                Refer to SAR
-              </button>
-              <button onClick={() => act('Fraud flag cleared (demo)')} className="rounded-lg bg-white/15 px-3 py-1.5 text-sm font-medium hover:bg-white/25">
-                Clear fraud flag
-              </button>
+          <div className="rounded-xl bg-red-700 px-5 py-4 text-white">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-lg">⛔</span>
+              <span className="font-semibold tracking-wide">PIPELINE HALTED — Fraud block</span>
+              <div className="ml-auto flex flex-wrap gap-2">
+                <button onClick={() => act('Referred to SAR (demo)')} className="rounded-lg bg-white/15 px-3 py-1.5 text-sm font-medium hover:bg-white/25">
+                  Refer to SAR
+                </button>
+                <button onClick={() => act('Fraud flag cleared (demo)')} className="rounded-lg bg-white/15 px-3 py-1.5 text-sm font-medium hover:bg-white/25">
+                  Clear fraud flag
+                </button>
+                <button onClick={scrollToDebate} className="rounded-lg bg-white px-3 py-1.5 text-sm font-semibold text-red-700 hover:bg-white/90">
+                  🐟 Run MiroFish Debate
+                </button>
+              </div>
             </div>
+            {blockReason && <p className="mt-2 text-sm leading-relaxed text-white/90">{blockReason}</p>}
           </div>
         )}
         {loan.status === 'blocked' && (
-          <div className="flex flex-wrap items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-5 py-4">
-            <span className="font-semibold text-red-800">
-              Blocked{persona ? ` at ${persona}` : ''}
-            </span>
-            <div className="ml-auto flex gap-2">
-              <ActionButton label="Request docs" onClick={() => act('Document request sent (demo)')} />
-              <ActionButton label="Request override" onClick={() => act('Override requested (demo)')} />
-              <ActionButton label="Deny + adverse action" kind="danger" onClick={() => act('Adverse-action notice queued (demo)')} />
+          <div className="rounded-xl border border-red-200 bg-red-50 px-5 py-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="font-semibold text-red-800">Blocked{persona ? ` at ${persona}` : ''}</span>
+              <div className="ml-auto flex flex-wrap gap-2">
+                <ActionButton label="Request documents" onClick={() => act('Document request sent (demo)')} />
+                <ActionButton label="Request override" onClick={() => act('Override requested (demo)')} />
+                <ActionButton label="🐟 Run MiroFish Debate" kind="brand" onClick={scrollToDebate} />
+              </div>
             </div>
+            {blockReason && <p className="mt-2 text-sm leading-relaxed text-red-900/80">{blockReason}</p>}
           </div>
         )}
 
@@ -120,7 +130,9 @@ export default function LoanDetail() {
         )}
 
         {/* MiroFish debate — the headline interactive feature */}
-        <MirofishDebate appId={loan.application_id} />
+        <div id="mirofish-debate">
+          <MirofishDebate appId={loan.application_id} />
+        </div>
 
         {/* Decisions + side rail */}
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">

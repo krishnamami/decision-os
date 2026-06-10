@@ -198,7 +198,19 @@
       "Bash(curl -s -o /dev/null -w \"http://localhost:80  \\(docker fe\\) -> %{http_code}\\\\n\" \"http://localhost/\")",
       "Bash(node _docker.mjs)",
       "Bash(rm -f _docker.mjs)",
-      "Bash(awk '{print $1, $\\(NF\\)}')"
+      "Bash(awk '{print $1, $\\(NF\\)}')",
+      "Bash(node _stage.mjs)",
+      "Bash(rm -f _stage.mjs)",
+      "Bash(node _detail.mjs)",
+      "Bash(rm -f _detail.mjs)",
+      "Bash(node _sim.mjs)",
+      "Bash(rm -f _sim.mjs)",
+      "Bash(node _audit.mjs)",
+      "Bash(rm -f _audit.mjs)",
+      "Bash(node _a2.mjs)",
+      "Bash(rm -f _a2.mjs)",
+      "Bash(node _full.mjs)",
+      "Bash(rm -f _full.mjs)"
     ]
   }
 }

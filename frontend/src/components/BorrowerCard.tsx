@@ -38,7 +38,7 @@ export default function BorrowerCard({ loan }: { loan: LoanDetail }) {
             {(loan.borrower.name || '?').slice(0, 1).toUpperCase()}
           </div>
           <div>
-            <div className="text-xl font-semibold text-slate-900">{loan.borrower.name}</div>
+            <div className="text-[22px] font-bold text-slate-900">{loan.borrower.name}</div>
             <div className="text-sm text-slate-500">
               {loan.borrower.employer || '—'}
               {loan.borrower.age ? ` · ${loan.borrower.age}` : ''}

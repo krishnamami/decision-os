@@ -20,7 +20,10 @@ const LOADING_STAGES = [
 ]
 // Plain-English verdict (not the raw outcome word).
 const VERDICT_LABEL: Record<string, string> = {
-  allow: 'Approve', recommend: 'Send for review', escalate: 'Investigate further', block: 'Decline',
+  allow: 'Approve this loan',
+  recommend: 'Approve with conditions',
+  escalate: 'Investigate further before deciding',
+  block: 'Do not approve',
 }
 const VERDICT_SUB: Record<string, string> = {
   allow: 'The agents agree this loan clears the bar.',

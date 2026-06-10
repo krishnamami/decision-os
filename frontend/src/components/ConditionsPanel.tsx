@@ -13,7 +13,7 @@ export default function ConditionsPanel({ conditions }: { conditions: Array<Reco
         Conditions ({conditions.length})
       </div>
       {conditions.length === 0 ? (
-        <p className="text-sm text-slate-400">No open conditions.</p>
+        <p className="text-sm text-slate-400">No data available.</p>
       ) : (
         <ul className="space-y-2.5">
           {conditions.map((c, i) => {
