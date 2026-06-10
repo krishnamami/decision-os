@@ -2678,6 +2678,41 @@ backend `?format=csv` for full-portfolio export; donut is approval-rate 2-way
 
 ---
 
+### Session 21 — June 10 2026 — Accord interactivity polish + container verified
+
+Drove every interactive element to spec and verified the full stack end-to-end
+(12/12 headless click-through). All changes committed + pushed to main and the
+frontend container rebuilt so http://localhost reflects them.
+
+- **Loan Detail** (`/pipeline/:appId`): PersonaAccordion regrouped into 5 stage
+  cards (VERIFY/UNDERWRITE/ELIGIBILITY/DECIDE/CLOSE) with a per-stage "Overall"
+  status; "Decision Journey" header; block/halt action bars show the blocking
+  reason + a "🐟 Run MiroFish Debate" button that scrolls to the debate; back =
+  "All Applications"; 22px name; empty sections say "No data available".
+- **Pipeline**: clicking a stage chip expands an inline detail row (colored
+  left border by status) with each persona's explanation/signals/rule.
+- **Agent Debate**: plain-English verdicts — Approve this loan / Approve with
+  conditions / Investigate further before deciding / Do not approve.
+- **Policy Simulator REBUILT** as 12 dropdown cards in 3 categories (4 smart
+  options + range-validated Custom each; Combined Stress takes rate bps + price
+  %). Run posts overrides via `custom` (NOT `scenario_name` — backend 404s on
+  unknown names; `runSimulationCustom` → `{custom:{name,type,overrides}}`).
+  Backend currently applies 6 of 10 override keys (DTI back_dti_max, credit
+  min_score, LTV max_ltv, _stress rate_delta/price_delta_pct, conforming_limit);
+  min_dcr, unemployment_rate, fha_eligibility.*, usury_cap run but flip 0 loans
+  (UI complete, backend application TODO).
+- **Audit trail**: version history now uses vN badges + block/approve tint;
+  authority chain gained a Level column + "⚠ Exceeds" + an issues banner;
+  "No audit records found for {id}"; reports section = "Compliance Reports"
+  with a "Coming in next release" toast on every action button.
+
+**Container note:** Docker stack runs on http://localhost (nginx :80 → api :8000
+→ RDS; redis :6379; postgres skipped). Rebuild after frontend changes with
+`docker-compose up --build -d frontend` (base images are cached, so no
+CloudFront pull). `docker-compose down` to stop.
+
+---
+
 ## How to resume next session
 
 Open Claude Code:
@@ -3049,4 +3084,4 @@ How to run smoke tests:
 
 ---
 
-*Decision OS · CONTEXT.md · Updated June 10 2026 (Accord customer product built end-to-end — MiroFish engine, Accord API over RDS, React frontend with 4 products (Pipeline/Analytics/Simulation/Audit), and Dockerized stack verified on http://localhost)*
+*Decision OS · CONTEXT.md · Updated June 10 2026 (Session 21 — Accord fully interactive: 5-stage loan-detail accordion, plain-English debate verdicts, Policy Simulator rebuilt as 12 dropdown cards w/ custom overrides, audit trail version badges + Compliance Reports; 12/12 click-through verified; Docker stack live on http://localhost)*
