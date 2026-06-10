@@ -142,7 +142,17 @@
       "Bash(node _hc2.mjs)",
       "Bash(rm -f _hc2.mjs)",
       "Bash(node _hc3.mjs)",
-      "Bash(rm -f _hc3.mjs)"
+      "Bash(rm -f _hc3.mjs)",
+      "Bash(node _verify.mjs)",
+      "Bash(rm -f _verify.mjs)",
+      "Bash(node _v2.mjs)",
+      "Bash(rm -f _v2.mjs)",
+      "Bash(curl -s -o /dev/null -w \"frontend :5173 → %{http_code}\\\\n\" http://localhost:5173/)",
+      "Bash(curl -s -o /dev/null -w \"backend  :8000 → %{http_code}\\\\n\" \"http://localhost:8000/api/accord/pipeline?limit=1\")",
+      "Bash(node _e2e.mjs)",
+      "Bash(rm -f _e2e.mjs)",
+      "Bash(node _ps.mjs)",
+      "Bash(rm -f _ps.mjs)"
     ]
   }
 }

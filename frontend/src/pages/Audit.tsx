@@ -288,9 +288,13 @@ export default function Audit() {
 
       {/* 5. Reports library */}
       <section className="space-y-3">
-        <div className="flex items-baseline justify-between">
-          <h2 className="text-lg font-bold text-slate-900">Reports Library</h2>
-          <span className="text-xs font-medium text-slate-500">🔒 Governance admin access required</span>
+        <h2 className="text-lg font-bold text-slate-900">Reports Library</h2>
+        <div className="flex items-center gap-2.5 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm text-blue-800">
+          <span className="text-base">🔒</span>
+          <span>
+            These regulatory reports require <span className="font-semibold">governance admin access</span>.
+            Generating or exporting any report is audit-logged.
+          </span>
         </div>
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
           <table className="min-w-full text-sm">

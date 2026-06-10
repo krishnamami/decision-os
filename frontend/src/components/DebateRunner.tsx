@@ -18,6 +18,17 @@ const LOADING_STAGES = [
   '🐟 Round 2: Agents sharing findings…',
   '🐟 Round 3: Building consensus…',
 ]
+// Plain-English verdict (not the raw outcome word).
+const VERDICT_LABEL: Record<string, string> = {
+  allow: 'Approve', recommend: 'Send for review', escalate: 'Investigate further', block: 'Decline',
+}
+const VERDICT_SUB: Record<string, string> = {
+  allow: 'The agents agree this loan clears the bar.',
+  recommend: 'Strong overall, but at least one agent wants a human to take a look.',
+  escalate: 'There are open questions a senior reviewer should resolve before deciding.',
+  block: 'The agents found a hard stop that disqualifies this loan as it stands.',
+}
+const POS_SHORT: Record<string, string> = { allow: 'approve', recommend: 'review', escalate: 'investigate', block: 'decline' }
 
 function VoteBar({ counts }: { counts: Record<string, number> }) {
   const total = Object.values(counts).reduce((a, b) => a + b, 0) || 1
@@ -71,6 +82,7 @@ export default function DebateRunner() {
   const [stage, setStage] = useState(0)
   const [result, setResult] = useState<DebateResult | null>(null)
   const [showFull, setShowFull] = useState(false)
+  const [question, setQuestion] = useState('Should this loan be approved?')
   const dropRef = useRef<HTMLDivElement>(null)
 
   // Debounced search.
@@ -126,7 +138,7 @@ export default function DebateRunner() {
     setResult(null)
     setShowFull(false)
     try {
-      setResult(await runDebate(selected.application_id))
+      setResult(await runDebate(selected.application_id, question.trim() || undefined))
     } finally {
       setRunning(false)
     }
@@ -152,42 +164,59 @@ export default function DebateRunner() {
               <button
                 key={m.application_id}
                 onClick={() => select(m)}
-                className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm hover:bg-slate-50"
+                className="flex w-full flex-col gap-0.5 border-b border-slate-50 px-4 py-2.5 text-left last:border-b-0 hover:bg-slate-50"
               >
-                <span className="font-medium text-slate-800">{m.borrower_name}</span>
-                <span className="font-mono text-xs text-slate-400">{m.application_id}</span>
-                <span className="ml-auto text-xs text-slate-500">
-                  {m.loan_amount ? `$${Math.round(m.loan_amount / 1000)}K` : ''} · {m.credit_score ?? '—'} ·{' '}
-                  {STATUS_LABEL[m.status] ?? m.status}
-                </span>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-slate-800">{m.borrower_name}</span>
+                  <span className="font-mono text-xs text-slate-400">{m.application_id}</span>
+                </div>
+                <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
+                  <span>
+                    {m.loan_amount ? `$${Math.round(m.loan_amount / 1000)}K` : '—'} · Score {m.credit_score ?? '—'} ·{' '}
+                    {STATUS_LABEL[m.status] ?? m.status}
+                  </span>
+                  <span className="truncate capitalize text-slate-400">
+                    {[m.loan_type, m.loan_purpose].filter(Boolean).join(' · ')}
+                  </span>
+                </div>
               </button>
             ))}
           </div>
         )}
       </div>
 
-      {/* Selected loan summary */}
+      {/* Selected loan summary + question */}
       {selected && (
         <div className="rounded-xl border border-slate-200 bg-white p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-lg font-semibold text-slate-900">{selected.borrower_name}</div>
-              <div className="text-sm text-slate-500">
-                {loan?.borrower.employer || '—'} ·{' '}
-                {selected.loan_amount ? `$${Math.round(selected.loan_amount / 1000)}K` : '—'} · Score{' '}
-                {selected.credit_score ?? '—'} · LTV {selected.ltv ?? '—'}% ·{' '}
-                {STATUS_LABEL[selected.status] ?? selected.status}
-              </div>
-            </div>
-            <button
-              onClick={run}
-              disabled={running}
-              className="rounded-lg bg-brand px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
-            >
-              🐟 Run MiroFish Debate
-            </button>
+          <div className="text-lg font-semibold text-slate-900">{selected.borrower_name}</div>
+          <div className="text-sm text-slate-500">
+            {loan?.borrower.employer || '—'} ·{' '}
+            {selected.loan_amount ? `$${Math.round(selected.loan_amount / 1000)}K` : '—'} · Score{' '}
+            {selected.credit_score ?? '—'} · LTV {selected.ltv ?? '—'}% ·{' '}
+            {STATUS_LABEL[selected.status] ?? selected.status}
           </div>
           {loan && <p className="mt-3 text-sm leading-relaxed text-slate-600">{loan.borrower.story}</p>}
+
+          <div className="mt-4">
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Question for the agents
+            </label>
+            <div className="flex gap-2">
+              <input
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                placeholder="Should this loan be approved?"
+                className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand"
+              />
+              <button
+                onClick={run}
+                disabled={running}
+                className="shrink-0 rounded-lg bg-brand px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
+              >
+                🐟 Run MiroFish Debate
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -202,28 +231,29 @@ export default function DebateRunner() {
       {/* Result */}
       {result && !running && (
         <div className="space-y-5">
-          {/* A. Consensus bar */}
+          {/* A. Plain-English verdict */}
           <div className="rounded-xl border border-slate-200 bg-white p-5">
-            <div className="mb-2 flex items-center gap-2">
-              <span className={`rounded-full px-3 py-1 text-sm font-bold uppercase ${outcomeMeta(result.final_consensus).pill}`}>
-                {result.final_consensus}
+            <div className="flex flex-wrap items-center gap-3">
+              <span className={`rounded-full px-4 py-1.5 text-base font-bold ${outcomeMeta(result.final_consensus).pill}`}>
+                {VERDICT_LABEL[result.final_consensus] ?? result.final_consensus}
               </span>
-              <span className="font-medium text-slate-500">{consensusN}/{total} agents</span>
+              <span className="font-medium text-slate-500">{consensusN} of {total} agents agree</span>
             </div>
-            <VoteBar counts={result.consensus_count} />
+            <p className="mt-2 text-sm text-slate-600">{VERDICT_SUB[result.final_consensus] ?? ''}</p>
+            <div className="mt-3"><VoteBar counts={result.consensus_count} /></div>
             <div className="mt-2 flex flex-wrap gap-x-3 text-xs text-slate-500">
               {POSITIONS.filter((p) => result.consensus_count[p]).map((p) => (
                 <span key={p} className="flex items-center gap-1">
                   <span className={`h-2 w-2 rounded-full ${outcomeMeta(p).dot}`} />
-                  {result.consensus_count[p]} {p}
+                  {result.consensus_count[p]} {POS_SHORT[p] ?? p}
                 </span>
               ))}
             </div>
           </div>
 
-          {/* B. Recommendation */}
+          {/* B. What to do next */}
           <div className="rounded-xl border border-slate-200 bg-white p-5">
-            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Recommendation</div>
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">What to do next</div>
             <p className="text-sm leading-relaxed text-slate-800">{result.recommendation}</p>
           </div>
 

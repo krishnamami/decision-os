@@ -117,7 +117,7 @@ export default function Analytics() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Portfolio Analytics</h1>
           <p className="text-sm text-gray-500">
-            Last updated: {new Date().toLocaleDateString(undefined, { dateStyle: 'long' } as any)}
+            {overview.total_loans.toLocaleString()} loans · {money(overview.total_volume)} pipeline
           </p>
         </div>
         <div className="flex items-center gap-3">
