@@ -175,6 +175,7 @@ export interface SwarmResult {
   total_apps_scanned: number
   insights: SwarmInsight[]
   agent_summaries: Record<string, string>
+  created_at?: string | null
 }
 
 // ── Analytics ────────────────────────────────────────────────────────
@@ -199,4 +200,91 @@ export interface AgentStat {
   escalate_pct: number
   override_pct: number
   avg_review_minutes: number | null
+}
+
+export interface FunnelStep {
+  wave: number
+  entered: number
+  passed: number
+  blocked: number
+  pass_rate: number
+}
+
+export interface Concentration {
+  name: string
+  count: number
+  pct: number
+}
+
+export interface RiskData {
+  by_geography: Concentration[]
+  by_employer: Concentration[]
+  by_product: Concentration[]
+  high_ltv: number
+  high_dti: number
+  total: number
+}
+
+// ── Audit ────────────────────────────────────────────────────────────
+
+export interface AuditVersion {
+  decision_id: string
+  persona: string
+  version: number
+  outcome: string
+  mode: string
+  human_action: string | null
+  reviewer: string | null
+  override_reason: string | null
+  stale: boolean
+  decided_at: string | null
+  acted_at: string | null
+}
+
+export interface AuthorityEvent {
+  decision_id: string
+  from: string
+  to: string
+  trigger: string
+  by: string | null
+  at: string | null
+}
+
+export interface SlaEntry {
+  decision_id: string
+  persona: string
+  sla_seconds: number | null
+  actual_seconds: number | null
+  met: boolean
+}
+
+export interface AuditTrail {
+  application_id: string
+  versions: AuditVersion[]
+  authority_chain: AuthorityEvent[]
+  sla: SlaEntry[]
+}
+
+export interface AdverseAction {
+  application_id: string
+  borrower: string
+  block_reason: string
+  days_since_decision: number | null
+  notice_status: string
+}
+
+export interface ReportRow {
+  id: string
+  name: string
+  record_count: number
+  last_run: string | null
+  status: string
+}
+
+export interface ComplianceHealth {
+  hmda_pct: number
+  adverse_pending: number
+  overrides: number
+  sla_pct: number
+  segregation_flags: number
 }

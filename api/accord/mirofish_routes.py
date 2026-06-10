@@ -222,6 +222,16 @@ async def run_simulate(payload: dict = Body(...)) -> dict:
                 scenario_config, status, total_apps, affected_apps,
                 flipped, impact, agent_insights, started_at, completed_at
             ) VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12,$13)
+            ON CONFLICT (simulation_id) DO UPDATE SET
+                scenario_config = EXCLUDED.scenario_config,
+                status          = EXCLUDED.status,
+                total_apps      = EXCLUDED.total_apps,
+                affected_apps   = EXCLUDED.affected_apps,
+                flipped         = EXCLUDED.flipped,
+                impact          = EXCLUDED.impact,
+                agent_insights  = EXCLUDED.agent_insights,
+                started_at      = EXCLUDED.started_at,
+                completed_at    = EXCLUDED.completed_at
             """,
             res.simulation_id, tenant_id, res.scenario.name, res.scenario.type,
             _dumps(res.scenario.overrides), res.status, res.total_apps, res.affected_apps,

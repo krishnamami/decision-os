@@ -1,12 +1,19 @@
 // Accord API client — thin fetch wrappers over the FastAPI backend.
 
 import type {
+  AdverseAction,
   AgentStat,
   AnalyticsOverview,
+  AuditTrail,
+  ComplianceHealth,
   DebateResult,
+  FunnelStep,
   LoanDetail,
   PipelineResponse,
+  ReportRow,
+  RiskData,
   SimulationResult,
+  SwarmResult,
 } from '../types/accord'
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
@@ -30,13 +37,19 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
 // ── Pipeline ─────────────────────────────────────────────────────────
 
 export function fetchPipeline(
-  params?: { status?: string; type?: string; search?: string; limit?: number; offset?: number },
+  params?: { status?: string; type?: string; search?: string; period?: string; limit?: number; offset?: number },
 ): Promise<PipelineResponse> {
   const clean = Object.fromEntries(
     Object.entries(params || {}).filter(([, v]) => v !== undefined && v !== ''),
   )
   const query = new URLSearchParams(clean as Record<string, string>).toString()
   return getJSON<PipelineResponse>(`/api/accord/pipeline${query ? `?${query}` : ''}`)
+}
+
+// Append ?period=… when a non-"all" range is selected (backend may ignore it).
+function withPeriod(path: string, period?: string): string {
+  if (!period || period === 'all') return path
+  return `${path}${path.includes('?') ? '&' : '?'}period=${encodeURIComponent(period)}`
 }
 
 export function fetchLoan(appId: string): Promise<LoanDetail> {
@@ -87,34 +100,65 @@ export function fetchPrebuiltScenarios(): Promise<{ scenarios: Array<{ name: str
   return getJSON(`/api/accord/mirofish/simulate/prebuilt`)
 }
 
-export function runSwarm() {
-  return postJSON(`/api/accord/mirofish/swarm`, {})
+export function runSwarm(): Promise<SwarmResult> {
+  return postJSON<SwarmResult>(`/api/accord/mirofish/swarm`, {})
+}
+
+export function fetchSwarmLatest(): Promise<SwarmResult> {
+  return getJSON<SwarmResult>(`/api/accord/mirofish/swarm/latest`)
+}
+
+export interface SimHistoryRow {
+  simulation_id: string
+  scenario_name: string
+  scenario_type: string
+  status: string
+  total_apps: number
+  affected_apps: number
+  impact: Record<string, number>
+  created_at: string | null
+}
+
+export function fetchSimHistory(): Promise<{ simulations: SimHistoryRow[] }> {
+  return getJSON(`/api/accord/mirofish/simulate/history`)
+}
+
+export function runSimulationCustom(scenarioName: string): Promise<SimulationResult> {
+  return runSimulation(scenarioName)
 }
 
 // ── Analytics ────────────────────────────────────────────────────────
 
-export function fetchAnalytics(): Promise<AnalyticsOverview> {
-  return getJSON<AnalyticsOverview>(`/api/accord/analytics/overview`)
+export function fetchAnalytics(period?: string): Promise<AnalyticsOverview> {
+  return getJSON<AnalyticsOverview>(withPeriod(`/api/accord/analytics/overview`, period))
 }
 
-export function fetchAgents(): Promise<{ agents: AgentStat[] }> {
-  return getJSON(`/api/accord/analytics/agents`)
+export function fetchAgents(period?: string): Promise<{ agents: AgentStat[] }> {
+  return getJSON(withPeriod(`/api/accord/analytics/agents`, period))
 }
 
-export function fetchFunnel(): Promise<{ funnel: Array<Record<string, number>> }> {
-  return getJSON(`/api/accord/analytics/funnel`)
+export function fetchFunnel(period?: string): Promise<{ funnel: FunnelStep[] }> {
+  return getJSON(withPeriod(`/api/accord/analytics/funnel`, period))
 }
 
-export function fetchRisk(): Promise<Record<string, unknown>> {
-  return getJSON(`/api/accord/analytics/risk`)
+export function fetchRisk(period?: string): Promise<RiskData> {
+  return getJSON(withPeriod(`/api/accord/analytics/risk`, period))
 }
 
 // ── Audit ────────────────────────────────────────────────────────────
 
-export function fetchAudit(appId: string): Promise<Record<string, unknown>> {
-  return getJSON(`/api/accord/audit/${encodeURIComponent(appId)}`)
+export function fetchAudit(appId: string): Promise<AuditTrail> {
+  return getJSON<AuditTrail>(`/api/accord/audit/${encodeURIComponent(appId)}`)
 }
 
-export function fetchComplianceHealth(): Promise<Record<string, number>> {
-  return getJSON(`/api/accord/audit/compliance-health`)
+export function fetchComplianceHealth(period?: string): Promise<ComplianceHealth> {
+  return getJSON<ComplianceHealth>(withPeriod(`/api/accord/audit/compliance-health`, period))
+}
+
+export function fetchAdverseAction(period?: string): Promise<{ total: number; adverse_actions: AdverseAction[] }> {
+  return getJSON(withPeriod(`/api/accord/audit/adverse-action?limit=50`, period))
+}
+
+export function fetchReports(period?: string): Promise<{ reports: ReportRow[] }> {
+  return getJSON(withPeriod(`/api/accord/audit/reports`, period))
 }

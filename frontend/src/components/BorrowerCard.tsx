@@ -1,7 +1,7 @@
 import type { LoanDetail } from '../types/accord'
 
 const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
-  halted: { label: 'Pipeline Halted', cls: 'bg-red-700 text-white' },
+  halted: { label: 'Halted', cls: 'bg-red-700 text-white' },
   blocked: { label: 'Blocked', cls: 'bg-red-100 text-red-800' },
   in_review: { label: 'In Review', cls: 'bg-amber-100 text-amber-800' },
   clear_to_close: { label: 'Clear to Close', cls: 'bg-green-100 text-green-800' },
