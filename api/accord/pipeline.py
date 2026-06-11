@@ -41,6 +41,14 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 router = APIRouter(prefix="/api/accord", tags=["accord"])
 
 
+@router.get("/health")
+async def health() -> dict:
+    """Public liveness probe for the ALB target group — intentionally has no
+    auth dependency so the load balancer's unauthenticated health check passes.
+    """
+    return {"status": "ok"}
+
+
 # ─────────────────────────────────────────────────────────────────────
 # The 12 persona decisions (name + pipeline wave). lead_scoring is a
 # pre-application lead qualifier and not part of the loan pipeline.

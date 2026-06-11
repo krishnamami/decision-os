@@ -1,0 +1,36 @@
+{
+  "family": "accord-api",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::621646470377:role/ecsTaskExecutionRole",
+  "runtimePlatform": {
+    "cpuArchitecture": "X86_64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "containerDefinitions": [
+    {
+      "name": "accord-api",
+      "image": "621646470377.dkr.ecr.us-east-1.amazonaws.com/accord-api:latest",
+      "essential": true,
+      "portMappings": [
+        { "containerPort": 8000, "hostPort": 8000, "protocol": "tcp" }
+      ],
+      "environment": [
+        { "name": "DATABASE_URL", "value": "${DATABASE_URL}" },
+        { "name": "JWT_SECRET", "value": "${JWT_SECRET}" },
+        { "name": "REDIS_URL", "value": "${REDIS_URL}" },
+        { "name": "ANTHROPIC_API_KEY", "value": "${ANTHROPIC_API_KEY}" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/accord-api",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}
