@@ -38,3 +38,7 @@ coverage.xml
 # Runtime artifacts
 .health.json
 .uvicorn.log
+
+# Transient rendered ECS task def (contains secrets) — never commit
+deploy/.api-task.rendered.json
+deploy.log

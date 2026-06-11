@@ -37,8 +37,14 @@ set -a; source .env; set +a
 export REDIS_URL="${REDIS_URL:-}"
 export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
 
-PYTHON="$(command -v python3 || command -v python)"
-[[ -n "$PYTHON" ]] || { echo "ERROR: python not found (needed to render the task definition)."; exit 1; }
+# Pick a python that actually RUNS — `command -v python3` on Windows resolves
+# to the Microsoft Store stub, which prints "Python was not found" and yields
+# an empty file. Test each candidate by executing it.
+PYTHON=""
+for _py in python3 python py; do
+  if command -v "$_py" >/dev/null 2>&1 && "$_py" -c "import sys" >/dev/null 2>&1; then PYTHON="$_py"; break; fi
+done
+[[ -n "$PYTHON" ]] || { echo "ERROR: a working python is required to render the task definition."; exit 1; }
 
 # ── a) ECR login ─────────────────────────────────────────────────────────────
 echo "==> [a] Logging in to ECR"
@@ -64,7 +70,10 @@ echo "==> [d] Registering task definitions"
 # Fill ${VAR} placeholders in the API task def from the environment. Using the
 # JSON module guarantees values are escaped correctly even if a secret contains
 # quotes or backslashes — and keeps the rendered file (with secrets) out of git.
-RENDERED_API="$(mktemp)"
+# Repo-relative (not mktemp): a native Windows aws.exe launched from Git Bash
+# can't resolve an MSYS /tmp path, but resolves a relative path from the CWD.
+# Gitignored + removed on exit so the rendered secrets never persist.
+RENDERED_API="deploy/.api-task.rendered.json"
 trap 'rm -f "$RENDERED_API"' EXIT
 "$PYTHON" - deploy/ecs-api-task.json > "$RENDERED_API" <<'PY'
 import json, os, sys
