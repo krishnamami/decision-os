@@ -214,7 +214,30 @@
       "Bash(node _ctr.mjs)",
       "Bash(rm -f _ctr.mjs)",
       "Bash(node _v.mjs)",
-      "Bash(rm -f _v.mjs)"
+      "Bash(rm -f _v.mjs)",
+      "Bash(node _pv.mjs)",
+      "Bash(rm -f _pv.mjs)",
+      "Bash(node _au.mjs)",
+      "Bash(rm -f _au.mjs)",
+      "Bash(node _all.mjs)",
+      "Bash(rm -f _all.mjs)",
+      "Bash(node _ctl.mjs)",
+      "Bash(rm -f _ctl.mjs)",
+      "Bash(node _e.mjs)",
+      "Bash(rm -f _e.mjs)",
+      "Bash(node _st.mjs)",
+      "Bash(rm -f _st.mjs)",
+      "Bash(node -e \"console.log\\('recharts:', require\\('./package.json'\\).dependencies.recharts || 'NOT installed'\\)\")",
+      "Bash(node _ch.mjs)",
+      "Bash(rm -f _ch.mjs)",
+      "Bash(awk '{print \"  \"$1, $\\(NF\\)}')",
+      "Bash(curl -s -o /dev/null -w \"  /api/accord/pipeline           -> %{http_code}\\\\n\" \"http://localhost:8000/api/accord/pipeline?limit=1\")",
+      "Bash(curl -s -o /dev/null -w \"  /api/accord/pipeline?format=csv -> %{http_code}\\\\n\" \"http://localhost:8000/api/accord/pipeline?format=csv&limit=2\")",
+      "Bash(curl -s -o /dev/null -w \"  /api/accord/loans/APP-SC04-001  -> %{http_code}\\\\n\" \"http://localhost:8000/api/accord/loans/APP-SC04-001\")",
+      "Bash(curl -s -o /dev/null -w \"  /api/accord/analytics/overview  -> %{http_code}\\\\n\" \"http://localhost:8000/api/accord/analytics/overview\")",
+      "Bash(curl -s \"http://localhost:8000/api/accord/pipeline?format=csv&limit=1\")",
+      "Bash(node _v4.mjs)",
+      "Bash(rm -f _v4.mjs)"
     ]
   }
 }
