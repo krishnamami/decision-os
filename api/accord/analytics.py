@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
+from api.accord.auth import get_tenant_id
 
 from api.accord.pipeline import PERSONAS, _f, _get_pool, _require_db, cached_agg
 
@@ -21,7 +22,7 @@ _PCT = "(CASE WHEN {c} <= 1.5 THEN {c} * 100 ELSE {c} END)"
 
 
 @router.get("/overview")
-async def overview(tenant_id: str = Query("default")) -> dict:
+async def overview(tenant_id: str = Depends(get_tenant_id)) -> dict:
     _require_db()
 
     async def produce() -> dict:
@@ -71,7 +72,7 @@ async def overview(tenant_id: str = Query("default")) -> dict:
 
 
 @router.get("/funnel")
-async def funnel(tenant_id: str = Query("default")) -> dict:
+async def funnel(tenant_id: str = Depends(get_tenant_id)) -> dict:
     _require_db()
 
     async def produce() -> dict:
@@ -109,7 +110,7 @@ async def funnel(tenant_id: str = Query("default")) -> dict:
 
 
 @router.get("/agents")
-async def agents(tenant_id: str = Query("default")) -> dict:
+async def agents(tenant_id: str = Depends(get_tenant_id)) -> dict:
     _require_db()
 
     async def produce() -> dict:
@@ -161,7 +162,7 @@ async def agents(tenant_id: str = Query("default")) -> dict:
 
 
 @router.get("/risk")
-async def risk(tenant_id: str = Query("default")) -> dict:
+async def risk(tenant_id: str = Depends(get_tenant_id)) -> dict:
     _require_db()
 
     async def produce() -> dict:

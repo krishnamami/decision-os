@@ -11,7 +11,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from api.accord.auth import get_tenant_id
 
 from api.accord.pipeline import PERSONAS, _f, _get_pool, _J, _require_db, cached_agg
 
@@ -25,7 +26,7 @@ router = APIRouter(prefix="/api/accord/audit", tags=["accord-audit"])
 
 @router.get("/adverse-action")
 async def adverse_actions(
-    tenant_id: str = Query("default"), limit: int = Query(100, ge=1, le=500)
+    tenant_id: str = Depends(get_tenant_id), limit: int = Query(100, ge=1, le=500)
 ) -> dict:
     """Loans the underwriter declined that owe an adverse-action notice.
     No notice-tracking table exists yet, so every decline reads as
@@ -69,7 +70,7 @@ async def adverse_actions(
 
 
 @router.get("/reports")
-async def reports(tenant_id: str = Query("default")) -> dict:
+async def reports(tenant_id: str = Depends(get_tenant_id)) -> dict:
     _require_db()
     return await cached_agg(f"audit:reports:{tenant_id}", lambda: _reports(tenant_id))
 
@@ -112,7 +113,7 @@ async def _reports(tenant_id: str) -> dict:
 
 
 @router.get("/compliance-health")
-async def compliance_health(tenant_id: str = Query("default")) -> dict:
+async def compliance_health(tenant_id: str = Depends(get_tenant_id)) -> dict:
     _require_db()
     return await cached_agg(f"audit:compliance:{tenant_id}", lambda: _compliance_health(tenant_id))
 
@@ -165,7 +166,7 @@ async def _compliance_health(tenant_id: str) -> dict:
 
 
 @router.get("/{application_id}")
-async def loan_audit(application_id: str, tenant_id: str = Query("default")) -> dict:
+async def loan_audit(application_id: str, tenant_id: str = Depends(get_tenant_id)) -> dict:
     _require_db()
     pool = await _get_pool()
     async with pool.acquire() as conn:

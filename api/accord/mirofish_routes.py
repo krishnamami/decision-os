@@ -12,7 +12,8 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from api.accord.auth import get_tenant_id, get_current_user
 
 from api.accord.pipeline import _get_pool, _J, _require_db
 from core.mirofish import (
@@ -48,13 +49,13 @@ def _as_uuid(value: str) -> UUID:
 
 
 @router.post("/debate")
-async def run_debate(payload: dict = Body(...)) -> dict:
+async def run_debate(payload: dict = Body(...), user: dict = Depends(get_current_user)) -> dict:
     _require_db()
     app_id = (payload.get("application_id") or "").strip()
     if not app_id:
         raise HTTPException(422, "application_id is required")
     question = payload.get("question") or "Should this loan be approved?"
-    tenant_id = payload.get("tenant_id") or "default"
+    tenant_id = user["tenant_id"]
 
     pool = await _get_pool()
     res = await DebateEngine(pool).debate(app_id, question=question, tenant_id=tenant_id)
@@ -78,7 +79,7 @@ async def run_debate(payload: dict = Body(...)) -> dict:
 @router.get("/debates")
 async def list_debates(
     application_id: Optional[str] = Query(None),
-    tenant_id: str = Query("default"),
+    tenant_id: str = Depends(get_tenant_id),
     limit: int = Query(50, ge=1, le=200),
 ) -> dict:
     _require_db()
@@ -152,7 +153,7 @@ async def simulate_prebuilt() -> dict:
 
 @router.get("/simulate/history")
 async def simulate_history(
-    tenant_id: str = Query("default"), limit: int = Query(50, ge=1, le=200)
+    tenant_id: str = Depends(get_tenant_id), limit: int = Query(50, ge=1, le=200)
 ) -> dict:
     _require_db()
     pool = await _get_pool()
@@ -185,9 +186,9 @@ async def simulate_history(
 
 
 @router.post("/simulate")
-async def run_simulate(payload: dict = Body(...)) -> dict:
+async def run_simulate(payload: dict = Body(...), user: dict = Depends(get_current_user)) -> dict:
     _require_db()
-    tenant_id = payload.get("tenant_id") or "default"
+    tenant_id = user["tenant_id"]
     scenario: Optional[SimulationScenario] = None
 
     if payload.get("scenario_name"):
@@ -276,9 +277,9 @@ async def get_simulate(simulation_id: str) -> dict:
 
 
 @router.post("/swarm")
-async def run_swarm(payload: dict = Body(default={})) -> dict:
+async def run_swarm(payload: dict = Body(default={}), user: dict = Depends(get_current_user)) -> dict:
     _require_db()
-    tenant_id = (payload or {}).get("tenant_id") or "default"
+    tenant_id = user["tenant_id"]
     pool = await _get_pool()
     res = await SwarmAnalyzer(pool).analyze(tenant_id)
     async with pool.acquire() as conn:
@@ -296,7 +297,7 @@ async def run_swarm(payload: dict = Body(default={})) -> dict:
 
 
 @router.get("/swarm/latest")
-async def swarm_latest(tenant_id: str = Query("default")) -> dict:
+async def swarm_latest(tenant_id: str = Depends(get_tenant_id)) -> dict:
     _require_db()
     pool = await _get_pool()
     async with pool.acquire() as conn:

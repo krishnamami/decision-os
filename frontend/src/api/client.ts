@@ -22,8 +22,27 @@ import type {
 // the local backend.
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
+// ── Token storage (shared with AuthContext) ──────────────────────────
+const TOKEN_KEY = 'accord_token'
+export const getToken = (): string | null => localStorage.getItem(TOKEN_KEY)
+export const setToken = (t: string): void => localStorage.setItem(TOKEN_KEY, t)
+export const clearToken = (): void => localStorage.removeItem(TOKEN_KEY)
+
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const t = getToken()
+  return { ...(extra || {}), ...(t ? { Authorization: `Bearer ${t}` } : {}) }
+}
+
+// A 401 on a non-auth route means the session is gone → clear + signal the app.
+function handle401(path: string): void {
+  if (path.includes('/auth/login') || path.includes('/auth/signup')) return
+  clearToken()
+  window.dispatchEvent(new Event('accord:unauthorized'))
+}
+
 async function getJSON<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`)
+  const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders() })
+  if (res.status === 401) handle401(path)
   if (!res.ok) throw new Error(`${res.status} ${res.statusText} — ${path}`)
   return res.json() as Promise<T>
 }
@@ -31,11 +50,48 @@ async function getJSON<T>(path: string): Promise<T> {
 async function postJSON<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
   })
+  if (res.status === 401) handle401(path)
   if (!res.ok) throw new Error(`${res.status} ${res.statusText} — ${path}`)
   return res.json() as Promise<T>
+}
+
+// ── Auth ─────────────────────────────────────────────────────────────
+export interface AuthUser {
+  user_id: string
+  tenant_id: string
+  email: string
+  name: string
+  role: string
+  is_active?: boolean
+}
+export interface AuthTenant {
+  tenant_id: string
+  name: string
+  plan: string
+  products: string[]
+  settings?: Record<string, unknown>
+  logo_url?: string | null
+}
+export interface AuthSession {
+  access_token: string
+  token_type: string
+  user: AuthUser
+  tenant: AuthTenant
+}
+
+export async function loginRequest(email: string, password: string): Promise<AuthSession> {
+  return postJSON<AuthSession>('/api/accord/auth/login', { email, password })
+}
+export async function signupRequest(
+  tenant_name: string, email: string, password: string, name: string,
+): Promise<AuthSession> {
+  return postJSON<AuthSession>('/api/accord/auth/signup', { tenant_name, email, password, name })
+}
+export async function fetchMe(): Promise<{ user: AuthUser; tenant: AuthTenant; permissions: string[] }> {
+  return getJSON('/api/accord/auth/me')
 }
 
 // ── Pipeline ─────────────────────────────────────────────────────────

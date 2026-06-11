@@ -19,7 +19,8 @@ import time
 from datetime import date, datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from api.accord.auth import get_tenant_id
 
 try:
     from dotenv import load_dotenv  # type: ignore
@@ -250,7 +251,7 @@ async def list_pipeline(
     search: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
-    tenant_id: str = Query("default"),
+    tenant_id: str = Depends(get_tenant_id),
 ) -> dict:
     _require_db()
     pool = await _get_pool()
@@ -381,7 +382,7 @@ def _blocking_persona(decisions: dict) -> Optional[str]:
 
 
 @router.get("/loans/{application_id}")
-async def loan_detail(application_id: str, tenant_id: str = Query("default")) -> dict:
+async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_id)) -> dict:
     _require_db()
     pool = await _get_pool()
     async with pool.acquire() as conn:
@@ -701,7 +702,7 @@ def _decision_view(row) -> dict:
 @router.post("/loans/{application_id}/decisions/{decision_id}/approve")
 async def approve_decision(
     application_id: str, decision_id: str,
-    payload: dict = Body(default={}), tenant_id: str = Query("default"),
+    payload: dict = Body(default={}), tenant_id: str = Depends(get_tenant_id),
 ) -> dict:
     _require_db()
     reviewer = (payload.get("reviewer") or "anonymous").strip()
@@ -738,7 +739,7 @@ async def approve_decision(
 @router.post("/loans/{application_id}/decisions/{decision_id}/override")
 async def override_decision(
     application_id: str, decision_id: str,
-    payload: dict = Body(...), tenant_id: str = Query("default"),
+    payload: dict = Body(...), tenant_id: str = Depends(get_tenant_id),
 ) -> dict:
     _require_db()
     new_outcome = (payload.get("new_outcome") or "").strip()
@@ -781,7 +782,7 @@ async def override_decision(
 @router.post("/loans/{application_id}/decisions/{decision_id}/revert")
 async def revert_decision(
     application_id: str, decision_id: str,
-    payload: dict = Body(default={}), tenant_id: str = Query("default"),
+    payload: dict = Body(default={}), tenant_id: str = Depends(get_tenant_id),
 ) -> dict:
     _require_db()
     reviewer = (payload.get("reviewer") or "anonymous").strip()

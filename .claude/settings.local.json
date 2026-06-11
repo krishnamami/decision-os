@@ -237,7 +237,17 @@
       "Bash(curl -s -o /dev/null -w \"  /api/accord/analytics/overview  -> %{http_code}\\\\n\" \"http://localhost:8000/api/accord/analytics/overview\")",
       "Bash(curl -s \"http://localhost:8000/api/accord/pipeline?format=csv&limit=1\")",
       "Bash(node _v4.mjs)",
-      "Bash(rm -f _v4.mjs)"
+      "Bash(rm -f _v4.mjs)",
+      "Bash(PYTHONIOENCODING=utf-8 python scripts/migrations/run_auth_migration.py)",
+      "Bash(PYTHONIOENCODING=utf-8 python scripts/_auth_check.py)",
+      "Bash(PYTHONIOENCODING=utf-8 python scripts/_auth_http.py)",
+      "Bash(PYTHONIOENCODING=utf-8 python scripts/migrations/run_auth_migration.py --retenant)",
+      "Bash(node _login.mjs)",
+      "Bash(rm -f _login.mjs)",
+      "Bash(node _l2.mjs)",
+      "Bash(rm -f _l2.mjs)",
+      "Bash(node _role.mjs)",
+      "Bash(rm -f _role.mjs)"
     ]
   }
 }
