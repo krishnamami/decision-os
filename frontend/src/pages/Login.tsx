@@ -16,7 +16,7 @@ export default function Login() {
     setBusy(true)
     try {
       await login(email.trim(), password)
-      navigate('/pipeline')
+      navigate('/') // role-based landing decides Pipeline / Audit (see App defaultPath)
     } catch {
       setError('Invalid email or password')
     } finally {

@@ -150,8 +150,10 @@ async def main() -> None:
                 u = users[tid]
                 active_i = 0
                 cats: dict[str, list[str]] = {k: [] for k in ("active", "pending_borrower", "decided", "halted", "funded")}
-                for r, status in zip(loans, order):
+                for i, (r, status) in enumerate(zip(loans, order)):
                     app = r["app"]
+                    days_ago = {"active": i % 6, "halted": 1 + i % 4, "pending_borrower": 2 + i % 6,
+                                "decided": 5 + i % 10, "funded": 7 + i % 8}[status]
                     if status == "active":
                         stage = STAGES[active_i % len(STAGES)]
                         if stage == "verify":
@@ -178,8 +180,9 @@ async def main() -> None:
                     await conn.execute("UPDATE decision_outputs SET tenant_id=$1 WHERE application_id=$2", tid, app)
                     asg_status = status if status in ("active", "pending_borrower", "decided", "funded") else "active"
                     await conn.execute(
-                        "INSERT INTO loan_assignments (application_id, tenant_id, assigned_to, assigned_by, stage, status) "
-                        "VALUES ($1,$2,$3,$4,$5,$6)", app, tid, assignee, u["admin"], stage, asg_status)
+                        "INSERT INTO loan_assignments (application_id, tenant_id, assigned_to, assigned_by, stage, status, assigned_at) "
+                        "VALUES ($1,$2,$3,$4,$5,$6, NOW() - make_interval(days => $7))",
+                        app, tid, assignee, u["admin"], stage, asg_status, days_ago)
                     cats[status].append(app)
                 if tid == "summit":
                     summit_cat = cats

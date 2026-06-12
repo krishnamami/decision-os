@@ -16,6 +16,9 @@ import ExportMenu from '../components/ExportMenu'
 import Pagination from '../components/Pagination'
 import { ErrorState, EmptyState, SkeletonRows, CardSkeleton } from '../components/states'
 import { downloadCsv, downloadJson, printPdf } from '../utils/export'
+import { useAuth } from '../context/AuthContext'
+import MyQueue from './MyQueue'
+import TeamOverview from './TeamOverview'
 
 // ── 5 lifecycle stages grouping the 12 personas ──────────────────────
 const STAGES: Array<{ key: string; label: string; tip: string; wave: number; personas: string[] }> = [
@@ -135,7 +138,65 @@ function loadPipeline(
   })
 }
 
+// ── Role-aware Pipeline shell: My Queue / Team Overview / All Applications ──
+const OPS_ROLES = ['processor', 'underwriter', 'senior_uw', 'closer']
+
 export default function Pipeline() {
+  const { user } = useAuth()
+  const role = user?.role ?? 'viewer'
+  const isManager = role === 'admin' || role === 'manager'
+  const isOps = OPS_ROLES.includes(role)
+
+  const tabs = isManager
+    ? [{ key: 'team', label: 'Team Overview' }, { key: 'all', label: 'All Applications' }]
+    : isOps
+      ? [{ key: 'queue', label: 'My Queue' }, { key: 'all', label: 'All Applications' }]
+      : [{ key: 'all', label: 'All Applications' }]
+
+  const [tab, setTab] = useState(tabs[0].key)
+  const [viewUser, setViewUser] = useState<{ id: string; name: string } | null>(null)
+
+  // Manager drilling into a teammate's queue (read-only).
+  if (tab === 'team' && viewUser) {
+    return (
+      <>
+        <SubTabs tabs={tabs} active={tab} onChange={(k) => { setViewUser(null); setTab(k) }} />
+        <MyQueue userId={viewUser.id} readOnly onBack={() => setViewUser(null)} />
+      </>
+    )
+  }
+
+  return (
+    <>
+      {tabs.length > 1 && <SubTabs tabs={tabs} active={tab} onChange={setTab} />}
+      {tab === 'queue' && <MyQueue />}
+      {tab === 'team' && <TeamOverview onViewUser={setViewUser} />}
+      {tab === 'all' && <AllApplications />}
+    </>
+  )
+}
+
+function SubTabs({ tabs, active, onChange }: { tabs: Array<{ key: string; label: string }>; active: string; onChange: (k: string) => void }) {
+  return (
+    <div className="border-b border-slate-200 bg-white">
+      <div className="mx-auto flex max-w-7xl gap-6 px-6">
+        {tabs.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => onChange(t.key)}
+            className={`-mb-px border-b-2 py-3 text-sm font-medium transition ${
+              active === t.key ? 'border-brand text-brand' : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function AllApplications() {
   const navigate = useNavigate()
   const [data, setData] = useState<PipelineResponse | null>(null)
   const [loading, setLoading] = useState(true)

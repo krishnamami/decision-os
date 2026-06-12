@@ -46,18 +46,22 @@ function AppShell() {
   // A product the user can't reach (role or plan) redirects to Pipeline.
   const guard = (product: string, el: JSX.Element) => (allowed(product) ? el : <Navigate to="/pipeline" replace />)
 
+  // Compliance lands on Audit; everyone else on Pipeline (which itself picks
+  // My Queue / Team Overview / All Applications by role).
+  const defaultPath = user?.role === 'compliance' ? '/audit' : '/pipeline'
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <Header />
       <main>
         <Routes>
-          <Route path="/" element={<Navigate to="/pipeline" replace />} />
+          <Route path="/" element={<Navigate to={defaultPath} replace />} />
           <Route path="/pipeline" element={<Pipeline />} />
           <Route path="/pipeline/:appId" element={<LoanDetail />} />
           <Route path="/analytics" element={guard('analytics', <Analytics />)} />
           <Route path="/simulation" element={guard('simulation', <Simulation />)} />
           <Route path="/audit" element={guard('audit', <Audit />)} />
-          <Route path="*" element={<Navigate to="/pipeline" replace />} />
+          <Route path="*" element={<Navigate to={defaultPath} replace />} />
         </Routes>
       </main>
     </div>

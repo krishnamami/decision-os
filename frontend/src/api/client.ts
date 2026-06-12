@@ -94,6 +94,62 @@ export async function fetchMe(): Promise<{ user: AuthUser; tenant: AuthTenant; p
   return getJSON('/api/accord/auth/me')
 }
 
+// ── My Queue / Team (role-based landing) ─────────────────────────────
+export interface QueueCard {
+  application_id: string
+  borrower_name: string
+  loan_amount: number | null
+  loan_type: string | null
+  status: string
+  stage: string
+  queue_type: 'action_needed' | 'internal_request' | 'returned'
+  days_in_queue: number | null
+  rate_lock_days: number | null
+  urgency: 'urgent' | 'normal'
+  ai_finding: string
+  ai_data_sources: string
+  ai_recommendation: string
+  attention_request: { from: string; message: string; priority: string } | null
+  requesting?: string[]
+  sent?: string | null
+  due_date?: string | null
+  recipient_email?: string | null
+}
+export interface MyQueueResponse {
+  user: { name: string; role: string }
+  counts: { active: number; pending: number; decided: number }
+  active: QueueCard[]
+  pending: QueueCard[]
+  decided: QueueCard[]
+}
+export interface TeamMember {
+  user_id: string
+  name: string
+  role: string
+  active: number
+  pending: number
+  decided: number
+  loans: Array<{
+    application_id: string
+    borrower_name: string
+    loan_amount: number | null
+    loan_status: string
+    stage: string
+    days_in_queue: number | null
+  }>
+}
+export interface TeamResponse {
+  members: TeamMember[]
+  totals: { active: number; pending: number; decided: number }
+}
+
+export function fetchMyQueue(userId?: string): Promise<MyQueueResponse> {
+  return getJSON(`/api/accord/pipeline/my-queue${userId ? `?user_id=${encodeURIComponent(userId)}` : ''}`)
+}
+export function fetchTeam(): Promise<TeamResponse> {
+  return getJSON('/api/accord/pipeline/team')
+}
+
 // ── Pipeline ─────────────────────────────────────────────────────────
 
 export function fetchPipeline(

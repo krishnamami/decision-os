@@ -19,8 +19,10 @@ import time
 from datetime import date, datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 
+from uuid import UUID
+
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from api.accord.auth import get_tenant_id
+from api.accord.auth import get_current_user, get_tenant_id
 
 try:
     from dotenv import load_dotenv  # type: ignore
@@ -382,6 +384,284 @@ def _blocking_persona(decisions: dict) -> Optional[str]:
     if not blockers:
         return None
     return min(blockers, key=lambda d: PERSONAS.get(d, {}).get("wave", 99))
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 1b) GET /api/accord/pipeline/my-queue  +  /pipeline/team
+#
+# Role-based landing surfaces. The plain-English AI lines are templated
+# per blocking persona + outcome (the bespoke per-loan NLG in the spec is
+# approximated from real entity data — income deltas, fraud score, DTI…).
+# ─────────────────────────────────────────────────────────────────────
+
+# Which documents/agents each persona consulted — drives "What AI saw".
+PERSONA_SOURCES = {
+    "income_verification": "W2, IRS transcript, URLA",
+    "employment_reconciliation": "W2, paystubs, The Work Number",
+    "credit_assessment": "credit report, tradelines, FICO",
+    "fraud_screening": "ID verification, watchlist, device signals",
+    "compliance_check": "TRID timeline, disclosures, fair-lending checks",
+    "dti_calculation": "income, monthly obligations, credit report",
+    "ltv_assessment": "appraisal, purchase contract",
+    "product_eligibility": "loan-program guidelines, borrower profile",
+    "rate_pricing": "rate sheet, lock terms",
+    "underwriting_decision": "full file — credit, income, collateral",
+    "approval_routing": "final decision, adverse-action rules",
+    "closing_readiness": "conditions, title, insurance",
+}
+
+
+def _k(v: Any) -> str:
+    try:
+        return f"${round(float(v) / 1000)}K"
+    except (TypeError, ValueError):
+        return "?"
+
+
+def _queue_ai(blocking_did: Optional[str], decs: dict, borrower: Any, es: dict) -> dict:
+    """Three plain-English lines (finding / sources / recommendation) for a
+    queue card, derived from the blocking (or pending) decision + entity data."""
+    did, outcome = blocking_did, "block"
+    if not did:
+        pending = [d for d, v in decs.items()
+                   if v.get("outcome") in ("escalate", "recommend") and not v.get("reviewed")]
+        if not pending:
+            return {
+                "ai_finding": "All checks passed — no blocks or open flags",
+                "ai_data_sources": "All 12 agent reviews complete",
+                "ai_recommendation": "Approve — ready to advance to the next stage",
+            }
+        did = min(pending, key=lambda d: PERSONAS.get(d, {}).get("wave", 99))
+        outcome = decs[did].get("outcome", "recommend")
+
+    binfo = borrower if isinstance(borrower, dict) else {}
+    inc = binfo.get("income", {}) if isinstance(binfo.get("income"), dict) else {}
+    ident = binfo.get("identity", {}) if isinstance(binfo.get("identity"), dict) else {}
+    stated, verified = inc.get("stated_income_annual"), inc.get("verified_income_annual")
+    dti, score, ltv = es.get("dti_back"), es.get("mid_credit_score"), es.get("ltv")
+    name = PERSONAS.get(did, {}).get("name", did.replace("_", " ").title())
+    sources = PERSONA_SOURCES.get(did, "application file")
+    blocked = outcome == "block"
+    verb = "blocked" if blocked else "flagged for review"
+
+    if did in ("income_verification", "employment_reconciliation"):
+        if stated and verified and abs(stated - verified) / max(stated, 1) > 0.05:
+            finding = f"Income {verb} — verified {_k(verified)} vs stated {_k(stated)}"
+            sources = "W2, IRS transcript, URLA — sources disagree on income"
+        else:
+            finding = f"Income {verb} — employment/income not fully verified"
+        rec = ("Request corrected income docs or restructure the loan amount" if blocked
+               else "Confirm income with a written VOE before approving")
+    elif did == "fraud_screening":
+        reason = ("watchlist match" if ident.get("watchlist_match")
+                  else f"fraud score {float(ident['fraud_score']):.2f}" if ident.get("fraud_score") is not None
+                  else "elevated identity risk")
+        finding = f"Fraud {verb} — {reason}"
+        rec = ("Escalate to fraud review; file a SAR if confirmed" if blocked
+               else "Run a manual identity check before clearing")
+    elif did == "credit_assessment":
+        finding = f"Credit {verb}" + (f" — mid score {int(score)}" if score else "")
+        rec = ("Request a letter of explanation or decline per credit policy" if blocked
+               else "Review the credit profile and document the rationale")
+    elif did == "dti_calculation":
+        finding = f"DTI {verb}" + (f" — back-end DTI {float(dti):.0f}%" if dti else "")
+        rec = "Reduce the loan amount or add a co-borrower to bring DTI in range"
+    elif did == "compliance_check":
+        finding = f"Compliance {verb} — disclosure / TRID timing issue"
+        rec = "Re-issue disclosures and confirm TRID timing before proceeding"
+    elif did == "ltv_assessment":
+        finding = f"Collateral {verb}" + (f" — LTV {float(ltv):.0f}%" if ltv else "")
+        rec = "Order a review appraisal or increase the down payment"
+    else:
+        finding = f"{name} {verb} this file"
+        rec = "Review the flagged decision and clear it or request more info"
+    return {"ai_finding": finding, "ai_data_sources": sources, "ai_recommendation": rec}
+
+
+def _days_since(ts: Any) -> Optional[int]:
+    if ts is None:
+        return None
+    if getattr(ts, "tzinfo", None) is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return max(0, (datetime.now(timezone.utc) - ts).days)
+
+
+def _jsonb(v: Any) -> Any:
+    if isinstance(v, str):
+        try:
+            return json.loads(v)
+        except ValueError:
+            return {}
+    return v or {}
+
+
+@router.get("/pipeline/my-queue")
+async def my_queue(
+    user_id: Optional[str] = Query(None),  # managers/admins may view a teammate
+    user: dict = Depends(get_current_user),
+) -> dict:
+    _require_db()
+    tenant_id = user["tenant_id"]
+    if user_id and user.get("role") not in ("admin", "manager"):
+        raise HTTPException(403, "Only managers can view another user's queue")
+    target_uid = user_id or user["user_id"]
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        urow = await conn.fetchrow(
+            "SELECT name, role FROM users WHERE user_id = $1 AND tenant_id = $2",
+            UUID(str(target_uid)), tenant_id,
+        )
+        if urow is None:
+            raise HTTPException(404, "User not found")
+        rows = await conn.fetch(
+            """
+            SELECT la.application_id, la.stage, la.status AS assign_status, la.assigned_at,
+                   COALESCE(ap.full_name, es.application_id) AS borrower_name,
+                   a.loan_type, es.loan_amount, es.loan_status,
+                   es.dti_back, es.mid_credit_score, es.ltv, es.borrower,
+                   (es.loan_terms->'rate_lock'->>'lock_expiry') AS lock_expiry
+            FROM loan_assignments la
+            JOIN entity_states es ON es.application_id = la.application_id
+            LEFT JOIN applications a ON a.application_id = la.application_id
+            LEFT JOIN applicants ap ON ap.applicant_id = a.applicant_id
+            WHERE la.assigned_to = $1 AND la.tenant_id = $2
+            ORDER BY la.assigned_at DESC
+            """,
+            UUID(str(target_uid)), tenant_id,
+        )
+        app_ids = [r["application_id"] for r in rows]
+        flags = await _decision_flags(conn, tenant_id)
+        decisions = await _page_decisions(conn, tenant_id, app_ids)
+        attn_rows = await conn.fetch(
+            """
+            SELECT ar.application_id, ar.message, ar.priority, u.name AS from_name
+            FROM attention_requests ar LEFT JOIN users u ON u.user_id = ar.from_user_id
+            WHERE ar.to_user_id = $1 AND ar.status = 'open'
+            """,
+            UUID(str(target_uid)),
+        )
+        attn = {r["application_id"]: dict(r) for r in attn_rows}
+        comm_rows = await conn.fetch(
+            """
+            SELECT DISTINCT ON (application_id) application_id, items_requested, due_date, created_at, recipient_email
+            FROM communications
+            WHERE tenant_id = $1 AND application_id = ANY($2) AND direction = 'outbound'
+            ORDER BY application_id, created_at DESC
+            """,
+            tenant_id, app_ids,
+        )
+        comms = {r["application_id"]: dict(r) for r in comm_rows}
+
+    active, pending, decided = [], [], []
+    for r in rows:
+        app = r["application_id"]
+        decs = decisions.get(app, {})
+        blocking = _blocking_persona(decs)
+        es = {"dti_back": r["dti_back"], "mid_credit_score": r["mid_credit_score"], "ltv": r["ltv"]}
+        lock_days = None
+        if r["lock_expiry"]:
+            try:
+                lock_days = (datetime.fromisoformat(r["lock_expiry"][:10]).date()
+                             - datetime.now(timezone.utc).date()).days
+            except ValueError:
+                lock_days = None
+        st = r["assign_status"]
+        ai = _queue_ai(blocking, decs, _jsonb(r["borrower"]), es)
+        a = attn.get(app)
+        if a:
+            queue_type = "internal_request"
+        elif st == "active" and not blocking:
+            queue_type = "returned"
+        else:
+            queue_type = "action_needed"
+        urg = _derive_urgency(flags.get(app, {}), lock_days)
+        card = {
+            "application_id": app,
+            "borrower_name": r["borrower_name"],
+            "loan_amount": _f(r["loan_amount"]),
+            "loan_type": r["loan_type"],
+            "status": st,
+            "stage": r["stage"],
+            "queue_type": queue_type,
+            "days_in_queue": _days_since(r["assigned_at"]),
+            "rate_lock_days": lock_days,
+            "urgency": "urgent" if urg in ("CRITICAL", "URGENT") else "normal",
+            "ai_finding": ai["ai_finding"],
+            "ai_data_sources": ai["ai_data_sources"],
+            "ai_recommendation": ai["ai_recommendation"],
+            "attention_request": ({"from": a["from_name"], "message": a["message"], "priority": a["priority"]} if a else None),
+        }
+        if st == "pending_borrower":
+            c = comms.get(app)
+            if c:
+                card["requesting"] = _jsonb(c["items_requested"])
+                card["sent"] = c["created_at"].isoformat() if c.get("created_at") else None
+                card["due_date"] = c["due_date"].isoformat() if c.get("due_date") else None
+                card["recipient_email"] = c.get("recipient_email")
+            pending.append(card)
+        elif st in ("decided", "funded"):
+            decided.append(card)
+        else:
+            active.append(card)
+
+    active.sort(key=lambda c: (0 if c["urgency"] == "urgent" else 1, -(c["days_in_queue"] or 0)))
+    return {
+        "user": {"name": urow["name"], "role": urow["role"]},
+        "counts": {"active": len(active), "pending": len(pending), "decided": len(decided)},
+        "active": active,
+        "pending": pending,
+        "decided": decided,
+    }
+
+
+@router.get("/pipeline/team")
+async def team_overview(user: dict = Depends(get_current_user)) -> dict:
+    if user.get("role") not in ("admin", "manager"):
+        raise HTTPException(403, "Manager access required")
+    _require_db()
+    tenant_id = user["tenant_id"]
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT u.user_id, u.name, u.role,
+                   la.application_id, la.status AS assign_status, la.stage, la.assigned_at,
+                   COALESCE(ap.full_name, es.application_id) AS borrower_name,
+                   es.loan_amount, es.loan_status
+            FROM users u
+            LEFT JOIN loan_assignments la ON la.assigned_to = u.user_id AND la.tenant_id = $1
+            LEFT JOIN entity_states es ON es.application_id = la.application_id
+            LEFT JOIN applications a ON a.application_id = la.application_id
+            LEFT JOIN applicants ap ON ap.applicant_id = a.applicant_id
+            WHERE u.tenant_id = $1
+              AND u.role IN ('processor', 'underwriter', 'senior_uw', 'closer', 'compliance')
+            ORDER BY u.name, la.assigned_at DESC
+            """,
+            tenant_id,
+        )
+    members: dict = {}
+    totals = {"active": 0, "pending": 0, "decided": 0}
+    for r in rows:
+        m = members.setdefault(str(r["user_id"]), {
+            "user_id": str(r["user_id"]), "name": r["name"], "role": r["role"],
+            "active": 0, "pending": 0, "decided": 0, "loans": [],
+        })
+        if not r["application_id"]:
+            continue
+        st = r["assign_status"]
+        bucket = "active" if st == "active" else ("pending" if st == "pending_borrower" else "decided")
+        m[bucket] += 1
+        totals[bucket] += 1
+        if bucket != "decided" and len(m["loans"]) < 6:
+            m["loans"].append({
+                "application_id": r["application_id"],
+                "borrower_name": r["borrower_name"],
+                "loan_amount": _f(r["loan_amount"]),
+                "loan_status": r["loan_status"],
+                "stage": r["stage"],
+                "days_in_queue": _days_since(r["assigned_at"]),
+            })
+    return {"members": list(members.values()), "totals": totals}
 
 
 # ─────────────────────────────────────────────────────────────────────
