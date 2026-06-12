@@ -22,7 +22,7 @@ export default function RequestInfoModal({
   appId: string
   defaultEmail: string
   onClose: () => void
-  onSent: () => void
+  onSent: (details: { email: string; items: string[]; dueDate: string }) => void
 }) {
   const [email, setEmail] = useState(defaultEmail)
   const [checked, setChecked] = useState<Set<string>>(new Set())
@@ -50,9 +50,10 @@ export default function RequestInfoModal({
   async function send() {
     setBusy(true)
     try {
-      const due = new Date(Date.now() + dueDays * 86400000).toISOString().slice(0, 10)
+      const dueObj = new Date(Date.now() + dueDays * 86400000)
+      const due = dueObj.toISOString().slice(0, 10)
       await requestInfo({ application_id: appId, recipient_email: email, items, note: note || autoNote, due_date: due })
-      onSent()
+      onSent({ email, items, dueDate: `${dueObj.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} (${dueDays} days)` })
     } finally {
       setBusy(false)
     }

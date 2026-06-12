@@ -12,6 +12,11 @@ import ActivityFeed from '../components/ActivityFeed'
 import RequestInfoModal from '../components/RequestInfoModal'
 import AttentionModal from '../components/AttentionModal'
 import NotesSection from '../components/NotesSection'
+import ActionConfirmation, { type ActionConfirmationData } from '../components/ActionConfirmation'
+
+const nextStageLabel = (role: string): string =>
+  ({ processor: 'Underwriting', underwriter: 'Senior Underwriting', senior_uw: 'Closing', closer: 'Funding' } as Record<string, string>)[role]
+  ?? 'the next stage'
 
 function moneyK(v: number | null | undefined) {
   if (v == null) return '—'
@@ -140,12 +145,13 @@ export default function LoanDetail() {
   const { appId = '' } = useParams()
   const navigate = useNavigate()
   const { effectiveUser } = useAuth()
+  const role = effectiveUser?.role ?? 'viewer'
   // Viewers + compliance are read-only on decisions.
-  const canAct = !['viewer', 'compliance'].includes(effectiveUser?.role ?? 'viewer')
+  const canAct = !['viewer', 'compliance'].includes(role)
   const [loan, setLoan] = useState<LoanDetailT | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
+  const [confirmation, setConfirmation] = useState<ActionConfirmationData | null>(null)
   const [modal, setModal] = useState<'request_info' | 'internal' | null>(null)
 
   useEffect(() => {
@@ -177,19 +183,49 @@ export default function LoanDetail() {
   if (error) return <div className="p-12 text-center text-red-600">{error}</div>
   if (!loan) return null
 
-  function fire(msg: string) {
-    setToast(msg)
-    setTimeout(() => {
-      setToast(null)
-      navigate('/pipeline') // back to My Queue
-    }, 1400)
-  }
   async function decide(action: 'approve' | 'deny' | 'escalate', note: string) {
     try {
-      const r = await decideLoan(loan!.application_id, action, note)
-      fire(`✓ ${r.title}`)
+      await decideLoan(loan!.application_id, action, note)
+      if (action === 'approve') {
+        setConfirmation({
+          icon: '✅', title: `Approved — sent to ${nextStageLabel(role)}`, tone: 'green',
+          points: [`The ${nextStageLabel(role)} team will see this in their queue within minutes`, "You'll get a notification when it's reviewed", 'This loan is out of your queue'],
+        })
+      } else if (action === 'deny') {
+        setConfirmation({
+          icon: '❌', title: 'Denied — adverse action notice will be generated', tone: 'red',
+          points: ['Adverse-action notice must be sent within 30 days', 'This appears in the Audit → Adverse Action tracker', 'The compliance team will be notified', 'The loan officer will be notified'],
+          detailTitle: 'Denial reason recorded:', detailText: note || undefined,
+        })
+      } else {
+        setConfirmation({
+          icon: '⬆', title: 'Escalated to Senior Underwriting', tone: 'purple',
+          points: ['A Senior UW will see this in their queue within minutes', ...(note ? [`Your note is attached: "${note}"`] : []), "You'll get a notification when they decide", 'This loan is out of your queue until they act'],
+        })
+      }
     } catch {
-      fire('Could not complete the action')
+      setConfirmation({ icon: '⚠', title: 'Could not complete the action', tone: 'amber', points: ['Something went wrong — please try again.'] })
+    }
+  }
+  function onDemo(actId: string, text: string) {
+    if (actId === 'bsa') {
+      setConfirmation({
+        icon: '⚠', title: 'Referred to BSA officer', tone: 'amber',
+        points: ['The compliance team is notified of the SAR referral', 'The loan is frozen — no further processing until cleared', "You'll get a notification when the BSA officer reviews", 'All actions are logged in the audit trail'],
+      })
+    } else if (actId === 'override') {
+      setConfirmation({
+        icon: '🔄', title: 'AI recommendation overridden', tone: 'amber',
+        points: ['Your override is recorded with the justification', 'This appears in the Audit → Override Justification report', 'A senior reviewer may follow up'],
+        detailTitle: 'Justification recorded:', detailText: text || undefined,
+      })
+    } else if (actId === 'add_conditions') {
+      setConfirmation({
+        icon: '📋', title: 'Conditions added', tone: 'blue',
+        points: ['PTD/PTC conditions saved to the file', 'They must be cleared before closing', 'The borrower will be asked for the required items'],
+      })
+    } else {
+      setConfirmation({ icon: '✅', title: 'Action recorded', tone: 'green', points: ['Done.'] })
     }
   }
   const scrollToDebate = () => document.getElementById('mirofish-debate')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -211,6 +247,11 @@ export default function LoanDetail() {
     },
     { label: 'Export as PDF', run: printPdf },
   ]
+
+  // After any action, the whole page is replaced by the confirmation.
+  if (confirmation) {
+    return <ActionConfirmation data={confirmation} onBack={() => navigate('/pipeline')} />
+  }
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-6">
@@ -262,8 +303,8 @@ export default function LoanDetail() {
         {canAct ? (
           <YourDecision
             category={blockCategory(narr)}
-            role={effectiveUser?.role ?? 'processor'}
-            onAct={fire}
+            role={role}
+            onDemo={onDemo}
             onOpenModal={setModal}
             onDecide={decide}
             onMirofish={scrollToDebate}
@@ -275,25 +316,32 @@ export default function LoanDetail() {
           </section>
         )}
 
-        {toast && (
-          <div className="fixed bottom-6 left-1/2 z-20 -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white shadow-lg">
-            {toast}
-          </div>
-        )}
-
         {modal === 'request_info' && (
           <RequestInfoModal
             appId={loan.application_id}
             defaultEmail={`${loan.borrower.name.toLowerCase().split(/\s+/).slice(0, 2).join('.').replace(/[^a-z.]/g, '')}@email.com`}
             onClose={() => setModal(null)}
-            onSent={() => { setModal(null); fire('✓ Request sent. Loan moved to Pending.') }}
+            onSent={(d) => {
+              setModal(null)
+              setConfirmation({
+                icon: '📧', title: `Request sent to ${d.email}`, tone: 'blue',
+                points: [`Borrower has until ${d.dueDate} to respond`, 'This loan moves to your "Pending response" section', "You'll get a notification when they respond", "If no response by the due date, you'll get a reminder"],
+                detailTitle: 'Documents requested:', detailItems: d.items,
+              })
+            }}
           />
         )}
         {modal === 'internal' && (
           <AttentionModal
             appId={loan.application_id}
             onClose={() => setModal(null)}
-            onSent={() => { setModal(null); fire('✓ Internal review requested.') }}
+            onSent={() => {
+              setModal(null)
+              setConfirmation({
+                icon: '🔵', title: 'Internal review requested', tone: 'blue',
+                points: ['Your teammate will see this in their queue', "You'll get a notification when they respond", 'This loan stays in your queue, flagged for review'],
+              })
+            }}
           />
         )}
 
@@ -485,10 +533,10 @@ function getActions(cat: string, role: string): ActionSet {
   return { primary, secondary, disabled, subtitle }
 }
 
-function YourDecision({ category, role, onAct, onOpenModal, onDecide, onMirofish }: {
+function YourDecision({ category, role, onDemo, onOpenModal, onDecide, onMirofish }: {
   category: string
   role: string
-  onAct: (msg: string) => void
+  onDemo: (actId: string, text: string) => void
   onOpenModal: (k: 'request_info' | 'internal') => void
   onDecide: (action: 'approve' | 'deny' | 'escalate', note: string) => void
   onMirofish: () => void
@@ -507,7 +555,7 @@ function YourDecision({ category, role, onAct, onOpenModal, onDecide, onMirofish
       case 'request': onOpenModal('request_info'); break
       case 'internal': onOpenModal('internal'); break
       case 'mirofish': onMirofish(); break
-      case 'demo': onAct(def.demoMsg ?? 'Done (demo)'); break
+      case 'demo': onDemo(id, ''); break
       case 'deny': onDecide('deny', ''); break
     }
   }
@@ -515,7 +563,7 @@ function YourDecision({ category, role, onAct, onOpenModal, onDecide, onMirofish
     if (!expanded) return
     const def = ACT[expanded]
     if (def.run === 'deny') onDecide('deny', text)
-    else onAct(`${def.demoMsg ?? def.label} — ${text} (demo)`)
+    else onDemo(expanded, text)
     setExpanded(null); setText('')
   }
 
