@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchMyQueue, type MyQueueResponse, type QueueCard } from '../api/client'
+import { fetchMyQueue, simulateResponse, type MyQueueResponse, type QueueCard } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 
 function money(v: number | null) {
@@ -42,10 +42,16 @@ export default function MyQueue({
   const [openPending, setOpenPending] = useState(false)
   const [openDecided, setOpenDecided] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
 
   const act = (msg: string) => {
     setToast(msg)
     setTimeout(() => setToast(null), 2500)
+  }
+  async function onSimulate(appId: string) {
+    await simulateResponse(appId)
+    act('Borrower responded — loan is back in your queue 🟢')
+    setReloadKey((k) => k + 1)
   }
 
   useEffect(() => {
@@ -59,7 +65,7 @@ export default function MyQueue({
     return () => {
       alive = false
     }
-  }, [userId])
+  }, [userId, reloadKey])
 
   if (loading) return <div className="p-12 text-center text-slate-400">Loading queue…</div>
   if (error) return <div className="p-12 text-center text-red-600">{error}</div>
@@ -118,7 +124,7 @@ export default function MyQueue({
       {openPending && (
         <div className="mb-8 mt-3 space-y-2">
           {data.pending.map((c) => (
-            <PendingCard key={c.application_id} c={c} canAct={canAct} onAct={act} />
+            <PendingCard key={c.application_id} c={c} canAct={canAct} onAct={act} onSimulate={onSimulate} />
           ))}
           {data.pending.length === 0 && <p className="text-sm text-slate-400">No pending borrower requests.</p>}
         </div>
@@ -239,7 +245,7 @@ function ActionCard({
   )
 }
 
-function PendingCard({ c, canAct, onAct }: { c: QueueCard; canAct: boolean; onAct: (m: string) => void }) {
+function PendingCard({ c, canAct, onAct, onSimulate }: { c: QueueCard; canAct: boolean; onAct: (m: string) => void; onSimulate: (appId: string) => void }) {
   const due = c.due_date ? new Date(c.due_date) : null
   const daysLeft = due ? Math.ceil((due.getTime() - Date.now()) / 86400000) : null
   const overdue = daysLeft != null && daysLeft <= 1
@@ -264,7 +270,7 @@ function PendingCard({ c, canAct, onAct }: { c: QueueCard; canAct: boolean; onAc
       </div>
       {canAct && (
         <div className="mt-2 flex gap-2">
-          <button onClick={() => onAct('Simulated borrower response (demo)')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">Simulate response</button>
+          <button onClick={() => onSimulate(c.application_id)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">Simulate response</button>
           <button onClick={() => onAct('Reminder sent (demo)')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">Send reminder</button>
         </div>
       )}

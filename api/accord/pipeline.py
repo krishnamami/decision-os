@@ -22,6 +22,7 @@ from typing import Any, Awaitable, Callable, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from pydantic import BaseModel
 from api.accord.auth import get_current_user, get_tenant_id
 
 try:
@@ -543,7 +544,7 @@ async def my_queue(
         attn = {r["application_id"]: dict(r) for r in attn_rows}
         comm_rows = await conn.fetch(
             """
-            SELECT DISTINCT ON (application_id) application_id, items_requested, due_date, created_at, recipient_email
+            SELECT DISTINCT ON (application_id) application_id, items_requested, due_date, created_at, recipient_email, responded_at
             FROM communications
             WHERE tenant_id = $1 AND application_id = ANY($2) AND direction = 'outbound'
             ORDER BY application_id, created_at DESC
@@ -551,6 +552,22 @@ async def my_queue(
             tenant_id, app_ids,
         )
         comms = {r["application_id"]: dict(r) for r in comm_rows}
+        responded_apps = {app for app, c in comms.items() if c.get("responded_at")}
+
+        # Internal-review requests TO this user on loans they aren't assigned —
+        # surface them so the target still sees the 🔵 in their queue.
+        assigned_set = set(app_ids)
+        extra_ids = [app for app in attn if app not in assigned_set]
+        extra_rows = []
+        if extra_ids:
+            extra_rows = await conn.fetch(
+                "SELECT es.application_id, COALESCE(ap.full_name, es.application_id) AS borrower_name, "
+                "a.loan_type, es.loan_amount FROM entity_states es "
+                "LEFT JOIN applications a ON a.application_id = es.application_id "
+                "LEFT JOIN applicants ap ON ap.applicant_id = a.applicant_id "
+                "WHERE es.application_id = ANY($1) AND es.tenant_id = $2",
+                extra_ids, tenant_id,
+            )
 
     active, pending, decided = [], [], []
     for r in rows:
@@ -570,7 +587,7 @@ async def my_queue(
         a = attn.get(app)
         if a:
             queue_type = "internal_request"
-        elif st == "active" and not blocking:
+        elif app in responded_apps and st == "active":
             queue_type = "returned"
         else:
             queue_type = "action_needed"
@@ -603,6 +620,17 @@ async def my_queue(
             decided.append(card)
         else:
             active.append(card)
+
+    for r in extra_rows:
+        app = r["application_id"]
+        a = attn[app]
+        active.append({
+            "application_id": app, "borrower_name": r["borrower_name"], "loan_amount": _f(r["loan_amount"]),
+            "loan_type": r["loan_type"], "status": "active", "stage": "", "queue_type": "internal_request",
+            "days_in_queue": None, "rate_lock_days": None, "urgency": "urgent" if a["priority"] == "urgent" else "normal",
+            "ai_finding": "Internal review requested", "ai_data_sources": "", "ai_recommendation": "",
+            "attention_request": {"from": a["from_name"], "message": a["message"], "priority": a["priority"]},
+        })
 
     active.sort(key=lambda c: (0 if c["urgency"] == "urgent" else 1, -(c["days_in_queue"] or 0)))
     return {
@@ -662,6 +690,204 @@ async def team_overview(user: dict = Depends(get_current_user)) -> dict:
                 "days_in_queue": _days_since(r["assigned_at"]),
             })
     return {"members": list(members.values()), "totals": totals}
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 1c) Communications, attention requests, notes, notifications
+# ─────────────────────────────────────────────────────────────────────
+
+
+class RequestInfoBody(BaseModel):
+    application_id: str
+    recipient_email: Optional[str] = None
+    items: list[str] = []
+    note: Optional[str] = None
+    due_date: Optional[str] = None  # ISO date
+
+
+class AttentionBody(BaseModel):
+    application_id: str
+    decision_id: Optional[str] = None
+    to_user_id: str
+    message: str
+    priority: str = "normal"
+
+
+class NoteBody(BaseModel):
+    note: str
+    note_type: str = "general"
+
+
+@router.get("/users")
+async def list_users(user: dict = Depends(get_current_user)) -> dict:
+    """Teammates in the tenant — drives the 'assign to' dropdowns."""
+    _require_db()
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT user_id, name, role FROM users WHERE tenant_id = $1 ORDER BY name",
+            user["tenant_id"],
+        )
+    return {"users": [{"user_id": str(r["user_id"]), "name": r["name"], "role": r["role"]} for r in rows]}
+
+
+@router.post("/communications")
+async def request_info(body: RequestInfoBody, user: dict = Depends(get_current_user)) -> dict:
+    """Request docs from the borrower → log the comm, move the loan to
+    pending_borrower, notify the requester."""
+    _require_db()
+    tid, uid = user["tenant_id"], UUID(str(user["user_id"]))
+    due = None
+    if body.due_date:
+        try:
+            due = date.fromisoformat(body.due_date[:10])
+        except ValueError:
+            due = None
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO communications (application_id, tenant_id, type, direction, from_user_id, "
+            "recipient_email, subject, body, items_requested, status, due_date) "
+            "VALUES ($1,$2,'doc_request','outbound',$3,$4,'Document request',$5,$6::jsonb,'simulated',$7)",
+            body.application_id, tid, uid, body.recipient_email, body.note, json.dumps(body.items), due,
+        )
+        await conn.execute(
+            "UPDATE loan_assignments SET status='pending_borrower' WHERE application_id=$1 AND tenant_id=$2 AND assigned_to=$3",
+            body.application_id, tid, uid,
+        )
+        await conn.execute(
+            "UPDATE entity_states SET loan_status='pending_borrower' WHERE application_id=$1 AND tenant_id=$2",
+            body.application_id, tid,
+        )
+        title = "Document request sent" + (f" to {body.recipient_email}" if body.recipient_email else "")
+        await conn.execute(
+            "INSERT INTO notifications (tenant_id, user_id, type, title, application_id) VALUES ($1,$2,'doc_request',$3,$4)",
+            tid, uid, title, body.application_id,
+        )
+    return {"ok": True}
+
+
+@router.post("/communications/simulate-response")
+async def simulate_response(body: dict = Body(...), user: dict = Depends(get_current_user)) -> dict:
+    """Demo: pretend the borrower replied — comm delivered, loan back to active
+    (marked RETURNED in the queue), assignee notified."""
+    _require_db()
+    app, tid = body.get("application_id"), user["tenant_id"]
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT comm_id FROM communications WHERE application_id=$1 AND tenant_id=$2 AND direction='outbound' "
+            "ORDER BY created_at DESC LIMIT 1", app, tid,
+        )
+        if row:
+            await conn.execute("UPDATE communications SET responded_at=NOW(), status='delivered' WHERE comm_id=$1", row["comm_id"])
+        await conn.execute("UPDATE loan_assignments SET status='active' WHERE application_id=$1 AND tenant_id=$2", app, tid)
+        await conn.execute("UPDATE entity_states SET loan_status='active' WHERE application_id=$1 AND tenant_id=$2", app, tid)
+        assignee = await conn.fetchval(
+            "SELECT assigned_to FROM loan_assignments WHERE application_id=$1 AND tenant_id=$2 ORDER BY assigned_at DESC LIMIT 1",
+            app, tid,
+        )
+        if assignee:
+            await conn.execute(
+                "INSERT INTO notifications (tenant_id, user_id, type, title, application_id) "
+                "VALUES ($1,$2,'borrower_responded','Borrower responded with documents',$3)",
+                tid, assignee, app,
+            )
+    return {"ok": True}
+
+
+@router.post("/attention-requests")
+async def create_attention(body: AttentionBody, user: dict = Depends(get_current_user)) -> dict:
+    """Ask a teammate to revisit a decision → log it + notify them."""
+    _require_db()
+    tid, uid = user["tenant_id"], UUID(str(user["user_id"]))
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO attention_requests (application_id, tenant_id, from_user_id, to_user_id, decision_id, message, priority, status) "
+            "VALUES ($1,$2,$3,$4,$5,$6,$7,'open')",
+            body.application_id, tid, uid, UUID(str(body.to_user_id)), body.decision_id, body.message, body.priority,
+        )
+        frm = await conn.fetchval("SELECT name FROM users WHERE user_id=$1", uid) or "A teammate"
+        await conn.execute(
+            "INSERT INTO notifications (tenant_id, user_id, type, title, application_id) VALUES ($1,$2,'attention_request',$3,$4)",
+            tid, UUID(str(body.to_user_id)), f"{frm} requested your review", body.application_id,
+        )
+    return {"ok": True}
+
+
+@router.get("/loans/{application_id}/notes")
+async def get_notes(application_id: str, user: dict = Depends(get_current_user)) -> dict:
+    _require_db()
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT n.note_id, n.note, n.note_type, n.created_at, COALESCE(u.name,'Unknown') AS author "
+            "FROM loan_notes n LEFT JOIN users u ON u.user_id = n.user_id "
+            "WHERE n.application_id=$1 AND n.tenant_id=$2 ORDER BY n.created_at DESC",
+            application_id, user["tenant_id"],
+        )
+    return {"notes": [{
+        "note_id": str(r["note_id"]), "note": r["note"], "note_type": r["note_type"],
+        "author": r["author"], "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+    } for r in rows]}
+
+
+@router.post("/loans/{application_id}/notes")
+async def add_note(application_id: str, body: NoteBody, user: dict = Depends(get_current_user)) -> dict:
+    _require_db()
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO loan_notes (application_id, tenant_id, user_id, note, note_type) VALUES ($1,$2,$3,$4,$5)",
+            application_id, user["tenant_id"], UUID(str(user["user_id"])), body.note, body.note_type,
+        )
+    return {"ok": True}
+
+
+@router.get("/notifications")
+async def list_notifications(user: dict = Depends(get_current_user)) -> dict:
+    _require_db()
+    tid, uid = user["tenant_id"], UUID(str(user["user_id"]))
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT notification_id, type, title, body, application_id, is_read, created_at "
+            "FROM notifications WHERE tenant_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 50",
+            tid, uid,
+        )
+        unread = await conn.fetchval(
+            "SELECT count(*) FROM notifications WHERE tenant_id=$1 AND user_id=$2 AND is_read=false", tid, uid,
+        )
+    return {"unread_count": unread, "notifications": [{
+        "notification_id": str(r["notification_id"]), "type": r["type"], "title": r["title"],
+        "body": r["body"], "application_id": r["application_id"], "is_read": r["is_read"],
+        "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+    } for r in rows]}
+
+
+@router.post("/notifications/read-all")
+async def read_all_notifications(user: dict = Depends(get_current_user)) -> dict:
+    _require_db()
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE notifications SET is_read=true WHERE user_id=$1 AND tenant_id=$2",
+            UUID(str(user["user_id"])), user["tenant_id"],
+        )
+    return {"ok": True}
+
+
+@router.post("/notifications/{notification_id}/read")
+async def read_notification(notification_id: str, user: dict = Depends(get_current_user)) -> dict:
+    _require_db()
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE notifications SET is_read=true WHERE notification_id=$1 AND user_id=$2",
+            UUID(notification_id), UUID(str(user["user_id"])),
+        )
+    return {"ok": True}
 
 
 # ─────────────────────────────────────────────────────────────────────

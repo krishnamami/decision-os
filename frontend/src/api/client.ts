@@ -150,6 +150,73 @@ export function fetchTeam(): Promise<TeamResponse> {
   return getJSON('/api/accord/pipeline/team')
 }
 
+// ── Communications / attention / notes / notifications ───────────────
+export interface Notification {
+  notification_id: string
+  type: string
+  title: string
+  body: string | null
+  application_id: string | null
+  is_read: boolean
+  created_at: string | null
+}
+export interface NotificationsResponse {
+  unread_count: number
+  notifications: Notification[]
+}
+export interface LoanNote {
+  note_id: string
+  note: string
+  note_type: string
+  author: string
+  created_at: string | null
+}
+export interface TeammateLite {
+  user_id: string
+  name: string
+  role: string
+}
+
+export function requestInfo(body: {
+  application_id: string
+  recipient_email?: string
+  items: string[]
+  note?: string
+  due_date?: string
+}): Promise<{ ok: boolean }> {
+  return postJSON('/api/accord/communications', body)
+}
+export function simulateResponse(application_id: string): Promise<{ ok: boolean }> {
+  return postJSON('/api/accord/communications/simulate-response', { application_id })
+}
+export function createAttentionRequest(body: {
+  application_id: string
+  decision_id?: string
+  to_user_id: string
+  message: string
+  priority: string
+}): Promise<{ ok: boolean }> {
+  return postJSON('/api/accord/attention-requests', body)
+}
+export function fetchNotes(appId: string): Promise<{ notes: LoanNote[] }> {
+  return getJSON(`/api/accord/loans/${encodeURIComponent(appId)}/notes`)
+}
+export function addNote(appId: string, note: string): Promise<{ ok: boolean }> {
+  return postJSON(`/api/accord/loans/${encodeURIComponent(appId)}/notes`, { note })
+}
+export function fetchNotifications(): Promise<NotificationsResponse> {
+  return getJSON('/api/accord/notifications')
+}
+export function markNotificationRead(id: string): Promise<{ ok: boolean }> {
+  return postJSON(`/api/accord/notifications/${encodeURIComponent(id)}/read`, {})
+}
+export function markAllNotificationsRead(): Promise<{ ok: boolean }> {
+  return postJSON('/api/accord/notifications/read-all', {})
+}
+export function fetchTeammates(): Promise<{ users: TeammateLite[] }> {
+  return getJSON('/api/accord/users')
+}
+
 // ── Pipeline ─────────────────────────────────────────────────────────
 
 export function fetchPipeline(

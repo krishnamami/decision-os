@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import NotificationBell from './NotificationBell'
 
 const PRODUCTS = [
   { to: '/pipeline', icon: '📋', name: 'Pipeline', desc: 'See what 12 AI agents found on every loan' },
@@ -105,8 +106,10 @@ export default function Header() {
             <a href="#" className="hover:text-slate-900">Blog</a>
           </nav>
 
-          {/* User menu */}
-          <div ref={userRef} className="relative ml-auto">
+          {/* Notifications + user menu */}
+          <div className="ml-auto flex items-center gap-2">
+            <NotificationBell />
+            <div ref={userRef} className="relative">
             <button
               onClick={() => setUserOpen((v) => !v)}
               className="flex h-8 w-8 items-center justify-center rounded-full bg-brand text-xs font-bold text-white"
@@ -130,6 +133,7 @@ export default function Header() {
                 </button>
               </div>
             )}
+            </div>
           </div>
         </div>
 

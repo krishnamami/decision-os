@@ -9,6 +9,9 @@ import PersonaAccordion from '../components/PersonaAccordion'
 import MirofishDebate from '../components/MirofishDebate'
 import ConditionsPanel from '../components/ConditionsPanel'
 import ActivityFeed from '../components/ActivityFeed'
+import RequestInfoModal from '../components/RequestInfoModal'
+import AttentionModal from '../components/AttentionModal'
+import NotesSection from '../components/NotesSection'
 
 function moneyK(v: number | null | undefined) {
   if (v == null) return '—'
@@ -37,6 +40,7 @@ export default function LoanDetail() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [modal, setModal] = useState<'request_info' | 'internal' | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -139,7 +143,7 @@ export default function LoanDetail() {
 
         {/* 4 — Your decision */}
         {canAct ? (
-          <YourDecision onAct={fire} />
+          <YourDecision onAct={fire} onOpenModal={setModal} />
         ) : (
           <section className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-500">
             <span className="font-medium text-slate-700">View only</span> — your role has read-only access. You can review
@@ -151,6 +155,22 @@ export default function LoanDetail() {
           <div className="fixed bottom-6 left-1/2 z-20 -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white shadow-lg">
             {toast}
           </div>
+        )}
+
+        {modal === 'request_info' && (
+          <RequestInfoModal
+            appId={loan.application_id}
+            defaultEmail={`${loan.borrower.name.toLowerCase().split(/\s+/).slice(0, 2).join('.').replace(/[^a-z.]/g, '')}@email.com`}
+            onClose={() => setModal(null)}
+            onSent={() => { setModal(null); fire('✓ Request sent. Loan moved to Pending.') }}
+          />
+        )}
+        {modal === 'internal' && (
+          <AttentionModal
+            appId={loan.application_id}
+            onClose={() => setModal(null)}
+            onSent={() => { setModal(null); fire('✓ Internal review requested.') }}
+          />
         )}
 
         {/* MiroFish debate */}
@@ -167,6 +187,7 @@ export default function LoanDetail() {
               <PersonaAccordion decisions={loan.decisions} />
             </div>
             <div className="space-y-5">
+              <NotesSection appId={loan.application_id} />
               <ConditionsPanel conditions={loan.conditions} />
               <ActivityFeed activity={loan.activity} />
             </div>
@@ -252,9 +273,10 @@ const ACTIONS: Array<{
   { key: 'deny', icon: '❌', title: 'Deny', blurb: 'Deny this loan and trigger an adverse-action notice.', input: 'required', inputLabel: 'Specific denial reason (required)', confirm: 'Deny loan', cls: 'text-red-700', done: 'Loan denied — adverse-action notice queued' },
 ]
 
-function YourDecision({ onAct }: { onAct: (msg: string) => void }) {
+function YourDecision({ onAct, onOpenModal }: { onAct: (msg: string) => void; onOpenModal: (k: 'request_info' | 'internal') => void }) {
   const [open, setOpen] = useState<ActionKey | null>(null)
   const [text, setText] = useState('')
+  const MODAL_ACTIONS: ActionKey[] = ['request_info', 'internal']
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-5">
@@ -267,6 +289,10 @@ function YourDecision({ onAct }: { onAct: (msg: string) => void }) {
             <div key={a.key} className={`rounded-lg border ${isOpen ? 'border-brand ring-1 ring-brand/20' : 'border-slate-200'}`}>
               <button
                 onClick={() => {
+                  if (MODAL_ACTIONS.includes(a.key)) {
+                    onOpenModal(a.key as 'request_info' | 'internal')
+                    return
+                  }
                   setOpen(isOpen ? null : a.key)
                   setText('')
                 }}
