@@ -129,6 +129,7 @@ export interface TeamMember {
   active: number
   pending: number
   decided: number
+  oldest_days: number
   loans: Array<{
     application_id: string
     borrower_name: string
@@ -140,7 +141,25 @@ export interface TeamMember {
 }
 export interface TeamResponse {
   members: TeamMember[]
-  totals: { active: number; pending: number; decided: number }
+  totals: { active: number; pending: number; decided: number; avg_days: number }
+}
+export interface TeamPerformanceMember {
+  name: string
+  role: string
+  active: number
+  decided: number
+  avg_days: number
+  overrides: number
+}
+export interface TeamPerformanceResponse {
+  members: TeamPerformanceMember[]
+  avg_overrides: number
+}
+export interface ReportData {
+  report_id: string
+  columns: string[]
+  rows: Array<Array<string | number | null>>
+  count: number
 }
 
 export function fetchMyQueue(userId?: string): Promise<MyQueueResponse> {
@@ -148,6 +167,15 @@ export function fetchMyQueue(userId?: string): Promise<MyQueueResponse> {
 }
 export function fetchTeam(): Promise<TeamResponse> {
   return getJSON('/api/accord/pipeline/team')
+}
+export function reassignLoans(application_ids: string[], to_user_id: string): Promise<{ transferred: number; to_name: string }> {
+  return postJSON('/api/accord/pipeline/reassign', { application_ids, to_user_id })
+}
+export function fetchTeamPerformance(): Promise<TeamPerformanceResponse> {
+  return getJSON('/api/accord/analytics/team-performance')
+}
+export function fetchReportData(reportId: string): Promise<ReportData> {
+  return getJSON(`/api/accord/audit/reports/${encodeURIComponent(reportId)}/data`)
 }
 
 // ── Communications / attention / notes / notifications ───────────────

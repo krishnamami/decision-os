@@ -669,10 +669,11 @@ async def team_overview(user: dict = Depends(get_current_user)) -> dict:
         )
     members: dict = {}
     totals = {"active": 0, "pending": 0, "decided": 0}
+    all_days: list[int] = []
     for r in rows:
         m = members.setdefault(str(r["user_id"]), {
             "user_id": str(r["user_id"]), "name": r["name"], "role": r["role"],
-            "active": 0, "pending": 0, "decided": 0, "loans": [],
+            "active": 0, "pending": 0, "decided": 0, "loans": [], "oldest_days": 0, "_days": [],
         })
         if not r["application_id"]:
             continue
@@ -680,6 +681,10 @@ async def team_overview(user: dict = Depends(get_current_user)) -> dict:
         bucket = "active" if st == "active" else ("pending" if st == "pending_borrower" else "decided")
         m[bucket] += 1
         totals[bucket] += 1
+        d = _days_since(r["assigned_at"])
+        if bucket != "decided" and d is not None:
+            m["_days"].append(d)
+            all_days.append(d)
         if bucket != "decided" and len(m["loans"]) < 6:
             m["loans"].append({
                 "application_id": r["application_id"],
@@ -687,8 +692,11 @@ async def team_overview(user: dict = Depends(get_current_user)) -> dict:
                 "loan_amount": _f(r["loan_amount"]),
                 "loan_status": r["loan_status"],
                 "stage": r["stage"],
-                "days_in_queue": _days_since(r["assigned_at"]),
+                "days_in_queue": d,
             })
+    for m in members.values():
+        m["oldest_days"] = max(m.pop("_days") or [0])
+    totals["avg_days"] = round(sum(all_days) / len(all_days), 1) if all_days else 0
     return {"members": list(members.values()), "totals": totals}
 
 
@@ -716,6 +724,39 @@ class AttentionBody(BaseModel):
 class NoteBody(BaseModel):
     note: str
     note_type: str = "general"
+
+
+class ReassignBody(BaseModel):
+    application_ids: list[str]
+    to_user_id: str
+
+
+@router.post("/pipeline/reassign")
+async def reassign(body: ReassignBody, user: dict = Depends(get_current_user)) -> dict:
+    """Manager moves loans between teammates."""
+    if user.get("role") not in ("admin", "manager"):
+        raise HTTPException(403, "Manager access required")
+    _require_db()
+    tid, to_uid = user["tenant_id"], UUID(str(body.to_user_id))
+    pool = await _get_pool()
+    n = 0
+    async with pool.acquire() as conn:
+        to_name = await conn.fetchval("SELECT name FROM users WHERE user_id=$1 AND tenant_id=$2", to_uid, tid)
+        if not to_name:
+            raise HTTPException(404, "Target user not found")
+        for app in body.application_ids:
+            await conn.execute(
+                "UPDATE loan_assignments SET previous_assignee=assigned_to, assigned_to=$1, assigned_at=NOW() "
+                "WHERE application_id=$2 AND tenant_id=$3", to_uid, app, tid,
+            )
+            await conn.execute("UPDATE entity_states SET assigned_to=$1 WHERE application_id=$2 AND tenant_id=$3", to_uid, app, tid)
+            n += 1
+        if n:
+            await conn.execute(
+                "INSERT INTO notifications (tenant_id, user_id, type, title) VALUES ($1,$2,'loan_assigned',$3)",
+                tid, to_uid, f"{n} loan{'s' if n != 1 else ''} reassigned to you",
+            )
+    return {"transferred": n, "to_name": to_name}
 
 
 @router.get("/users")

@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Query
-from api.accord.auth import get_tenant_id
+from fastapi import APIRouter, Depends, HTTPException, Query
+from api.accord.auth import get_current_user, get_tenant_id
 
 from api.accord.pipeline import PERSONAS, _f, _get_pool, _require_db, cached_agg
 
@@ -215,3 +215,43 @@ async def risk(tenant_id: str = Depends(get_tenant_id)) -> dict:
         }
 
     return await cached_agg(f"analytics:risk:{tenant_id}", produce)
+
+
+@router.get("/team-performance")
+async def team_performance(user: dict = Depends(get_current_user)) -> dict:
+    """Per-teammate throughput for the manager view: active / decided / avg time
+    in queue / overrides (flagged when above the team average)."""
+    if user.get("role") not in ("admin", "manager"):
+        raise HTTPException(403, "Manager access required")
+    _require_db()
+    tid = user["tenant_id"]
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT u.user_id, u.name, u.role,
+                   count(*) FILTER (WHERE la.status = 'active') AS active,
+                   count(*) FILTER (WHERE la.status IN ('decided', 'funded')) AS decided,
+                   avg(EXTRACT(EPOCH FROM (NOW() - la.assigned_at)) / 86400.0)
+                       FILTER (WHERE la.status = 'active') AS avg_days
+            FROM users u
+            LEFT JOIN loan_assignments la ON la.assigned_to = u.user_id AND la.tenant_id = $1
+            WHERE u.tenant_id = $1 AND u.role IN ('processor', 'underwriter', 'senior_uw', 'closer')
+            GROUP BY u.user_id, u.name, u.role
+            ORDER BY u.name
+            """,
+            tid,
+        )
+        ov = await conn.fetch(
+            "SELECT human_reviewer, count(*) AS n FROM decision_outputs "
+            "WHERE tenant_id = $1 AND human_action = 'overridden' GROUP BY human_reviewer",
+            tid,
+        )
+    ov_map = {r["human_reviewer"]: int(r["n"]) for r in ov if r["human_reviewer"]}
+    members = [{
+        "name": r["name"], "role": r["role"], "active": int(r["active"]), "decided": int(r["decided"]),
+        "avg_days": round(float(r["avg_days"]), 1) if r["avg_days"] is not None else 0,
+        "overrides": ov_map.get(r["name"], 0),
+    } for r in rows]
+    avg_ov = round(sum(m["overrides"] for m in members) / len(members), 1) if members else 0
+    return {"members": members, "avg_overrides": avg_ov}

@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from api.accord.auth import get_tenant_id
+from api.accord.auth import get_current_user, get_tenant_id
 
 from api.accord.pipeline import PERSONAS, _f, _get_pool, _J, _require_db, cached_agg
 
@@ -110,6 +110,88 @@ async def _reports(tenant_id: str) -> dict:
         c["last_run"] = None
         c["status"] = "available"
     return {"reports": catalog}
+
+
+@router.get("/reports/{report_id}/data")
+async def report_data(report_id: str, user: dict = Depends(get_current_user)) -> dict:
+    """Real, tenant-scoped rows for a governance report — the frontend turns
+    {columns, rows} into a CSV/PDF download. Managers + compliance only."""
+    if user.get("role") not in ("admin", "manager", "compliance"):
+        raise HTTPException(403, "Manager or compliance access required")
+    _require_db()
+    tid = user["tenant_id"]
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        if report_id == "hmda_lar":
+            columns = ["Application", "Borrower", "Loan Amount", "Loan Type", "Credit Score", "LTV %", "DTI %", "Status", "Action Taken"]
+            recs = await conn.fetch(
+                "SELECT es.application_id, COALESCE(ap.full_name, es.application_id) AS borrower, es.loan_amount, "
+                "a.loan_type, es.mid_credit_score, es.ltv, es.dti_back, es.loan_status "
+                "FROM entity_states es LEFT JOIN applications a ON a.application_id=es.application_id "
+                "LEFT JOIN applicants ap ON ap.applicant_id=a.applicant_id WHERE es.tenant_id=$1 ORDER BY es.application_id",
+                tid,
+            )
+            act = {"decided": "Approved", "funded": "Loan originated", "halted": "Application denied",
+                   "pending_borrower": "Incomplete", "active": "In process"}
+            rows = [[r["application_id"], r["borrower"], _f(r["loan_amount"]), r["loan_type"],
+                     r["mid_credit_score"], _f(r["ltv"]), _f(r["dti_back"]), r["loan_status"],
+                     act.get(r["loan_status"], "In process")] for r in recs]
+        elif report_id == "override_justification":
+            columns = ["Application", "Decision", "AI Outcome", "Reviewer", "Justification", "When"]
+            recs = await conn.fetch(
+                "SELECT application_id, decision_id, outcome, human_reviewer, human_override_reason, acted_at "
+                "FROM decision_outputs WHERE tenant_id=$1 AND human_action='overridden' ORDER BY acted_at DESC",
+                tid,
+            )
+            rows = [[r["application_id"], PERSONAS.get(r["decision_id"], {}).get("name", r["decision_id"]),
+                     r["outcome"], r["human_reviewer"], r["human_override_reason"],
+                     r["acted_at"].isoformat() if r["acted_at"] else ""] for r in recs]
+        elif report_id == "ai_model":
+            columns = ["Agent", "Decisions", "Allow %", "Block %", "Override %", "Avg Confidence %"]
+            recs = await conn.fetch(
+                "SELECT decision_id, count(*) n, "
+                "round((100.0*count(*) FILTER (WHERE outcome='allow')/count(*))::numeric,1) allow_pct, "
+                "round((100.0*count(*) FILTER (WHERE outcome='block')/count(*))::numeric,1) block_pct, "
+                "round((100.0*count(*) FILTER (WHERE human_action='overridden')/count(*))::numeric,1) ov_pct, "
+                "round((100.0*avg(confidence))::numeric,1) conf "
+                "FROM decision_outputs WHERE tenant_id=$1 GROUP BY decision_id ORDER BY decision_id",
+                tid,
+            )
+            rows = [[PERSONAS.get(r["decision_id"], {}).get("name", r["decision_id"]), int(r["n"]),
+                     float(r["allow_pct"] or 0), float(r["block_pct"] or 0), float(r["ov_pct"] or 0),
+                     float(r["conf"] or 0)] for r in recs]
+        elif report_id == "fair_lending":
+            columns = ["Segment (loan type)", "Loans", "Approved", "Approval Rate %", "Disparate Impact"]
+            recs = await conn.fetch(
+                "SELECT a.loan_type AS seg, count(*) n, "
+                "count(*) FILTER (WHERE es.loan_status IN ('decided','funded')) approved "
+                "FROM entity_states es LEFT JOIN applications a ON a.application_id=es.application_id "
+                "WHERE es.tenant_id=$1 GROUP BY a.loan_type ORDER BY n DESC",
+                tid,
+            )
+            tot = sum(int(r["n"]) for r in recs)
+            apr = sum(int(r["approved"]) for r in recs)
+            overall = apr / tot if tot else 0
+            rows = []
+            for r in recs:
+                n, ap_ = int(r["n"]), int(r["approved"])
+                rate = ap_ / n if n else 0
+                flag = ("⚠ review — rate deviates >15%"
+                        if overall and n >= 5 and abs(rate - overall) / max(overall, 0.01) > 0.15
+                        else "No disparate impact")
+                rows.append([r["seg"] or "unknown", n, ap_, round(rate * 100, 1), flag])
+        else:  # examiner_package (or unknown) — loan-level decision chain summary
+            columns = ["Application", "Status", "AI Decisions", "Human Actions", "Overrides"]
+            recs = await conn.fetch(
+                "SELECT es.application_id, es.loan_status, "
+                "(SELECT count(DISTINCT decision_id) FROM decision_outputs d WHERE d.application_id=es.application_id AND d.tenant_id=$1) ai, "
+                "(SELECT count(*) FROM decision_outputs d WHERE d.application_id=es.application_id AND d.tenant_id=$1 AND d.human_action IS NOT NULL) ha, "
+                "(SELECT count(*) FROM decision_outputs d WHERE d.application_id=es.application_id AND d.tenant_id=$1 AND d.human_action='overridden') ov "
+                "FROM entity_states es WHERE es.tenant_id=$1 ORDER BY es.application_id",
+                tid,
+            )
+            rows = [[r["application_id"], r["loan_status"], int(r["ai"]), int(r["ha"]), int(r["ov"])] for r in recs]
+    return {"report_id": report_id, "columns": columns, "rows": rows, "count": len(rows)}
 
 
 @router.get("/compliance-health")

@@ -3,6 +3,7 @@ import {
   fetchAdverseAction,
   fetchAudit,
   fetchComplianceHealth,
+  fetchReportData,
   fetchReports,
 } from '../api/client'
 import type {
@@ -13,16 +14,33 @@ import type {
 } from '../types/accord'
 import PeriodFilter, { type Period, periodParam } from '../components/PeriodFilter'
 import { CardSkeleton, ErrorState } from '../components/states'
-import { downloadJson } from '../utils/export'
+import { downloadCsv, downloadJson } from '../utils/export'
 
-// Report metadata not in the API — frequency + display status per report id.
-const REPORT_META: Record<string, { frequency: string; status: string; action: string }> = {
-  hmda_lar: { frequency: 'Quarterly', status: 'submitted', action: 'View' },
-  fair_lending: { frequency: 'Monthly', status: 'clean', action: 'View' },
-  override_justification: { frequency: 'Monthly', status: 'complete', action: 'View' },
-  ai_model: { frequency: 'Quarterly', status: 'validated', action: 'View' },
-  examiner_package: { frequency: 'On demand', status: 'ready', action: 'Generate' },
+// Governance report catalog — what each contains + who it's for + formats.
+const REPORT_CARDS: Array<{ id: string; title: string; audience: string; contains: string; frequency: string; formats: Array<'csv' | 'pdf' | 'package'> }> = [
+  { id: 'hmda_lar', title: 'HMDA LAR Export', audience: 'Federal regulators (CFPB)', contains: 'Loan-level demographics, actions, and characteristics for the Home Mortgage Disclosure Act.', frequency: 'Quarterly', formats: ['csv', 'pdf'] },
+  { id: 'fair_lending', title: 'Fair Lending Analysis', audience: 'Compliance team + board', contains: 'Approval rates by segment, geographic analysis, and disparate-impact testing with pass/warn flags.', frequency: 'Monthly', formats: ['pdf', 'csv'] },
+  { id: 'examiner_package', title: 'AI Decision Audit Trail', audience: 'Examiners, internal audit', contains: 'Every AI decision, human action, override, and authority chain across all loans — the complete chain.', frequency: 'On demand', formats: ['package'] },
+  { id: 'override_justification', title: 'Override Justification Report', audience: 'Chief Risk Officer', contains: 'Every case where a human overrode the AI: who, the original AI decision, new outcome, and written justification.', frequency: 'Monthly', formats: ['pdf', 'csv'] },
+  { id: 'ai_model', title: 'AI Model Validation Report', audience: 'Model risk management, OCC/Fed examiners', contains: 'Per-agent allow/block rates, override rates, and average confidence — model calibration + accuracy.', frequency: 'Quarterly', formats: ['pdf', 'csv'] },
+]
+
+// Open a printable window with the report table — the browser "Save as PDF" path.
+function printReport(title: string, columns: string[], rows: Array<Array<string | number | null>>) {
+  const w = window.open('', '_blank')
+  if (!w) return
+  const head = columns.map((c) => `<th>${c}</th>`).join('')
+  const body = rows.map((r) => `<tr>${r.map((c) => `<td>${c == null ? '' : String(c)}</td>`).join('')}</tr>`).join('')
+  w.document.write(
+    `<html><head><title>${title}</title><style>body{font-family:system-ui,sans-serif;padding:28px;color:#0f172a}h1{font-size:18px;margin:0}p{color:#64748b;font-size:12px}table{border-collapse:collapse;width:100%;font-size:11px;margin-top:14px}th,td{border:1px solid #e2e8f0;padding:4px 8px;text-align:left}th{background:#f8fafc}</style></head>` +
+    `<body><h1>${title}</h1><p>Accord · ${rows.length} records · generated ${new Date().toLocaleString()}</p>` +
+    `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></body></html>`,
+  )
+  w.document.close()
+  w.focus()
+  setTimeout(() => w.print(), 350)
 }
+
 const OVERDUE_DAYS = 30
 
 function kpiColor(value: number, good: number, warn: number, invert = false): string {
@@ -346,53 +364,50 @@ export default function Audit() {
         </div>
       </section>
 
-      {/* 5. Reports library */}
+      {/* 5. Governance reports */}
       <section className="space-y-3">
-        <h2 className="text-lg font-bold text-slate-900">Compliance Reports</h2>
+        <h2 className="text-lg font-bold text-slate-900">Governance Reports</h2>
         <div className="flex items-center gap-2.5 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm text-blue-800">
           <span className="text-base">🔒</span>
-          <span>
-            These regulatory reports require <span className="font-semibold">governance admin access</span>.
-            Generating or exporting any report is audit-logged.
-          </span>
+          <span>Regulatory reports with real, tenant-scoped data. Every export is audit-logged.</span>
         </div>
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <table className="min-w-full text-sm">
-            <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-4 py-2 text-left">Report</th>
-                <th className="px-4 py-2 text-left">Frequency</th>
-                <th className="px-4 py-2 text-left">Last Run</th>
-                <th className="px-4 py-2 text-right">Records</th>
-                <th className="px-4 py-2 text-left">Status</th>
-                <th className="px-4 py-2 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {reports.map((r) => {
-                const meta = REPORT_META[r.id] ?? { frequency: '—', status: r.status, action: 'View' }
-                return (
-                  <tr key={r.id}>
-                    <td className="px-4 py-2 font-medium text-slate-800">{r.name}</td>
-                    <td className="px-4 py-2 text-slate-500">{meta.frequency}</td>
-                    <td className="px-4 py-2 text-slate-500">{r.last_run ? new Date(r.last_run).toLocaleDateString() : '—'}</td>
-                    <td className="px-4 py-2 text-right text-slate-600">{r.record_count.toLocaleString()}</td>
-                    <td className="px-4 py-2">
-                      <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">{meta.status}</span>
-                    </td>
-                    <td className="px-4 py-2 text-right">
-                      <button
-                        onClick={() => showToast('Coming in next release')}
-                        className="text-sm font-medium text-brand hover:underline"
-                      >
-                        {meta.action}
-                      </button>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {REPORT_CARDS.map((card) => {
+            const records = reports.find((r) => r.id === card.id)?.record_count ?? 0
+            async function run(fmt: 'csv' | 'pdf' | 'package') {
+              showToast('Generating report…')
+              try {
+                const d = await fetchReportData(card.id)
+                if (fmt === 'pdf') printReport(card.title, d.columns, d.rows)
+                else if (fmt === 'package') downloadJson({ report: card.id, generated_at: new Date().toISOString(), columns: d.columns, rows: d.rows }, `accord_${card.id}`)
+                else downloadCsv(d.columns, d.rows, `accord_${card.id}`)
+                showToast(`✓ ${card.title} exported (${d.count} records)`)
+              } catch {
+                showToast('Could not generate report')
+              }
+            }
+            return (
+              <div key={card.id} className="flex flex-col rounded-xl border border-slate-200 bg-white p-5">
+                <h3 className="font-semibold text-slate-900">{card.title}</h3>
+                <div className="mt-1 text-xs text-slate-500"><span className="font-medium text-slate-600">For:</span> {card.audience}</div>
+                <p className="mt-2 text-sm leading-relaxed text-slate-600">{card.contains}</p>
+                <div className="mt-2 text-xs text-slate-400">
+                  {card.frequency} · {records.toLocaleString()} records · Last exported: Never
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {card.formats.includes('csv') && (
+                    <button onClick={() => run('csv')} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">📥 Export CSV</button>
+                  )}
+                  {card.formats.includes('pdf') && (
+                    <button onClick={() => run('pdf')} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">📥 Export PDF</button>
+                  )}
+                  {card.formats.includes('package') && (
+                    <button onClick={() => run('package')} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">📥 Export package</button>
+                  )}
+                </div>
+              </div>
+            )
+          })}
         </div>
       </section>
 

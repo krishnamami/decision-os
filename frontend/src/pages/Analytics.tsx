@@ -3,8 +3,9 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   PieChart, Pie, Cell,
 } from 'recharts'
-import { fetchAgents, fetchAnalytics, fetchFunnel, fetchRisk } from '../api/client'
+import { fetchAgents, fetchAnalytics, fetchFunnel, fetchRisk, fetchTeamPerformance, type TeamPerformanceResponse } from '../api/client'
 import type { AgentStat, AnalyticsOverview, FunnelStep, RiskData } from '../types/accord'
+import { useAuth } from '../context/AuthContext'
 import PeriodFilter, { type Period, periodParam } from '../components/PeriodFilter'
 import ExportMenu from '../components/ExportMenu'
 import { ErrorState } from '../components/states'
@@ -426,7 +427,61 @@ export default function Analytics() {
           </>
         )}
       </Section>
+
+      {/* 6. Team performance (managers/admins only) */}
+      <TeamPerformanceSection />
     </div>
+  )
+}
+
+function TeamPerformanceSection() {
+  const { user } = useAuth()
+  const isManager = user?.role === 'manager' || user?.role === 'admin'
+  const [data, setData] = useState<TeamPerformanceResponse | null>(null)
+
+  useEffect(() => {
+    if (isManager) fetchTeamPerformance().then(setData).catch(() => undefined)
+  }, [isManager])
+
+  if (!isManager || !data) return null
+  const flagged = (n: number) => n > 0 && n > data.avg_overrides
+
+  return (
+    <Section title="Team Performance">
+      <Card>
+        <table className="min-w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-100 text-left text-xs uppercase tracking-wide text-gray-500">
+              <th className="py-2 pr-4">User</th>
+              <th className="py-2 pr-4">Role</th>
+              <th className="py-2 pr-4 text-right">Active</th>
+              <th className="py-2 pr-4 text-right">Decided</th>
+              <th className="py-2 pr-4 text-right">Avg time</th>
+              <th className="py-2 text-right">Overrides</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.members.map((m) => (
+              <tr key={m.name} className="border-b border-gray-50">
+                <td className="py-2 pr-4 font-medium text-gray-800">{m.name}</td>
+                <td className="py-2 pr-4 capitalize text-gray-500">{m.role.replace(/_/g, ' ')}</td>
+                <td className="py-2 pr-4 text-right text-gray-700">{m.active}</td>
+                <td className="py-2 pr-4 text-right text-gray-700">{m.decided}</td>
+                <td className="py-2 pr-4 text-right text-gray-700">{m.avg_days} days</td>
+                <td className={`py-2 text-right font-medium ${flagged(m.overrides) ? 'text-rose-600' : 'text-gray-700'}`}>
+                  {m.overrides}{flagged(m.overrides) ? ' ⚠' : ''}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {data.members.some((m) => flagged(m.overrides)) && (
+          <p className="mt-3 text-xs text-rose-600">
+            ⚠ Flagged: override count above the team average ({data.avg_overrides}).
+          </p>
+        )}
+      </Card>
+    </Section>
   )
 }
 
