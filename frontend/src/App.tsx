@@ -7,6 +7,7 @@ import Audit from './pages/Audit'
 import Simulation from './pages/Simulation'
 import Login from './pages/Login'
 import Settings from './pages/Settings'
+import Landing from './pages/Landing'
 import { AuthProvider, useAuth } from './context/AuthContext'
 
 export default function App() {
@@ -26,8 +27,15 @@ function AppShell() {
   if (loading) {
     return <div className="flex min-h-screen items-center justify-center text-sm text-slate-400">Loading…</div>
   }
+  // Logged out: marketing landing at /, login at /login, everything else → /.
   if (!isAuthenticated) {
-    return <Login />
+    return (
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    )
   }
 
   // Role → which products this role may open at all.
