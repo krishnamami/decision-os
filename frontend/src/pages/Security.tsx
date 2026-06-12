@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 export function PublicPage({ title, intro, sections }: {
   title: string
   intro: string
-  sections: Array<[string, string]>
+  sections: Array<[string, string] | [string, string, string]>
 }) {
   return (
     <div className="min-h-screen bg-white text-slate-900">
@@ -20,8 +20,8 @@ export function PublicPage({ title, intro, sections }: {
         <h1 className="text-3xl font-bold tracking-tight">{title}</h1>
         <p className="mt-3 text-[17px] leading-relaxed text-slate-600">{intro}</p>
         <div className="mt-10 space-y-8">
-          {sections.map(([h, body]) => (
-            <section key={h}>
+          {sections.map(([h, body, id]) => (
+            <section key={h} id={id} className="scroll-mt-20">
               <h2 className="text-lg font-semibold text-slate-900">{h}</h2>
               <p className="mt-1.5 text-[15px] leading-relaxed text-slate-600">{body}</p>
             </section>
@@ -45,8 +45,8 @@ export default function Security() {
         ['Encryption everywhere', 'Data is encrypted with AES-256 at rest and TLS 1.3 in transit. Credentials and secrets are never stored in plain text.'],
         ['Tenant isolation', 'Every customer\'s data is isolated at the database level. A user in one organization can never see another organization\'s loans — enforced on every request, not just in the UI.'],
         ['Access control', 'Role-based access (processor, underwriter, senior UW, manager, compliance) governs what each user can see and do. Authentication uses short-lived signed tokens.'],
-        ['Your data stays yours', 'We never share or sell customer data. You can export or delete your data at any time. We use your data only to provide the service.'],
-        ['SOC 2 ready', 'Our architecture and controls are designed for SOC 2 Type II compliance. We are not yet certified, and we will say so plainly until we are.'],
+        ['You own your data', 'We never share or sell customer data, and we never use it to train AI for other customers. Export anytime via CSV, API, or a full database dump. When you leave, your data is deleted within 90 days and the deletion is confirmed in writing.'],
+        ['SOC 2 ready', 'Our architecture and controls are designed toward SOC 2 compliance. Certification is in progress — we are not yet certified, and we will say so plainly until we are.', 'soc2'],
         ['Deploy your way', 'Run Accord as a fully managed SaaS, or deploy it in your own AWS VPC so your data never leaves your environment. Same product, your infrastructure.'],
         ['Reliability', 'We target 99.9% uptime, with monitoring and audit logging across the platform. Every action is recorded.'],
       ]}

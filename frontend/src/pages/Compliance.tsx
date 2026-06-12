@@ -12,7 +12,7 @@ export default function Compliance() {
         ['Adverse action', 'Denials are tracked with the reason recorded; adverse-action notices are queued to meet the regulatory window. Nothing falls through the cracks.'],
         ['One-click examiner package', 'Export the full decision trail — AI findings, human reviews, overrides, and rationale — as a single package for internal audit or a regulator.'],
         ['Humans decide, on the record', 'AI evaluates and recommends; people make the call. Overrides require a written justification, which is preserved in the trail. The system is designed so a reviewer can always explain why a loan was approved or denied.'],
-        ['Designed for SOC 2', 'Our controls and architecture are built toward SOC 2 Type II. We will state our certification status honestly at every step.'],
+        ['Designed for SOC 2', 'Our controls and architecture are built toward SOC 2 compliance — certification is in progress. We will state our status honestly at every step.'],
       ]}
     />
   )
