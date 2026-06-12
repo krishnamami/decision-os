@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import ExportMenu from '../components/ExportMenu'
 import { downloadCsv, downloadJson, printPdf } from '../utils/export'
 import { fetchLoan } from '../api/client'
+import { useAuth } from '../context/AuthContext'
 import type { LoanDetail as LoanDetailT } from '../types/accord'
 import BorrowerCard from '../components/BorrowerCard'
 import PersonaAccordion from '../components/PersonaAccordion'
@@ -30,6 +31,9 @@ function ActionButton({ label, kind = 'ghost', onClick }: {
 
 export default function LoanDetail() {
   const { appId = '' } = useParams()
+  const { user } = useAuth()
+  // Viewers have read-only access — no approve/override/workflow actions.
+  const canAct = (user?.role ?? 'viewer') !== 'viewer'
   const [loan, setLoan] = useState<LoanDetailT | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -94,13 +98,19 @@ export default function LoanDetail() {
             <div className="flex flex-wrap items-center gap-3">
               <span className="text-lg">⛔</span>
               <span className="font-semibold tracking-wide">PIPELINE HALTED — Fraud block</span>
-              <div className="ml-auto flex flex-wrap gap-2">
-                <button onClick={() => act('Referred to SAR (demo)')} className="rounded-lg bg-white/15 px-3 py-1.5 text-sm font-medium hover:bg-white/25">
-                  Refer to SAR
-                </button>
-                <button onClick={() => act('Fraud flag cleared (demo)')} className="rounded-lg bg-white/15 px-3 py-1.5 text-sm font-medium hover:bg-white/25">
-                  Clear fraud flag
-                </button>
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                {canAct ? (
+                  <>
+                    <button onClick={() => act('Referred to SAR (demo)')} className="rounded-lg bg-white/15 px-3 py-1.5 text-sm font-medium hover:bg-white/25">
+                      Refer to SAR
+                    </button>
+                    <button onClick={() => act('Fraud flag cleared (demo)')} className="rounded-lg bg-white/15 px-3 py-1.5 text-sm font-medium hover:bg-white/25">
+                      Clear fraud flag
+                    </button>
+                  </>
+                ) : (
+                  <span className="text-sm text-white/70">View only</span>
+                )}
                 <button onClick={scrollToDebate} className="rounded-lg bg-white px-3 py-1.5 text-sm font-semibold text-red-700 hover:bg-white/90">
                   🐟 Run MiroFish Debate
                 </button>
@@ -113,9 +123,15 @@ export default function LoanDetail() {
           <div className="rounded-xl border border-red-200 bg-red-50 px-5 py-4">
             <div className="flex flex-wrap items-center gap-3">
               <span className="font-semibold text-red-800">Blocked{persona ? ` at ${persona}` : ''}</span>
-              <div className="ml-auto flex flex-wrap gap-2">
-                <ActionButton label="Request documents" onClick={() => act('Document request sent (demo)')} />
-                <ActionButton label="Request override" onClick={() => act('Override requested (demo)')} />
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                {canAct ? (
+                  <>
+                    <ActionButton label="Request documents" onClick={() => act('Document request sent (demo)')} />
+                    <ActionButton label="Request override" onClick={() => act('Override requested (demo)')} />
+                  </>
+                ) : (
+                  <span className="text-sm text-slate-500">View only</span>
+                )}
                 <ActionButton label="🐟 Run MiroFish Debate" kind="brand" onClick={scrollToDebate} />
               </div>
             </div>
