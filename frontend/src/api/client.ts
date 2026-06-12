@@ -103,7 +103,9 @@ export interface QueueCard {
   status: string
   stage: string
   queue_type: 'action_needed' | 'internal_request' | 'returned'
+  category?: 'clean' | 'fraud' | 'income' | 'compliance' | 'other'
   days_in_queue: number | null
+  sla_days?: number
   rate_lock_days: number | null
   urgency: 'urgent' | 'normal'
   ai_finding: string

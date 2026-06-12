@@ -360,7 +360,7 @@ export default function LoanDetail() {
           <p className="mb-3 text-sm text-slate-500">Click any stage to see the full analysis the agents ran.</p>
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
             <div className="lg:col-span-2">
-              <PersonaAccordion decisions={loan.decisions} />
+              <PersonaAccordion decisions={loan.decisions.map((d) => ({ ...d, explanation: cap(simplify(d.explanation)) }))} />
             </div>
             <div className="space-y-5">
               <NotesSection appId={loan.application_id} />
@@ -409,7 +409,7 @@ function GroupedEvidence({ loan, narr }: { loan: LoanDetailT; narr: Narr }) {
                       </ul>
                     </>
                   )}
-                  <p className="mt-2 text-sm italic leading-relaxed text-slate-600">"{d.explanation}"</p>
+                  <p className="mt-2 text-sm italic leading-relaxed text-slate-600">"{cap(simplify(d.explanation))}"</p>
                 </div>
               )
             })}

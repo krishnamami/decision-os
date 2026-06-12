@@ -480,6 +480,28 @@ def _queue_ai(blocking_did: Optional[str], decs: dict, borrower: Any, es: dict) 
     return {"ai_finding": finding, "ai_data_sources": sources, "ai_recommendation": rec}
 
 
+SLA_BY_STAGE = {"verify": 3, "underwrite": 5, "eligibility": 4, "decide": 3, "close": 2}
+
+
+def _block_category(decs: dict) -> str:
+    """Queue-card category from the root blocking decision (lowest wave; a hard
+    block beats an escalate at the same wave)."""
+    blockers = sorted(
+        (PERSONAS.get(d, {}).get("wave", 9), 0 if v.get("outcome") == "block" else 1, d)
+        for d, v in decs.items() if v.get("outcome") in ("block", "escalate")
+    )
+    if not blockers:
+        return "clean"
+    did = blockers[0][2]
+    if did == "fraud_screening":
+        return "fraud"
+    if did in ("income_verification", "employment_reconciliation"):
+        return "income"
+    if did == "compliance_check":
+        return "compliance"
+    return "other"
+
+
 def _days_since(ts: Any) -> Optional[int]:
     if ts is None:
         return None
@@ -601,7 +623,9 @@ async def my_queue(
             "status": st,
             "stage": r["stage"],
             "queue_type": queue_type,
+            "category": _block_category(decs),
             "days_in_queue": _days_since(r["assigned_at"]),
+            "sla_days": SLA_BY_STAGE.get(r["stage"], 5),
             "rate_lock_days": lock_days,
             "urgency": "urgent" if urg in ("CRITICAL", "URGENT") else "normal",
             "ai_finding": ai["ai_finding"],
@@ -628,6 +652,7 @@ async def my_queue(
         active.append({
             "application_id": app, "borrower_name": r["borrower_name"], "loan_amount": _f(r["loan_amount"]),
             "loan_type": r["loan_type"], "status": "active", "stage": "", "queue_type": "internal_request",
+            "category": "other", "sla_days": 5,
             "days_in_queue": None, "rate_lock_days": None, "urgency": "urgent" if a["priority"] == "urgent" else "normal",
             "ai_finding": "Internal review requested", "ai_data_sources": "", "ai_recommendation": "",
             "attention_request": {"from": a["from_name"], "message": a["message"], "priority": a["priority"]},

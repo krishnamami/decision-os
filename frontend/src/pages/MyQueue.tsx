@@ -21,8 +21,9 @@ const prettyType = (t: string | null) =>
 // queue_type/urgency → dot + tag shown on each action card.
 function cardTag(c: QueueCard): { dot: string; tag: string; tagCls: string } {
   if (c.queue_type === 'internal_request') return { dot: '🔵', tag: 'INTERNAL REQUEST', tagCls: 'text-blue-700' }
-  if (c.urgency === 'urgent') return { dot: '🔴', tag: 'URGENT', tagCls: 'text-red-700' }
+  // Returned (borrower responded) wins over urgency — it's the salient new state.
   if (c.queue_type === 'returned') return { dot: '🟢', tag: 'RETURNED', tagCls: 'text-green-700' }
+  if (c.urgency === 'urgent') return { dot: '🔴', tag: 'URGENT', tagCls: 'text-red-700' }
   return { dot: '🟡', tag: 'NEEDS ACTION', tagCls: 'text-amber-700' }
 }
 
@@ -247,8 +248,12 @@ function ActionCard({
 }) {
   const { dot, tag, tagCls } = cardTag(c)
   const internal = c.queue_type === 'internal_request' && c.attention_request
+  const returned = c.queue_type === 'returned'
+  const sla = c.sla_days ?? 5
+  const days = c.days_in_queue ?? 0
+  const overSla = days > sla
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4">
+    <div className={`rounded-xl border border-slate-200 bg-white p-4 ${returned ? 'border-l-4 border-l-green-500' : ''}`}>
       <div className="flex flex-wrap items-center gap-x-2 text-sm">
         <span>{dot}</span>
         <span className="font-semibold text-slate-900">{c.borrower_name}</span>
@@ -274,7 +279,9 @@ function ActionCard({
       )}
 
       <div className="mt-2 flex flex-wrap items-center gap-x-3 text-xs text-slate-500">
-        <span>In queue: {c.days_in_queue === 0 ? 'today' : `${c.days_in_queue} days`}</span>
+        <span className={overSla ? 'font-medium text-amber-600' : ''}>
+          In queue: {days} of {sla} days{overSla ? ' ⚠ over SLA' : ''}
+        </span>
         {c.rate_lock_days != null && (
           <span className={c.rate_lock_days <= 5 ? 'font-medium text-amber-600' : ''}>
             Rate lock: {c.rate_lock_days} days remaining {c.rate_lock_days <= 5 ? '⚠' : ''}
@@ -284,14 +291,23 @@ function ActionCard({
 
       {canAct && (
         <div className="mt-3 flex flex-wrap gap-2">
-          <button onClick={onReview} className="rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-dark">
-            {internal ? 'Review request' : 'Review'}
-          </button>
-          {!internal && (
+          {internal ? (
+            <button onClick={onReview} className="rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-dark">Review request</button>
+          ) : c.category === 'clean' ? (
+            // Clean file: quick approve is the primary (green) action.
             <>
-              <button onClick={() => onAct('Quick approved (demo)')} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Quick approve</button>
-              <button onClick={() => onAct('Info requested from borrower (demo)')} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Request info</button>
-              <button onClick={() => onAct('Loan denied (demo)')} className="rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50">Deny</button>
+              <button onClick={() => onAct('Quick approved (demo)')} className="rounded-lg bg-green-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-green-700">✅ Quick approve</button>
+              <button onClick={onReview} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Review</button>
+            </>
+          ) : (
+            // Blocked file: review first; context action; NO quick approve.
+            <>
+              <button onClick={onReview} className="rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-dark">Review</button>
+              {c.category === 'fraud' ? (
+                <button onClick={() => onAct('Referred to BSA officer (demo)')} className="rounded-lg border border-amber-200 px-3 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-50">⚠ Refer to BSA</button>
+              ) : (
+                <button onClick={() => onAct('Documents requested (demo)')} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">📧 Request docs</button>
+              )}
             </>
           )}
         </div>
