@@ -177,26 +177,55 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
   return <div className="mb-2 text-xs font-bold uppercase tracking-widest text-brand">{children}</div>
 }
 
-// "See Accord in action" — renders the recorded demo (DEMO_VIDEO_URL) as an
-// <iframe> or <video>, or a play-button placeholder until one is added.
+// "See Accord in action" — renders the recorded demo (DEMO_VIDEO_URL). For a
+// self-hosted file it shows a poster + a big click-to-play overlay (no autoplay);
+// once started it hands off to the native controls.
 function DemoVideo() {
   const url = DEMO_VIDEO_URL.trim()
   const isFile = /\.(mp4|webm)(\?.*)?$/i.test(url)
+  const [started, setStarted] = useState(false)
+  const videoRef = useRef<HTMLVideoElement>(null)
+
+  const play = () => {
+    videoRef.current?.play()
+    setStarted(true)
+  }
 
   let frame: React.ReactNode
   if (!url) {
     frame = (
-      <a
-        href={DEMO}
-        className="group flex h-full w-full flex-col items-center justify-center gap-3 bg-slate-900 text-white"
-      >
+      <a href={DEMO} className="group flex h-full w-full flex-col items-center justify-center gap-3 bg-slate-900 text-white">
         <span className="flex h-16 w-16 items-center justify-center rounded-full bg-white/15 text-2xl transition group-hover:scale-110 group-hover:bg-white/25">▶</span>
-        <span className="text-sm font-semibold">2-minute product demo</span>
+        <span className="text-sm font-semibold">Product demo</span>
         <span className="text-xs text-white/50">Coming soon — request a live walkthrough</span>
       </a>
     )
   } else if (isFile) {
-    frame = <video controls playsInline className="h-full w-full bg-black" src={url} />
+    frame = (
+      <div className="relative h-full w-full">
+        <video
+          ref={videoRef}
+          controls={started}
+          playsInline
+          preload="metadata"
+          poster="/accord_demo_poster.jpg"
+          src={url}
+          className="h-full w-full bg-black"
+          onPlay={() => setStarted(true)}
+        />
+        {!started && (
+          <button
+            type="button"
+            onClick={play}
+            aria-label="Play the demo"
+            className="group absolute inset-0 flex flex-col items-center justify-center gap-4 bg-slate-900/45 transition hover:bg-slate-900/30"
+          >
+            <span className="flex h-20 w-20 items-center justify-center rounded-full bg-white text-3xl text-brand shadow-2xl transition group-hover:scale-110">▶</span>
+            <span className="rounded-full bg-black/65 px-5 py-2 text-sm font-semibold text-white">Watch the 90-second demo</span>
+          </button>
+        )}
+      </div>
+    )
   } else {
     frame = (
       <iframe
@@ -210,16 +239,95 @@ function DemoVideo() {
   }
 
   return (
-    <section id="demo-video" className="mx-auto max-w-[1200px] scroll-mt-24 px-6 py-20 text-center">
+    <section id="demo-video" className="mx-auto max-w-[1200px] scroll-mt-24 px-6 py-16 text-center">
       <Eyebrow>See it in action</Eyebrow>
       <h2 className="text-3xl font-bold tracking-tight text-slate-900">Watch Accord make a decision</h2>
       <p className="mx-auto mt-2 max-w-xl text-[17px] leading-relaxed text-slate-600">
-        Two minutes, end to end — from a loan landing in the queue to an audited decision.
+        Ninety seconds, end to end — from a loan landing in the queue to an audited decision.
       </p>
-      <div className="mx-auto mt-8 aspect-video w-full max-w-3xl overflow-hidden rounded-2xl border border-slate-200 bg-slate-900 shadow-lg">
+      <div
+        id="demo-player"
+        className="mx-auto mt-8 aspect-video w-full max-w-4xl scroll-mt-24 overflow-hidden rounded-2xl border border-slate-200 bg-slate-900 shadow-xl"
+      >
         {frame}
       </div>
     </section>
+  )
+}
+
+// Marketing illustration for the Simulation section. NOT wired to the real
+// engine — clicking Run reveals a pre-built sample result inline (Option A).
+const SIM_OPTIONS = ['36% (tighten)', '38%', '40%', '50% (relax)', 'Custom…']
+const SIM_AFFECTED: Array<[string, string]> = [
+  ['Conventional · $420K', 'DTI 38% → over limit · restructure available'],
+  ['FHA · $295K', 'DTI 41% → over limit · co-signer option'],
+  ['Conventional · $510K', 'DTI 39% → over limit · larger down payment'],
+]
+
+function PolicySimDemo() {
+  const [selected, setSelected] = useState(SIM_OPTIONS[0])
+  const [status, setStatus] = useState<'idle' | 'running' | 'done'>('idle')
+
+  const run = () => {
+    setStatus('running')
+    setTimeout(() => setStatus('done'), 700)
+  }
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6 text-left">
+      <div className="mb-3 text-sm font-semibold text-slate-700">Policy Simulator — DTI limit</div>
+      <div className="space-y-2">
+        {SIM_OPTIONS.map((o) => (
+          <button
+            key={o}
+            type="button"
+            onClick={() => { setSelected(o); setStatus('idle') }}
+            className={`block w-full rounded-lg border px-3 py-2 text-left text-sm transition ${
+              selected === o ? 'border-brand bg-brand-light/40 font-semibold text-brand-dark' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+            }`}
+          >
+            {o}
+          </button>
+        ))}
+      </div>
+
+      {status === 'idle' && (
+        <div className="mt-4 rounded-lg border border-dashed border-slate-300 bg-white p-3 text-sm text-slate-500">
+          Pick a limit and run a sample simulation.
+        </div>
+      )}
+      {status === 'running' && (
+        <div className="mt-4 flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-600">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-brand" /> Simulating across the sample portfolio…
+        </div>
+      )}
+      {status === 'done' && (
+        <div className="mt-4 space-y-2">
+          <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm">
+            <div className="font-semibold text-slate-900">3 loans affected · $1.5M impact</div>
+            <div className="text-xs text-slate-500">At a {selected.replace(/ .*/, '')} DTI limit · each with restructure options</div>
+          </div>
+          {SIM_AFFECTED.map(([loan, detail]) => (
+            <div key={loan} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs">
+              <span className="font-medium text-slate-700">{loan}</span>
+              <span className="text-right text-slate-500">{detail}</span>
+            </div>
+          ))}
+          <p className="text-[11px] text-slate-400">
+            Sample data. <Link to="/login" className="text-brand hover:underline">Log in</Link> to run on your portfolio.
+          </p>
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={run}
+        disabled={status === 'running'}
+        className="mt-4 w-full rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-60"
+      >
+        {status === 'running' ? 'Simulating…' : status === 'done' ? 'Run again' : 'Run simulation'}
+      </button>
+    </div>
   )
 }
 
@@ -259,19 +367,19 @@ export default function Landing({ scrollTo }: { scrollTo?: string }) {
       {/* 2 — Marketing nav */}
       <header ref={navRef} className="sticky top-0 z-30 border-b border-slate-100 bg-white">
         <div className="mx-auto flex max-w-[1200px] items-center px-6" style={{ height: 56 }}>
-          <a href="#top" className="flex items-center gap-2">
+          <a href="#top" onClick={() => setProductsOpen(false)} className="flex items-center gap-2">
             <span className="flex h-7 w-7 items-center justify-center rounded-md bg-brand text-sm font-bold text-white">A</span>
             <span className="text-lg font-bold tracking-tight">accord</span>
           </a>
           <nav className="ml-8 hidden items-center gap-6 text-sm font-medium text-slate-600 md:flex">
             <button onClick={() => setProductsOpen((v) => !v)} className={`flex items-center gap-1 hover:text-slate-900 ${productsOpen ? 'text-slate-900' : ''}`}>Products ▾</button>
-            <a href="#pricing" className="hover:text-slate-900">Pricing</a>
-            <a href="#faq" className="hover:text-slate-900">Docs</a>
-            <a href="#who" className="hover:text-slate-900">Company ▾</a>
+            <a href="#pricing" onClick={() => setProductsOpen(false)} className="hover:text-slate-900">Pricing</a>
+            <a href="#faq" onClick={() => setProductsOpen(false)} className="hover:text-slate-900">Docs</a>
+            <a href="#who" onClick={() => setProductsOpen(false)} className="hover:text-slate-900">Company ▾</a>
           </nav>
           <div className="ml-auto flex items-center gap-3">
-            <Link to="/login" className="text-sm font-medium text-slate-600 hover:text-slate-900">Log in</Link>
-            <a href={DEMO} className="rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-dark">Request a demo</a>
+            <Link to="/login" onClick={() => setProductsOpen(false)} className="text-sm font-medium text-slate-600 hover:text-slate-900">Log in</Link>
+            <a href={DEMO} onClick={() => setProductsOpen(false)} className="rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-dark">Request a demo</a>
           </div>
         </div>
         {productsOpen && (
@@ -332,7 +440,7 @@ export default function Landing({ scrollTo }: { scrollTo?: string }) {
               <a href={DEMO} className="rounded-lg bg-brand px-7 py-3 text-sm font-semibold text-white hover:bg-brand-dark">Request a demo →</a>
               <button
                 type="button"
-                onClick={() => document.getElementById('demo-video')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                onClick={() => document.getElementById('demo-player')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
                 className="rounded-lg border border-[#D1D5DB] px-7 py-3 text-sm font-semibold text-[#374151] hover:bg-slate-50"
               >See it in action ▷</button>
             </div>
@@ -413,19 +521,7 @@ export default function Landing({ scrollTo }: { scrollTo?: string }) {
                 </div>
               ))}
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6">
-              <div className="mb-3 text-sm font-semibold text-slate-700">Policy Simulator — DTI limit</div>
-              <div className="space-y-2">
-                {['36% (tighten)', '38%', '40%', '50% (relax)', 'Custom…'].map((o, i) => (
-                  <div key={o} className={`rounded-lg border px-3 py-2 text-sm ${i === 0 ? 'border-brand bg-brand-light/40 font-semibold text-brand-dark' : 'border-slate-200 bg-white text-slate-600'}`}>{o}</div>
-                ))}
-              </div>
-              <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3 text-sm">
-                <div className="font-semibold text-slate-900">3 loans affected · $1.5M impact</div>
-                <div className="text-xs text-slate-500">Each with restructure options</div>
-              </div>
-              <button className="mt-4 w-full rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white">Run simulation</button>
-            </div>
+            <PolicySimDemo />
           </div>
           <p className="mx-auto mt-8 max-w-2xl text-center text-[15px] italic text-[#374151]">
             No spreadsheets. No guesswork. AI reasoning for every scenario, every borrower, every decision.
