@@ -815,6 +815,8 @@ async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_i
             "dti": _pct(e.get("dti_back")),
             "interest_rate": _pct(e.get("interest_rate")),
             "lock_days_remaining": lock_days,
+            "income_stated": _f((borrower.get("income") or {}).get("stated_income_annual")),
+            "income_verified": _f((borrower.get("income") or {}).get("verified_income_annual")),
         },
         "status": status,
         "urgency": urgency,

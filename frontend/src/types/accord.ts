@@ -94,6 +94,8 @@ export interface LoanDetail {
     dti: number | null
     interest_rate: number | null
     lock_days_remaining: number | null
+    income_stated?: number | null
+    income_verified?: number | null
   }
   status: LoanStatus
   urgency: Urgency
