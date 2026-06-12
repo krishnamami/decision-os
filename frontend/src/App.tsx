@@ -39,6 +39,7 @@ function AppShell() {
     return (
       <Routes>
         <Route path="/" element={<Landing />} />
+        <Route path="/pricing" element={<Landing scrollTo="pricing" />} />
         <Route path="/login" element={<Login />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -169,11 +169,19 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
   return <div className="mb-2 text-xs font-bold uppercase tracking-widest text-brand">{children}</div>
 }
 
-export default function Landing() {
+export default function Landing({ scrollTo }: { scrollTo?: string }) {
   const [bannerOpen, setBannerOpen] = useState(true)
   const [openFaq, setOpenFaq] = useState<number | null>(0)
   const [productsOpen, setProductsOpen] = useState(false)
   const navRef = useRef<HTMLDivElement>(null)
+
+  // /pricing (and similar) lands on the section instead of the top.
+  useEffect(() => {
+    if (scrollTo) {
+      const id = setTimeout(() => document.getElementById(scrollTo)?.scrollIntoView({ behavior: 'smooth' }), 100)
+      return () => clearTimeout(id)
+    }
+  }, [scrollTo])
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
