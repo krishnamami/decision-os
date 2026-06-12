@@ -2713,6 +2713,78 @@ CloudFront pull). `docker-compose down` to stop.
 
 ---
 
+### Session 22 — June 11–12 2026 — Auth + multi-tenancy + first AWS deployment
+
+Accord went from local-only to **live on AWS** behind JWT auth with real
+multi-tenant isolation. Every slice committed, pushed, and verified live
+(API 10/10, frontend role-gating, MiroFish debate, headless on the ALB).
+
+**Auth data model** (`685a677`) — `scripts/migrations/create_auth_tables.sql`
++ `core/auth/{models,security}.py`. Two tenants (`demo` enterprise = all 4
+products; `default` starter = pipeline only) + 4 users
+(admin/underwriter(uw@)/compliance/viewer @demo.com, pw `accord2026`, bcrypt).
+Runner `run_auth_migration.py` substitutes the `HASH_IN_CODE` placeholder with
+a real bcrypt hash — so NEVER `psql -f` the raw .sql (it would store the literal
+placeholder as the hash and break login). `--retenant` later moved all **8,896**
+loans `default` → `demo`.
+
+**JWT backend** (`e9be460`) — `core/auth/service.py` (`AuthService`:
+login/signup/create_token/verify_token/get_user/get_tenant; module-level
+`create_token`/`decode_token`) + `api/accord/auth.py` (`POST /auth/login`,
+`/auth/signup` public; `GET /auth/me`; `POST /auth/logout`). `get_current_user`
+(Bearer → 401, pure-crypto decode, no DB hit) + `get_tenant_id` deps.
+**Tenant isolation:** every pipeline/analytics/audit/mirofish query swapped
+`Query("default")` → `Depends(get_tenant_id)` so the tenant comes from the JWT,
+never the client. `JWT_SECRET` in `.env` (gitignored). Deps: pyjwt 2.13,
+bcrypt 3.2.2, python-multipart.
+
+**Frontend auth** (`e9be460`, viewer gating `52b9ddc`) — `AuthContext` (token
+in localStorage, `/me` verify on load, `login`/`logout`/`hasProduct`),
+`Login.tsx`, `client.ts` (Bearer header on every call; any 401 → `accord:
+unauthorized` event → auto-logout), `App.tsx` route guards (unauth → Login),
+`Header.tsx` user-menu (avatar "KM" → name/role/tenant, Settings admin-only,
+Sign out) + role/plan gating on the product tabs (viewer→Pipeline only;
+compliance→Pipeline+Audit; underwriter→Pipeline+Simulation; lock + "Upgrade to
+Business/Enterprise plan" when the plan lacks a product). `LoanDetail` hides the
+approve/override/SAR/doc-request buttons for `role=viewer` (shows "View only").
+
+**Workbench schema** (`5a849b1`) — `scripts/migrations/create_workbench_tables.sql`
++ runner. Six tables (loan_assignments, communications, attention_requests,
+loan_notes, conditions, notifications) + lifecycle cols on `entity_states`
+(loan_status, current_stage, assigned_to). Applied to RDS; purely additive,
+re-runnable (IF NOT EXISTS throughout). Empty until the workbench API writes to
+them.
+
+**AWS deployment** (`06cde1f`, deploy.sh fixes `760f730`) — first cloud deploy,
+on Accord's **own dedicated `accord` ECS Fargate cluster + ALB**, NOT the EDMS
+infra (there is no `edms-simulator` cluster in the account). ECR repos
+accord-api/accord-frontend; `deploy/ecs-{api,frontend}-task.json` (X86_64,
+awslogs; API secrets are `${VAR}` rendered from `.env` at register time — never
+committed); `deploy/deploy.sh` (idempotent: ECR login → build+push amd64 →
+register task def → create-or-update services with subnets/SG/target-groups →
+wait stable → print URL). Public `GET /api/accord/health` for the ALB target
+group. `nginx.conf` made ECS-safe — resolves the `api` upstream at request time
+(resolver + variable) so the standalone frontend task boots with no `api` host
+(ALB routes `/api/*` to the API TG in prod). `.gitattributes` forces LF on
+`*.sh`. Two Windows/Git-Bash deploy.sh bugs fixed: `command -v python3` grabbed
+the MS Store stub (now test-executes candidates); `mktemp` MSYS `/tmp` path
+unreadable by native `aws.exe` (now a repo-relative gitignored rendered file).
+Frontend builds with **VITE_API_URL empty** (relative `/api`) — do NOT set
+api.useaccord.com (no cert/domain; would break it).
+
+**Live:** http://accord-alb-588286075.us-east-1.elb.amazonaws.com
+(admin@demo.com / accord2026). Both services 1/1 on task-def rev `:2` (rev `:2`
+carries the viewer-gating fix). Redeploy = `bash deploy/deploy.sh`.
+
+**NOT done:** custom domain + SSL — no `useaccord.com` / ACM cert / HTTPS
+listener yet; access is over http via the ALB DNS. That's the only open item
+from the deploy spec (ACM cert → HTTPS listener → Route 53 → set VITE_API_URL).
+
+See memory `project-aws-deployment` for the canonical topology + the deviations
+to preserve against generic deploy prompts.
+
+---
+
 ## How to resume next session
 
 Open Claude Code:
@@ -3084,4 +3156,4 @@ How to run smoke tests:
 
 ---
 
-*Decision OS · CONTEXT.md · Updated June 10 2026 (Session 21 — Accord fully interactive: 5-stage loan-detail accordion, plain-English debate verdicts, Policy Simulator rebuilt as 12 dropdown cards w/ custom overrides, audit trail version badges + Compliance Reports; 12/12 click-through verified; Docker stack live on http://localhost)*
+*Decision OS · CONTEXT.md · Updated June 12 2026 (Session 22 — Accord live on AWS: JWT auth + multi-tenant isolation (4 demo users, 8,896 loans re-tenanted to demo), role/plan gating, workbench schema, first ECS Fargate deploy on the dedicated `accord` cluster/ALB; end-to-end verified on the live ALB. Domain + SSL still pending.)*
