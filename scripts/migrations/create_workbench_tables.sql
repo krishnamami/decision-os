@@ -68,7 +68,9 @@ CREATE TABLE IF NOT EXISTS loan_notes (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS conditions (
+-- NB: named loan_conditions (not `conditions`) — an EDMS `conditions` table
+-- already exists with a different (decision/severity) schema.
+CREATE TABLE IF NOT EXISTS loan_conditions (
   condition_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   application_id VARCHAR NOT NULL,
   tenant_id VARCHAR NOT NULL,
@@ -106,4 +108,4 @@ CREATE INDEX IF NOT EXISTS idx_assignments_app ON loan_assignments(application_i
 CREATE INDEX IF NOT EXISTS idx_attention_to ON attention_requests(to_user_id, status);
 CREATE INDEX IF NOT EXISTS idx_notes_app ON loan_notes(application_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read);
-CREATE INDEX IF NOT EXISTS idx_conditions_app ON conditions(application_id);
+CREATE INDEX IF NOT EXISTS idx_loan_conditions_app ON loan_conditions(application_id);

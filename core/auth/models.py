@@ -46,10 +46,15 @@ class SignupRequest(BaseModel):
 
 
 # Which products each role may access (drives the nav + route guards).
+# Front-line ops roles (processor/closer) work the pipeline; senior_uw is a
+# broad decision-maker; the rest match the original gating.
 ROLE_PERMISSIONS: dict[str, list[str]] = {
     "admin": ["pipeline", "analytics", "simulation", "audit", "settings"],
     "manager": ["pipeline", "analytics", "simulation", "audit"],
+    "senior_uw": ["pipeline", "analytics", "simulation", "audit"],
     "underwriter": ["pipeline", "simulation"],
+    "processor": ["pipeline"],
+    "closer": ["pipeline"],
     "compliance": ["pipeline", "audit"],
     "viewer": ["pipeline"],
 }

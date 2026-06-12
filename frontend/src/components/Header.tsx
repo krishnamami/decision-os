@@ -27,7 +27,10 @@ const TABS = [
 const ROLE_PRODUCTS: Record<string, string[]> = {
   admin: ['pipeline', 'analytics', 'simulation', 'audit'],
   manager: ['pipeline', 'analytics', 'simulation', 'audit'],
+  senior_uw: ['pipeline', 'analytics', 'simulation', 'audit'],
   underwriter: ['pipeline', 'simulation'],
+  processor: ['pipeline'],
+  closer: ['pipeline'],
   compliance: ['pipeline', 'audit'],
   viewer: ['pipeline'],
 }
