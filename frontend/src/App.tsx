@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import Header from './components/Header'
 import Pipeline from './pages/Pipeline'
 import LoanDetail from './pages/LoanDetail'
@@ -8,6 +8,8 @@ import Simulation from './pages/Simulation'
 import Login from './pages/Login'
 import Settings from './pages/Settings'
 import Landing from './pages/Landing'
+import Security from './pages/Security'
+import Compliance from './pages/Compliance'
 import { AuthProvider, useAuth } from './context/AuthContext'
 
 export default function App() {
@@ -23,6 +25,11 @@ export default function App() {
 // the route guard below.
 function AppShell() {
   const { isAuthenticated, loading, hasProduct, effectiveUser, user, viewAs, stopImpersonating } = useAuth()
+  const location = useLocation()
+
+  // Public marketing pages — no auth, no app chrome, any auth state.
+  if (location.pathname === '/security') return <Security />
+  if (location.pathname === '/compliance') return <Compliance />
 
   if (loading) {
     return <div className="flex min-h-screen items-center justify-center text-sm text-slate-400">Loading…</div>
