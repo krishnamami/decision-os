@@ -210,7 +210,7 @@ function DemoVideo() {
   }
 
   return (
-    <section className="mx-auto max-w-[1200px] px-6 py-20 text-center">
+    <section id="demo-video" className="mx-auto max-w-[1200px] scroll-mt-24 px-6 py-20 text-center">
       <Eyebrow>See it in action</Eyebrow>
       <h2 className="text-3xl font-bold tracking-tight text-slate-900">Watch Accord make a decision</h2>
       <p className="mx-auto mt-2 max-w-xl text-[17px] leading-relaxed text-slate-600">
@@ -330,7 +330,11 @@ export default function Landing({ scrollTo }: { scrollTo?: string }) {
             </div>
             <div className="mt-8 flex flex-wrap gap-3">
               <a href={DEMO} className="rounded-lg bg-brand px-7 py-3 text-sm font-semibold text-white hover:bg-brand-dark">Request a demo →</a>
-              <a href="#how-it-works" className="rounded-lg border border-[#D1D5DB] px-7 py-3 text-sm font-semibold text-[#374151] hover:bg-slate-50">See it in action ▷</a>
+              <button
+                type="button"
+                onClick={() => document.getElementById('demo-video')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                className="rounded-lg border border-[#D1D5DB] px-7 py-3 text-sm font-semibold text-[#374151] hover:bg-slate-50"
+              >See it in action ▷</button>
             </div>
           </div>
           <div className="flex justify-center lg:justify-end"><EvaluationCard /></div>
