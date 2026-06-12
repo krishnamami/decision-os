@@ -171,6 +171,9 @@ export function fetchTeam(): Promise<TeamResponse> {
 export function reassignLoans(application_ids: string[], to_user_id: string): Promise<{ transferred: number; to_name: string }> {
   return postJSON('/api/accord/pipeline/reassign', { application_ids, to_user_id })
 }
+export function decideLoan(application_id: string, action: 'approve' | 'deny' | 'escalate', note?: string): Promise<{ ok: boolean; title: string }> {
+  return postJSON('/api/accord/pipeline/decide', { application_id, action, note })
+}
 export function fetchTeamPerformance(): Promise<TeamPerformanceResponse> {
   return getJSON('/api/accord/analytics/team-performance')
 }

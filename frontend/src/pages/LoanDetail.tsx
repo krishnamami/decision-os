@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import ExportMenu from '../components/ExportMenu'
 import { downloadCsv, downloadJson, printPdf } from '../utils/export'
-import { fetchLoan } from '../api/client'
+import { decideLoan, fetchLoan } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import type { DecisionDetail, LoanDetail as LoanDetailT } from '../types/accord'
 import PersonaAccordion from '../components/PersonaAccordion'
@@ -35,7 +35,8 @@ export default function LoanDetail() {
   const { appId = '' } = useParams()
   const navigate = useNavigate()
   const { effectiveUser } = useAuth()
-  const canAct = (effectiveUser?.role ?? 'viewer') !== 'viewer'
+  // Viewers + compliance are read-only on decisions.
+  const canAct = !['viewer', 'compliance'].includes(effectiveUser?.role ?? 'viewer')
   const [loan, setLoan] = useState<LoanDetailT | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -77,6 +78,14 @@ export default function LoanDetail() {
       setToast(null)
       navigate('/pipeline') // back to My Queue
     }, 1400)
+  }
+  async function decide(action: 'approve' | 'deny' | 'escalate', note: string) {
+    try {
+      const r = await decideLoan(loan!.application_id, action, note)
+      fire(`✓ ${r.title}`)
+    } catch {
+      fire('Could not complete the action')
+    }
   }
 
   const recKind = primary ? primary.outcome : 'allow'
@@ -143,7 +152,7 @@ export default function LoanDetail() {
 
         {/* 4 — Your decision */}
         {canAct ? (
-          <YourDecision onAct={fire} onOpenModal={setModal} />
+          <YourDecision onAct={fire} onOpenModal={setModal} onDecide={decide} />
         ) : (
           <section className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-500">
             <span className="font-medium text-slate-700">View only</span> — your role has read-only access. You can review
@@ -273,10 +282,15 @@ const ACTIONS: Array<{
   { key: 'deny', icon: '❌', title: 'Deny', blurb: 'Deny this loan and trigger an adverse-action notice.', input: 'required', inputLabel: 'Specific denial reason (required)', confirm: 'Deny loan', cls: 'text-red-700', done: 'Loan denied — adverse-action notice queued' },
 ]
 
-function YourDecision({ onAct, onOpenModal }: { onAct: (msg: string) => void; onOpenModal: (k: 'request_info' | 'internal') => void }) {
+function YourDecision({ onAct, onOpenModal, onDecide }: {
+  onAct: (msg: string) => void
+  onOpenModal: (k: 'request_info' | 'internal') => void
+  onDecide: (action: 'approve' | 'deny' | 'escalate', note: string) => void
+}) {
   const [open, setOpen] = useState<ActionKey | null>(null)
   const [text, setText] = useState('')
   const MODAL_ACTIONS: ActionKey[] = ['request_info', 'internal']
+  const DECIDE_ACTIONS: ActionKey[] = ['approve', 'deny', 'escalate']
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-5">
@@ -321,7 +335,10 @@ function YourDecision({ onAct, onOpenModal }: { onAct: (msg: string) => void; on
                   <div className="mt-2 flex justify-end">
                     <button
                       disabled={needsText && !text.trim()}
-                      onClick={() => onAct(`${a.done} (demo)`)}
+                      onClick={() => {
+                        if (DECIDE_ACTIONS.includes(a.key)) onDecide(a.key as 'approve' | 'deny' | 'escalate', text)
+                        else onAct(`${a.done} (demo)`)
+                      }}
                       className="rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-40"
                     >
                       {a.confirm}

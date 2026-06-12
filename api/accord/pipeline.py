@@ -760,6 +760,53 @@ async def reassign(body: ReassignBody, user: dict = Depends(get_current_user)) -
     return {"transferred": n, "to_name": to_name}
 
 
+class DecideBody(BaseModel):
+    application_id: str
+    action: str  # approve | deny | escalate
+    note: Optional[str] = None
+
+
+@router.post("/pipeline/decide")
+async def decide(body: DecideBody, user: dict = Depends(get_current_user)) -> dict:
+    """Finalize a loan: approve/deny move it to the decided/denied lifecycle;
+    escalate hands it to a Senior UW. Read-only roles can't decide."""
+    if user.get("role") in ("viewer", "compliance"):
+        raise HTTPException(403, "Read-only role cannot decide")
+    _require_db()
+    tid, uid = user["tenant_id"], UUID(str(user["user_id"]))
+    app = body.application_id
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        if body.action == "approve":
+            await conn.execute("UPDATE loan_assignments SET status='decided', completed_at=NOW() WHERE application_id=$1 AND tenant_id=$2 AND assigned_to=$3", app, tid, uid)
+            await conn.execute("UPDATE entity_states SET loan_status='decided' WHERE application_id=$1 AND tenant_id=$2", app, tid)
+            title = "Loan approved — advanced to the next stage"
+        elif body.action == "deny":
+            await conn.execute("UPDATE loan_assignments SET status='denied', completed_at=NOW() WHERE application_id=$1 AND tenant_id=$2 AND assigned_to=$3", app, tid, uid)
+            await conn.execute("UPDATE entity_states SET loan_status='denied' WHERE application_id=$1 AND tenant_id=$2", app, tid)
+            title = "Loan denied — adverse-action notice queued"
+        elif body.action == "escalate":
+            senior = await conn.fetchval(
+                "SELECT user_id FROM users WHERE tenant_id=$1 AND role='senior_uw' AND is_active=true ORDER BY name LIMIT 1", tid,
+            )
+            if senior:
+                await conn.execute("UPDATE loan_assignments SET previous_assignee=assigned_to, assigned_to=$1, status='active', stage='decide', assigned_at=NOW() WHERE application_id=$2 AND tenant_id=$3", senior, app, tid)
+                await conn.execute("UPDATE entity_states SET assigned_to=$1, current_stage='decide' WHERE application_id=$2 AND tenant_id=$3", senior, app, tid)
+                await conn.execute("INSERT INTO notifications (tenant_id,user_id,type,title,application_id) VALUES ($1,$2,'escalation',$3,$4)", tid, senior, "Loan escalated to you for senior review", app)
+            title = "Escalated to Senior UW"
+        else:
+            raise HTTPException(400, f"Unknown action: {body.action}")
+        try:
+            await conn.execute(
+                "INSERT INTO activity_log (tenant_id, application_id, actor, action, target, detail) VALUES ($1,$2,$3,$4,$5,$6::jsonb)",
+                tid, app, user.get("email", "user"), body.action, app, json.dumps({"note": body.note or ""}),
+            )
+        except Exception:  # noqa: BLE001 — best-effort
+            pass
+        await conn.execute("INSERT INTO notifications (tenant_id,user_id,type,title,application_id) VALUES ($1,$2,'decision_made',$3,$4)", tid, uid, title, app)
+    return {"ok": True, "title": title}
+
+
 ALLOWED_ROLES = ["admin", "manager", "processor", "underwriter", "senior_uw", "closer", "compliance", "viewer"]
 
 
