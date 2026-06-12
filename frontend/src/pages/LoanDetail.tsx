@@ -232,7 +232,12 @@ export default function LoanDetail() {
 
   const m = loan.metrics
   const narr = buildNarrative(loan)
-  const tone = TONE[narr.tone]
+  // Prefer the API's conversational summary; fall back to the client narrative.
+  const cs = loan.conversational_summary ?? {
+    summary: narr.convo, issue: narr.summary.issue, whats_good: narr.summary.elseLine,
+    next_step: narr.summary.nextStep, headline: narr.headline, tone: narr.tone,
+  }
+  const tone = TONE[cs.tone]
 
   const exportItems = [
     { label: 'Export as JSON', run: () => downloadJson(loan, `accord_loan_${loan.application_id}`) },
@@ -274,23 +279,22 @@ export default function LoanDetail() {
           {loan.borrower.story && <p className="mt-3 text-[15px] leading-relaxed text-slate-700">{loan.borrower.story}</p>}
         </section>
 
-        {/* 2 — Summary (leads with the full story) */}
+        {/* 2 — Summary (the conversational story + the three lines) */}
         <section className={`rounded-xl border border-slate-200 bg-white p-5 border-l-4 ${tone.bar}`}>
           <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">📋 Summary</div>
-          <p className="text-[15px] leading-relaxed text-slate-700">{narr.summary.story}</p>
+          <p className="text-[15px] leading-relaxed text-slate-700">{cs.summary}</p>
           <div className="mt-3 space-y-1 text-sm">
-            <div><span className="font-semibold text-red-700">⚠ The issue:</span> {narr.summary.issue}</div>
-            <div><span className="font-semibold text-green-700">✅ Everything else:</span> {narr.summary.elseLine}</div>
-            <div><span className="font-semibold text-slate-700">👉 Next step:</span> {narr.summary.nextStep}</div>
+            {cs.issue && <div><span className="font-semibold text-red-700">⚠ The issue:</span> {cs.issue}</div>}
+            <div><span className="font-semibold text-green-700">✅ What&apos;s good:</span> {cs.whats_good}</div>
+            <div><span className="font-semibold text-slate-700">👉 Next step:</span> {cs.next_step}</div>
           </div>
         </section>
 
-        {/* 3 — AI recommendation, conversational */}
+        {/* 3 — What the AI thinks (the verdict) */}
         <section className={`rounded-xl border p-5 ${tone.ring}`}>
-          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">🧠 What the AI recommends</div>
-          <div className={`text-lg font-bold ${tone.cls}`}>{narr.headline}</div>
-          <p className="mt-2 text-[15px] leading-relaxed text-slate-700">{narr.convo}</p>
-          <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-500">
+          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">🧠 What the AI thinks</div>
+          <div className={`text-lg font-bold ${tone.cls}`}>{cs.headline}</div>
+          <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-500">
             <span>Based on: <span className="font-semibold text-slate-700">{loan.decisions.length} agent analyses</span></span>
             {primary && <span>Driving check: <span className="font-semibold text-slate-700">{primary.persona_name}</span></span>}
           </div>
@@ -455,12 +459,12 @@ const ACT: Record<ActId, ActDef> = {
   request_income: { label: 'Request income documentation', icon: '📧', run: 'request' },
   request_disclosures: { label: 'Request missing disclosures', icon: '📧', run: 'request' },
   request_docs: { label: 'Request additional documents', icon: '📧', run: 'request' },
-  internal: { label: 'Request internal review', icon: '🔵', run: 'internal' },
-  compliance_review: { label: 'Request compliance review', icon: '🔵', run: 'internal' },
-  escalate: { label: 'Escalate to Senior UW', icon: '⬆', run: 'escalate' },
-  override: { label: 'Override AI', icon: '🔄', run: 'demo', requiresText: true, textLabel: 'Written justification (required)', demoMsg: 'AI recommendation overridden' },
+  internal: { label: 'Ask a colleague to check', icon: '🔵', run: 'internal' },
+  compliance_review: { label: 'Ask compliance to check', icon: '🔵', run: 'internal' },
+  escalate: { label: 'Needs senior review', icon: '⬆', run: 'escalate' },
+  override: { label: 'I disagree with the AI', icon: '🔄', run: 'demo', requiresText: true, textLabel: 'Written justification (required)', demoMsg: 'AI recommendation overridden' },
   mirofish: { label: 'Run MiroFish Debate', icon: '🐟', run: 'mirofish' },
-  approve: { label: 'Approve & advance to next stage', icon: '✅', run: 'approve' },
+  approve: { label: 'Looks good — advance', icon: '✅', run: 'approve' },
   deny: { label: 'Deny', icon: '❌', run: 'deny', requiresText: true, textLabel: 'Specific denial reason (required)' },
   add_conditions: { label: 'Add conditions (PTD/PTC)', icon: '📋', run: 'demo', demoMsg: 'Conditions added (demo)' },
   clear_to_close: { label: 'Clear to close', icon: '✅', run: 'approve' },
@@ -575,7 +579,7 @@ function YourDecision({ category, role, onDemo, onOpenModal, onDecide, onMirofis
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-5">
-      <h2 className="mb-3 text-lg font-semibold text-slate-900">What would you like to do?</h2>
+      <h2 className="mb-3 text-lg font-semibold text-slate-900">Your call</h2>
 
       {primary && (
         <button onClick={() => run(primary)} className={`mb-2 w-full rounded-xl px-4 py-3 text-left text-white ${primaryColor}`}>

@@ -97,6 +97,14 @@ export interface LoanDetail {
     income_stated?: number | null
     income_verified?: number | null
   }
+  conversational_summary?: {
+    summary: string
+    issue: string | null
+    whats_good: string
+    next_step: string
+    headline: string
+    tone: 'red' | 'amber' | 'green'
+  }
   status: LoanStatus
   urgency: Urgency
   blocking_persona: string | null

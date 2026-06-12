@@ -1062,6 +1062,108 @@ async def read_notification(notification_id: str, user: dict = Depends(get_curre
 # 2) GET /api/accord/loans/{application_id}
 # ─────────────────────────────────────────────────────────────────────
 
+# Friendly check name per persona (for the conversational summary).
+PERSONA_FRIENDLY = {
+    "credit_assessment": "Credit", "fraud_screening": "Identity", "compliance_check": "Compliance",
+    "employment_reconciliation": "Employment", "income_verification": "Income", "ltv_assessment": "Collateral",
+    "dti_calculation": "DTI", "product_eligibility": "Product", "rate_pricing": "Rate",
+    "underwriting_decision": "Underwriting", "approval_routing": "Routing", "closing_readiness": "Closing",
+}
+
+
+def _sig(decision: dict, key: str) -> str:
+    for s in decision.get("signals", []):
+        if s.get("key") == key:
+            return str(s.get("value", ""))
+    return ""
+
+
+def _conversational_summary(decisions: list[dict], m: dict, name: str) -> dict:
+    """Plain-English, senior-underwriter-voice summary built from the decisions.
+    Handles a clean file or N blocking issues (root cause = lowest wave, with a
+    hard block beating an escalate at the same wave)."""
+    blockers = sorted(
+        [d for d in decisions if d.get("outcome") in ("block", "escalate")],
+        key=lambda d: (PERSONAS.get(d["decision_id"], {}).get("wave", 9), 0 if d["outcome"] == "block" else 1),
+    )
+    passed = [d for d in decisions if d.get("outcome") not in ("block", "escalate")]
+    has_block = any(d.get("outcome") == "block" for d in decisions)
+    tone = "red" if has_block else ("amber" if blockers else "green")
+    score, ltv = m.get("credit_score"), m.get("ltv")
+    stated, verified, amount = m.get("income_stated"), m.get("income_verified"), m.get("loan_amount")
+    gap = round(abs(stated - verified) / stated * 100) if stated and verified else None
+    pids = {d["decision_id"] for d in passed}
+
+    goods = []
+    if "credit_assessment" in pids and score:
+        goods.append(f"credit {int(score)}")
+    if "income_verification" in pids and verified:
+        goods.append(f"income {_k(verified)} verified")
+    if "ltv_assessment" in pids and ltv is not None:
+        goods.append(f"LTV {ltv:.0f}%")
+    whats_good = ", ".join(goods) if goods else f"{len(passed)} other checks passed"
+    whats_good = whats_good[:1].upper() + whats_good[1:]
+
+    if not blockers:
+        clean = (f"This is a clean file. All {len(decisions)} AI checks passed — credit {int(score) if score else '—'}"
+                 + (f", income verified within {gap}%" if gap is not None else "")
+                 + (f", LTV {ltv:.0f}% with good equity" if ltv is not None else "")
+                 + ". Ready to advance to the next stage.")
+        return {"summary": clean, "issue": None, "whats_good": whats_good,
+                "next_step": "Approve and advance to the next stage",
+                "headline": "APPROVE — every check passed", "tone": "green"}
+
+    primary = blockers[0]
+    did = primary["decision_id"]
+    headline = ("DO NOT APPROVE — resolve the block before proceeding" if has_block
+                else "REVIEW — needs your judgment before it advances")
+
+    if "fraud" in did:
+        fs, wl = _sig(primary, "Fraud score"), _sig(primary, "Watchlist match")
+        summary = (f"{name}'s identity raised red flags"
+                   + (f" — a fraud score of {fs}" if fs else "")
+                   + (" and a federal watchlist match" if wl == "Yes" else "")
+                   + ", with identity confidence and document authenticity both well below our bar. "
+                   "This is a mandatory BSA referral before anything else moves on this file. "
+                   "The good news: the rest of the loan looks clean — if the identity issue clears, this is a straightforward deal.")
+        issue = "Possible identity fraud (watchlist + identity risk)"
+        next_step = "Refer to the BSA officer for SAR review before proceeding"
+    elif "income" in did or "employment" in did:
+        restruct = round((amount * verified / stated) / 1000) * 1000 if (amount and stated and verified) else None
+        summary = (f"There's a gap between what {name} states"
+                   + (f" (${stated:,.0f}/yr)" if stated else "")
+                   + " and what the documents verify"
+                   + (f" (${verified:,.0f}/yr)" if verified else "")
+                   + (f" — about a {gap}% difference" if gap is not None else "")
+                   + ". Two options: ask for a current pay stub showing higher income (maybe a recent raise), "
+                   "or restructure to qualify at the verified figure"
+                   + (f" (~${restruct:,.0f} max)" if restruct else "") + ".")
+        issue = ("Income discrepancy" + (f" {gap}%" if gap is not None else "")
+                 + (f" — ${stated:,.0f} stated vs ${verified:,.0f} verified" if stated and verified else ""))
+        next_step = "Request a current pay stub + employer VOE, or restructure the loan"
+    elif "compliance" in did:
+        summary = ("Compliance flagged this file. We can't proceed until disclosures are re-issued and TRID "
+                   "timing checks out. The rest of the loan otherwise looks clean.")
+        issue = "Compliance / disclosure timing issue"
+        next_step = "Re-issue disclosures and confirm TRID timing"
+    elif "ltv" in did:
+        summary = ("The collateral doesn't support the loan as structured. Either order a review appraisal or "
+                   "have the borrower bring more money in. The rest of the file is otherwise clean.")
+        issue = "Collateral / LTV above guideline"
+        next_step = "Order a review appraisal or increase the down payment"
+    else:
+        friendly = PERSONA_FRIENDLY.get(did, did.replace("_", " "))
+        summary = (f"{primary.get('explanation', '')} {len(passed)} of {len(decisions)} checks passed — "
+                   "if this clears, it's a straightforward deal.")
+        issue = f"{friendly} — {'blocked' if primary['outcome'] == 'block' else 'needs senior review'}"
+        next_step = "Review the flagged decision and clear it or request more information"
+
+    if len(blockers) > 1:
+        summary += (f" Heads up: {len(blockers)} checks need attention here — "
+                    + ", ".join(PERSONA_FRIENDLY.get(b["decision_id"], b["decision_id"]) for b in blockers) + ".")
+    return {"summary": summary, "issue": issue, "whats_good": whats_good,
+            "next_step": next_step, "headline": headline, "tone": tone}
+
 
 @router.get("/loans/{application_id}")
 async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_id)) -> dict:
@@ -1199,19 +1301,23 @@ async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_i
     urgency = _derive_urgency(flags, lock_days)
     blocking = _blocking_persona({d: {"outcome": o} for d, o in decision_outcomes.items()})
 
+    metrics_out = {
+        "loan_amount": _f(e.get("loan_amount")),
+        "credit_score": int(e["mid_credit_score"]) if e.get("mid_credit_score") else None,
+        "ltv": _pct(e.get("ltv")),
+        "dti": _pct(e.get("dti_back")),
+        "interest_rate": _pct(e.get("interest_rate")),
+        "lock_days_remaining": lock_days,
+        "income_stated": _f((borrower.get("income") or {}).get("stated_income_annual")),
+        "income_verified": _f((borrower.get("income") or {}).get("verified_income_annual")),
+    }
+    full_name = ap.get("full_name") or e.get("application_id") or "The borrower"
+
     return {
         "application_id": application_id,
         "borrower": _borrower_block(ap, borrower, e, loan_terms),
-        "metrics": {
-            "loan_amount": _f(e.get("loan_amount")),
-            "credit_score": int(e["mid_credit_score"]) if e.get("mid_credit_score") else None,
-            "ltv": _pct(e.get("ltv")),
-            "dti": _pct(e.get("dti_back")),
-            "interest_rate": _pct(e.get("interest_rate")),
-            "lock_days_remaining": lock_days,
-            "income_stated": _f((borrower.get("income") or {}).get("stated_income_annual")),
-            "income_verified": _f((borrower.get("income") or {}).get("verified_income_annual")),
-        },
+        "metrics": metrics_out,
+        "conversational_summary": _conversational_summary(decisions, metrics_out, full_name.split()[0]),
         "status": status,
         "urgency": urgency,
         "blocking_persona": blocking,

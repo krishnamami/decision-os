@@ -267,9 +267,9 @@ function ActionCard({
         </div>
       ) : (
         <div className="mt-2 space-y-1 text-sm">
-          <div className="text-slate-800"><span className="font-medium text-slate-500">AI found:</span> {c.ai_finding}</div>
-          <div className="text-slate-700"><span className="font-medium text-slate-500">Recommendation:</span> "{c.ai_recommendation}"</div>
-          <div className="text-slate-500"><span className="font-medium">What AI saw:</span> {c.ai_data_sources}</div>
+          <div className="text-slate-800"><span className="font-medium text-slate-500">Key finding:</span> {c.ai_finding}</div>
+          <div className="text-slate-700"><span className="font-medium text-slate-500">AI suggests:</span> "{c.ai_recommendation}"</div>
+          <div className="text-slate-500"><span className="font-medium">Based on:</span> {c.ai_data_sources}</div>
         </div>
       )}
 
