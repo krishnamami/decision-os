@@ -72,7 +72,9 @@ function buildNarrative(loan: LoanDetailT): Narr {
   const m = loan.metrics
   const name = loan.borrower.name.split(/\s+/)[0]
   const ds = loan.decisions
-  const blocked = ds.filter((d) => BLOCK_OUTCOMES.includes(d.outcome)).sort((a, b) => a.wave - b.wave)
+  // Root cause first: lowest wave, and a hard block beats an escalate at the same wave.
+  const blocked = ds.filter((d) => BLOCK_OUTCOMES.includes(d.outcome))
+    .sort((a, b) => a.wave - b.wave || (a.outcome === 'block' ? 0 : 1) - (b.outcome === 'block' ? 0 : 1))
   const passed = ds.filter((d) => !BLOCK_OUTCOMES.includes(d.outcome))
   const hasBlock = ds.some((d) => d.outcome === 'block')
   const tone: Narr['tone'] = hasBlock ? 'red' : blocked.length ? 'amber' : 'green'
@@ -190,6 +192,7 @@ export default function LoanDetail() {
       fire('Could not complete the action')
     }
   }
+  const scrollToDebate = () => document.getElementById('mirofish-debate')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 
   const m = loan.metrics
   const narr = buildNarrative(loan)
@@ -257,7 +260,14 @@ export default function LoanDetail() {
 
         {/* 4 — Your decision */}
         {canAct ? (
-          <YourDecision onAct={fire} onOpenModal={setModal} onDecide={decide} />
+          <YourDecision
+            category={blockCategory(narr)}
+            role={effectiveUser?.role ?? 'processor'}
+            onAct={fire}
+            onOpenModal={setModal}
+            onDecide={decide}
+            onMirofish={scrollToDebate}
+          />
         ) : (
           <section className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-500">
             <span className="font-medium text-slate-700">View only</span> — your role has read-only access. You can review
@@ -383,95 +393,187 @@ function GroupedEvidence({ loan, narr }: { loan: LoanDetailT; narr: Narr }) {
   )
 }
 
-// ── Your decision: 6 actions, AI proposes / user decides ─────────────
-type ActionKey = 'approve' | 'request_info' | 'override' | 'internal' | 'escalate' | 'deny'
-const ACTIONS: Array<{
-  key: ActionKey
-  icon: string
-  title: string
-  blurb: string
-  input?: 'note' | 'required'
-  inputLabel?: string
-  confirm: string
-  cls: string
-  done: string
-}> = [
-  { key: 'approve', icon: '✅', title: 'Approve & advance to next stage', blurb: "I've reviewed the AI findings and agree this can move forward.", input: 'note', inputLabel: 'Add a note (optional)', confirm: 'Approve & advance', cls: 'text-green-700', done: 'Approved — advancing to the next stage' },
-  { key: 'request_info', icon: '📧', title: 'Request more information', blurb: 'I need more docs from the borrower before I can decide.', input: 'note', inputLabel: 'What do you need? (W2, pay stubs, gift letter…)', confirm: 'Send request', cls: 'text-blue-700', done: 'Information requested from the borrower' },
-  { key: 'override', icon: '🔄', title: 'Override AI recommendation', blurb: 'I disagree with the AI — approve or deny despite its recommendation.', input: 'required', inputLabel: 'Written justification (required)', confirm: 'Submit override', cls: 'text-amber-700', done: 'AI recommendation overridden' },
-  { key: 'internal', icon: '🔵', title: 'Request internal review', blurb: 'I need another team member to revisit a specific decision.', input: 'required', inputLabel: 'Message to your teammate (required)', confirm: 'Send to teammate', cls: 'text-indigo-700', done: 'Internal review requested' },
-  { key: 'escalate', icon: '⬆', title: 'Escalate to Senior UW', blurb: 'This needs a higher authority to decide.', input: 'note', inputLabel: 'Note for the Senior UW (optional)', confirm: 'Escalate', cls: 'text-purple-700', done: 'Escalated to Senior UW queue' },
-  { key: 'deny', icon: '❌', title: 'Deny', blurb: 'Deny this loan and trigger an adverse-action notice.', input: 'required', inputLabel: 'Specific denial reason (required)', confirm: 'Deny loan', cls: 'text-red-700', done: 'Loan denied — adverse-action notice queued' },
-]
+// ── Your decision: context-aware actions (blocking issue × role) ─────
+type ActId =
+  | 'bsa' | 'request_identity' | 'request_income' | 'request_disclosures' | 'request_docs'
+  | 'internal' | 'compliance_review' | 'escalate' | 'override' | 'mirofish'
+  | 'approve' | 'deny' | 'add_conditions' | 'clear_to_close'
 
-function YourDecision({ onAct, onOpenModal, onDecide }: {
+interface ActDef { label: string; icon: string; run: 'approve' | 'deny' | 'escalate' | 'request' | 'internal' | 'mirofish' | 'demo'; requiresText?: boolean; textLabel?: string; demoMsg?: string }
+
+const ACT: Record<ActId, ActDef> = {
+  bsa: { label: 'Refer to BSA/AML officer', icon: '⚠', run: 'demo', demoMsg: 'Referred to BSA/AML officer (demo)' },
+  request_identity: { label: 'Request identity documents', icon: '📧', run: 'request' },
+  request_income: { label: 'Request income documentation', icon: '📧', run: 'request' },
+  request_disclosures: { label: 'Request missing disclosures', icon: '📧', run: 'request' },
+  request_docs: { label: 'Request additional documents', icon: '📧', run: 'request' },
+  internal: { label: 'Request internal review', icon: '🔵', run: 'internal' },
+  compliance_review: { label: 'Request compliance review', icon: '🔵', run: 'internal' },
+  escalate: { label: 'Escalate to Senior UW', icon: '⬆', run: 'escalate' },
+  override: { label: 'Override AI', icon: '🔄', run: 'demo', requiresText: true, textLabel: 'Written justification (required)', demoMsg: 'AI recommendation overridden' },
+  mirofish: { label: 'Run MiroFish Debate', icon: '🐟', run: 'mirofish' },
+  approve: { label: 'Approve & advance to next stage', icon: '✅', run: 'approve' },
+  deny: { label: 'Deny', icon: '❌', run: 'deny', requiresText: true, textLabel: 'Specific denial reason (required)' },
+  add_conditions: { label: 'Add conditions (PTD/PTC)', icon: '📋', run: 'demo', demoMsg: 'Conditions added (demo)' },
+  clear_to_close: { label: 'Clear to close', icon: '✅', run: 'approve' },
+}
+
+function caps(role: string) {
+  return {
+    acting: !['viewer', 'compliance'].includes(role),
+    escalate: ['processor', 'underwriter', 'manager', 'admin'].includes(role), // escalate UP to senior UW
+    override: ['underwriter', 'senior_uw', 'manager', 'admin'].includes(role),
+    mirofish: ['underwriter', 'senior_uw', 'manager', 'admin'].includes(role),
+    deny: ['senior_uw', 'manager', 'admin'].includes(role),
+    closer: role === 'closer',
+  }
+}
+
+function blockCategory(narr: Narr): 'clean' | 'fraud' | 'income' | 'compliance' | 'other' {
+  const p = narr.blocked[0]
+  if (!p) return 'clean'
+  const did = p.decision_id
+  if (did === 'fraud_screening') return 'fraud'
+  if (did === 'income_verification' || did === 'employment_reconciliation') return 'income'
+  if (did === 'compliance_check') return 'compliance'
+  return 'other'
+}
+
+interface ActionSet { primary: ActId | null; subtitle?: string; secondary: ActId[]; disabled: { label: string; reason: string } | null }
+
+function getActions(cat: string, role: string): ActionSet {
+  const c = caps(role)
+  let primary: ActId | null = null
+  let secondary: ActId[] = []
+  let disabled: ActionSet['disabled'] = null
+  let subtitle = ''
+
+  if (cat === 'clean') {
+    primary = c.closer ? 'clear_to_close' : 'approve'
+    subtitle = 'All AI checks passed. Ready to move forward.'
+    secondary = ['request_docs']
+    if (['closer', 'underwriter', 'senior_uw', 'manager', 'admin'].includes(role)) secondary.push('add_conditions')
+  } else if (cat === 'fraud') {
+    primary = 'bsa'
+    secondary = ['request_identity', 'internal']
+    if (c.escalate) secondary.push('escalate')
+    disabled = { label: 'Approve', reason: 'fraud block must be resolved first' }
+  } else if (cat === 'income') {
+    primary = 'request_income'
+    subtitle = 'Ask the borrower for pay stubs + employer verification.'
+    if (c.override) secondary.push('override')
+    if (c.mirofish) secondary.push('mirofish')
+    if (c.escalate) secondary.push('escalate')
+    secondary.push('internal')
+    disabled = { label: 'Approve', reason: 'income block must be resolved first' }
+  } else if (cat === 'compliance') {
+    primary = 'request_disclosures'
+    secondary = ['compliance_review']
+    if (c.escalate) secondary.push('escalate')
+    disabled = { label: 'Approve', reason: 'compliance block must be resolved first' }
+  } else {
+    primary = 'request_docs'
+    if (c.override) secondary.push('override')
+    if (c.mirofish) secondary.push('mirofish')
+    if (c.escalate) secondary.push('escalate')
+    secondary.push('internal')
+    disabled = { label: 'Approve', reason: 'block must be resolved first' }
+  }
+  // Deny is Senior-UW-only, and only on a block.
+  if (cat !== 'clean' && c.deny) secondary.push('deny')
+  secondary = [...new Set(secondary)].filter((id) => id !== primary)
+  return { primary, secondary, disabled, subtitle }
+}
+
+function YourDecision({ category, role, onAct, onOpenModal, onDecide, onMirofish }: {
+  category: string
+  role: string
   onAct: (msg: string) => void
   onOpenModal: (k: 'request_info' | 'internal') => void
   onDecide: (action: 'approve' | 'deny' | 'escalate', note: string) => void
+  onMirofish: () => void
 }) {
-  const [open, setOpen] = useState<ActionKey | null>(null)
+  const { primary, secondary, disabled, subtitle } = getActions(category, role)
+  const [expanded, setExpanded] = useState<ActId | null>(null)
   const [text, setText] = useState('')
-  const MODAL_ACTIONS: ActionKey[] = ['request_info', 'internal']
-  const DECIDE_ACTIONS: ActionKey[] = ['approve', 'deny', 'escalate']
+
+  function run(id: ActId) {
+    const def = ACT[id]
+    if (def.requiresText) { setExpanded(expanded === id ? null : id); setText(''); return }
+    setExpanded(null)
+    switch (def.run) {
+      case 'approve': onDecide('approve', ''); break
+      case 'escalate': onDecide('escalate', ''); break
+      case 'request': onOpenModal('request_info'); break
+      case 'internal': onOpenModal('internal'); break
+      case 'mirofish': onMirofish(); break
+      case 'demo': onAct(def.demoMsg ?? 'Done (demo)'); break
+      case 'deny': onDecide('deny', ''); break
+    }
+  }
+  function confirmExpanded() {
+    if (!expanded) return
+    const def = ACT[expanded]
+    if (def.run === 'deny') onDecide('deny', text)
+    else onAct(`${def.demoMsg ?? def.label} — ${text} (demo)`)
+    setExpanded(null); setText('')
+  }
+
+  const primaryColor = primary === 'bsa'
+    ? 'bg-red-600 hover:bg-red-700'
+    : primary === 'approve' || primary === 'clear_to_close'
+      ? 'bg-green-600 hover:bg-green-700'
+      : 'bg-brand hover:bg-brand-dark'
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-5">
       <h2 className="mb-3 text-lg font-semibold text-slate-900">What would you like to do?</h2>
-      <div className="space-y-2">
-        {ACTIONS.map((a) => {
-          const isOpen = open === a.key
-          const needsText = a.input === 'required'
-          return (
-            <div key={a.key} className={`rounded-lg border ${isOpen ? 'border-brand ring-1 ring-brand/20' : 'border-slate-200'}`}>
-              <button
-                onClick={() => {
-                  if (MODAL_ACTIONS.includes(a.key)) {
-                    onOpenModal(a.key as 'request_info' | 'internal')
-                    return
-                  }
-                  setOpen(isOpen ? null : a.key)
-                  setText('')
-                }}
-                className="flex w-full items-start gap-3 p-3 text-left hover:bg-slate-50"
-              >
-                <span className="text-lg leading-none">{a.icon}</span>
-                <span>
-                  <span className={`block font-semibold ${a.cls}`}>{a.title}</span>
-                  <span className="block text-sm text-slate-500">{a.blurb}</span>
-                </span>
-              </button>
-              {isOpen && (
-                <div className="border-t border-slate-100 px-3 pb-3 pt-2">
-                  {a.input && (
-                    <>
-                      <label className="mb-1 block text-xs font-medium text-slate-500">{a.inputLabel}</label>
-                      <textarea
-                        value={text}
-                        onChange={(e) => setText(e.target.value)}
-                        rows={2}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand"
-                        placeholder={needsText ? 'Required…' : 'Optional…'}
-                      />
-                    </>
-                  )}
-                  <div className="mt-2 flex justify-end">
-                    <button
-                      disabled={needsText && !text.trim()}
-                      onClick={() => {
-                        if (DECIDE_ACTIONS.includes(a.key)) onDecide(a.key as 'approve' | 'deny' | 'escalate', text)
-                        else onAct(`${a.done} (demo)`)
-                      }}
-                      className="rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-40"
-                    >
-                      {a.confirm}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
+
+      {primary && (
+        <button onClick={() => run(primary)} className={`mb-2 w-full rounded-xl px-4 py-3 text-left text-white ${primaryColor}`}>
+          <div className="text-base font-semibold">{ACT[primary].icon} {ACT[primary].label}</div>
+          {subtitle && <div className="mt-0.5 text-sm text-white/85">{subtitle}</div>}
+        </button>
+      )}
+
+      {secondary.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {secondary.map((id) => (
+            <button
+              key={id}
+              onClick={() => run(id)}
+              className={`rounded-lg border px-3 py-1.5 text-sm font-medium hover:bg-slate-50 ${
+                id === 'deny' ? 'border-red-200 text-red-600' : 'border-slate-200 text-slate-700'
+              } ${expanded === id ? 'ring-1 ring-brand/30' : ''}`}
+            >
+              {ACT[id].icon} {ACT[id].label}{ACT[id].requiresText ? ' *' : ''}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {expanded && (
+        <div className="mt-3 rounded-lg border border-slate-200 p-3">
+          <label className="mb-1 block text-xs font-medium text-slate-500">{ACT[expanded].textLabel}</label>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={2}
+            placeholder="Required…"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand"
+          />
+          <div className="mt-2 flex justify-end gap-2">
+            <button onClick={() => { setExpanded(null); setText('') }} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+            <button onClick={confirmExpanded} disabled={!text.trim()} className="rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-40">Confirm</button>
+          </div>
+        </div>
+      )}
+
+      {disabled && (
+        <div className="mt-3 cursor-not-allowed rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-400" title={disabled.reason}>
+          ✅ {disabled.label} is disabled — {disabled.reason}
+        </div>
+      )}
     </section>
   )
 }
