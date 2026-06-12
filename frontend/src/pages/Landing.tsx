@@ -9,7 +9,7 @@ const DEMO = 'mailto:demo@useaccord.com?subject=Accord%20demo%20request'
 // placeholder. See docs/DEMO_SCRIPT.md for recording the video.
 //   Loom:    https://www.loom.com/embed/<id>
 //   YouTube: https://www.youtube.com/embed/<id>
-const DEMO_VIDEO_URL = ''
+const DEMO_VIDEO_URL = '/accord_demo.mp4'
 
 // ── Hero: animated loan-evaluation card (no agent counts shown) ──────
 const AGENTS: Array<[string, string, string]> = [
