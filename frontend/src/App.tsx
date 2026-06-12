@@ -9,7 +9,7 @@ import Login from './pages/Login'
 import Settings from './pages/Settings'
 import Landing from './pages/Landing'
 import Security from './pages/Security'
-import Compliance from './pages/Compliance'
+import ComplianceDocs from './pages/ComplianceDocs'
 import { AuthProvider, useAuth } from './context/AuthContext'
 
 export default function App() {
@@ -29,7 +29,7 @@ function AppShell() {
 
   // Public marketing pages — no auth, no app chrome, any auth state.
   if (location.pathname === '/security') return <Security />
-  if (location.pathname === '/compliance') return <Compliance />
+  if (location.pathname === '/compliance') return <ComplianceDocs />
 
   if (loading) {
     return <div className="flex min-h-screen items-center justify-center text-sm text-slate-400">Loading…</div>
