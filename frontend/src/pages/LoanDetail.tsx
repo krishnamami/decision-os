@@ -34,8 +34,8 @@ const REC: Record<string, { label: string; cls: string; ring: string }> = {
 export default function LoanDetail() {
   const { appId = '' } = useParams()
   const navigate = useNavigate()
-  const { user } = useAuth()
-  const canAct = (user?.role ?? 'viewer') !== 'viewer'
+  const { effectiveUser } = useAuth()
+  const canAct = (effectiveUser?.role ?? 'viewer') !== 'viewer'
   const [loan, setLoan] = useState<LoanDetailT | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)

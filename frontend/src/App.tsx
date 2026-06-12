@@ -6,6 +6,7 @@ import Analytics from './pages/Analytics'
 import Audit from './pages/Audit'
 import Simulation from './pages/Simulation'
 import Login from './pages/Login'
+import Settings from './pages/Settings'
 import { AuthProvider, useAuth } from './context/AuthContext'
 
 export default function App() {
@@ -20,7 +21,7 @@ export default function App() {
 // page or the full app renders. `hasProduct`/role gating happens in Header +
 // the route guard below.
 function AppShell() {
-  const { isAuthenticated, loading, hasProduct, user } = useAuth()
+  const { isAuthenticated, loading, hasProduct, effectiveUser, user, viewAs, stopImpersonating } = useAuth()
 
   if (loading) {
     return <div className="flex min-h-screen items-center justify-center text-sm text-slate-400">Loading…</div>
@@ -40,18 +41,26 @@ function AppShell() {
     compliance: ['pipeline', 'audit'],
     viewer: ['pipeline'],
   }
+  // Gating follows the EFFECTIVE user (so impersonation shows their access).
+  const role = effectiveUser?.role ?? 'viewer'
   const allowed = (product: string) =>
-    (ROLE_PRODUCTS[user?.role ?? 'viewer'] ?? ['pipeline']).includes(product) && (product === 'pipeline' || hasProduct(product))
+    (ROLE_PRODUCTS[role] ?? ['pipeline']).includes(product) && (product === 'pipeline' || hasProduct(product))
 
   // A product the user can't reach (role or plan) redirects to Pipeline.
   const guard = (product: string, el: JSX.Element) => (allowed(product) ? el : <Navigate to="/pipeline" replace />)
 
   // Compliance lands on Audit; everyone else on Pipeline (which itself picks
   // My Queue / Team Overview / All Applications by role).
-  const defaultPath = user?.role === 'compliance' ? '/audit' : '/pipeline'
+  const defaultPath = role === 'compliance' ? '/audit' : '/pipeline'
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
+      {viewAs && (
+        <div className="flex items-center justify-center gap-3 bg-amber-500 px-4 py-1.5 text-sm font-medium text-white">
+          👁 Viewing as {viewAs.name} ({viewAs.role.replace(/_/g, ' ')})
+          <button onClick={stopImpersonating} className="rounded-md bg-white/20 px-2 py-0.5 text-xs font-semibold hover:bg-white/30">Exit</button>
+        </div>
+      )}
       <Header />
       <main>
         <Routes>
@@ -61,6 +70,7 @@ function AppShell() {
           <Route path="/analytics" element={guard('analytics', <Analytics />)} />
           <Route path="/simulation" element={guard('simulation', <Simulation />)} />
           <Route path="/audit" element={guard('audit', <Audit />)} />
+          {user?.role === 'admin' && <Route path="/settings" element={<Settings />} />}
           <Route path="*" element={<Navigate to={defaultPath} replace />} />
         </Routes>
       </main>

@@ -142,8 +142,8 @@ function loadPipeline(
 const OPS_ROLES = ['processor', 'underwriter', 'senior_uw', 'closer']
 
 export default function Pipeline() {
-  const { user } = useAuth()
-  const role = user?.role ?? 'viewer'
+  const { effectiveUser, viewAs } = useAuth()
+  const role = effectiveUser?.role ?? 'viewer'
   const isManager = role === 'admin' || role === 'manager'
   const isOps = OPS_ROLES.includes(role)
 
@@ -155,6 +155,8 @@ export default function Pipeline() {
 
   const [tab, setTab] = useState(tabs[0].key)
   const [viewUser, setViewUser] = useState<{ id: string; name: string } | null>(null)
+  // Reset to the default tab when the effective role changes (e.g. impersonation).
+  useEffect(() => { setTab(tabs[0].key) }, [role]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Manager drilling into a teammate's queue (read-only).
   if (tab === 'team' && viewUser) {
@@ -169,7 +171,7 @@ export default function Pipeline() {
   return (
     <>
       {tabs.length > 1 && <SubTabs tabs={tabs} active={tab} onChange={setTab} />}
-      {tab === 'queue' && <MyQueue />}
+      {tab === 'queue' && <MyQueue userId={viewAs?.user_id} />}
       {tab === 'team' && <TeamOverview onViewUser={setViewUser} />}
       {tab === 'all' && <AllApplications />}
     </>

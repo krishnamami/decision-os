@@ -24,6 +24,7 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
 from api.accord.auth import get_current_user, get_tenant_id
+from core.auth.security import hash_password
 
 try:
     from dotenv import load_dotenv  # type: ignore
@@ -759,17 +760,86 @@ async def reassign(body: ReassignBody, user: dict = Depends(get_current_user)) -
     return {"transferred": n, "to_name": to_name}
 
 
+ALLOWED_ROLES = ["admin", "manager", "processor", "underwriter", "senior_uw", "closer", "compliance", "viewer"]
+
+
+class InviteBody(BaseModel):
+    email: str
+    name: str
+    role: str = "processor"
+
+
+class RoleBody(BaseModel):
+    role: str
+
+
 @router.get("/users")
 async def list_users(user: dict = Depends(get_current_user)) -> dict:
-    """Teammates in the tenant — drives the 'assign to' dropdowns."""
+    """Teammates in the tenant — drives 'assign to' dropdowns + Settings."""
     _require_db()
     pool = await _get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT user_id, name, role FROM users WHERE tenant_id = $1 ORDER BY name",
+            "SELECT user_id, name, email, role, is_active, last_login FROM users WHERE tenant_id = $1 ORDER BY name",
             user["tenant_id"],
         )
-    return {"users": [{"user_id": str(r["user_id"]), "name": r["name"], "role": r["role"]} for r in rows]}
+    return {"users": [{
+        "user_id": str(r["user_id"]), "name": r["name"], "email": r["email"], "role": r["role"],
+        "is_active": r["is_active"], "last_login": r["last_login"].isoformat() if r["last_login"] else None,
+    } for r in rows]}
+
+
+def _require_admin(user: dict) -> None:
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admin access required")
+
+
+@router.post("/users/invite")
+async def invite_user(body: InviteBody, user: dict = Depends(get_current_user)) -> dict:
+    _require_admin(user)
+    _require_db()
+    if body.role not in ALLOWED_ROLES:
+        raise HTTPException(400, f"Invalid role: {body.role}")
+    tid = user["tenant_id"]
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        if await conn.fetchval("SELECT 1 FROM users WHERE email = $1", body.email):
+            raise HTTPException(409, "Email already registered")
+        uid = await conn.fetchval(
+            "INSERT INTO users (tenant_id, email, password_hash, name, role) VALUES ($1,$2,$3,$4,$5) RETURNING user_id",
+            tid, body.email, hash_password("accord2026"), body.name, body.role,
+        )
+    return {"user_id": str(uid), "ok": True}
+
+
+@router.post("/users/{user_id}/role")
+async def change_role(user_id: str, body: RoleBody, user: dict = Depends(get_current_user)) -> dict:
+    _require_admin(user)
+    _require_db()
+    if body.role not in ALLOWED_ROLES:
+        raise HTTPException(400, f"Invalid role: {body.role}")
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE users SET role=$1, updated_at=NOW() WHERE user_id=$2 AND tenant_id=$3",
+            body.role, UUID(user_id), user["tenant_id"],
+        )
+    return {"ok": True}
+
+
+@router.post("/users/{user_id}/deactivate")
+async def deactivate_user(user_id: str, user: dict = Depends(get_current_user)) -> dict:
+    _require_admin(user)
+    _require_db()
+    if str(user_id) == str(user["user_id"]):
+        raise HTTPException(400, "You cannot deactivate yourself")
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE users SET is_active=false, updated_at=NOW() WHERE user_id=$1 AND tenant_id=$2",
+            UUID(user_id), user["tenant_id"],
+        )
+    return {"ok": True}
 
 
 @router.post("/communications")
@@ -814,6 +884,8 @@ async def simulate_response(body: dict = Body(...), user: dict = Depends(get_cur
     (marked RETURNED in the queue), assignee notified."""
     _require_db()
     app, tid = body.get("application_id"), user["tenant_id"]
+    items = body.get("items") or []
+    docs_text = ", ".join(items) if items else "the requested documents"
     pool = await _get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -824,6 +896,14 @@ async def simulate_response(body: dict = Body(...), user: dict = Depends(get_cur
             await conn.execute("UPDATE communications SET responded_at=NOW(), status='delivered' WHERE comm_id=$1", row["comm_id"])
         await conn.execute("UPDATE loan_assignments SET status='active' WHERE application_id=$1 AND tenant_id=$2", app, tid)
         await conn.execute("UPDATE entity_states SET loan_status='active' WHERE application_id=$1 AND tenant_id=$2", app, tid)
+        try:
+            await conn.execute(
+                "INSERT INTO activity_log (tenant_id, application_id, actor, action, target, detail) "
+                "VALUES ($1,$2,'Borrower (simulated)','document_upload',$3,$4::jsonb)",
+                tid, app, app, json.dumps({"uploaded": items, "note": f"Borrower uploaded {docs_text} (simulated)"}),
+            )
+        except Exception:  # noqa: BLE001 — activity log is best-effort
+            pass
         assignee = await conn.fetchval(
             "SELECT assigned_to FROM loan_assignments WHERE application_id=$1 AND tenant_id=$2 ORDER BY assigned_at DESC LIMIT 1",
             app, tid,
@@ -831,8 +911,8 @@ async def simulate_response(body: dict = Body(...), user: dict = Depends(get_cur
         if assignee:
             await conn.execute(
                 "INSERT INTO notifications (tenant_id, user_id, type, title, application_id) "
-                "VALUES ($1,$2,'borrower_responded','Borrower responded with documents',$3)",
-                tid, assignee, app,
+                "VALUES ($1,$2,'borrower_responded',$3,$4)",
+                tid, assignee, f"Borrower uploaded {docs_text}", app,
             )
     return {"ok": True}
 

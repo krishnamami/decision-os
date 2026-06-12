@@ -9,6 +9,12 @@ import {
   type AuthUser,
 } from '../api/client'
 
+export interface ImpersonatedUser {
+  user_id: string
+  name: string
+  role: string
+}
+
 interface AuthState {
   isAuthenticated: boolean
   loading: boolean
@@ -17,8 +23,14 @@ interface AuthState {
   login: (email: string, password: string) => Promise<void>
   logout: () => void
   hasProduct: (product: string) => boolean
+  // Impersonation (super-admin): `effectiveUser` is who the app behaves as.
+  effectiveUser: AuthUser | null
+  viewAs: ImpersonatedUser | null
+  impersonate: (u: ImpersonatedUser) => void
+  stopImpersonating: () => void
 }
 
+const VIEWAS_KEY = 'accord_viewas'
 const AuthContext = createContext<AuthState | null>(null)
 
 export function useAuth(): AuthState {
@@ -31,8 +43,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [tenant, setTenant] = useState<AuthTenant | null>(null)
   const [loading, setLoading] = useState(true)
+  const [viewAs, setViewAs] = useState<ImpersonatedUser | null>(() => {
+    try {
+      const raw = localStorage.getItem(VIEWAS_KEY)
+      return raw ? (JSON.parse(raw) as ImpersonatedUser) : null
+    } catch {
+      return null
+    }
+  })
 
-  // On load: if a token exists, verify it via /me; drop it if invalid/expired.
   useEffect(() => {
     let alive = true
     if (!getToken()) {
@@ -59,7 +78,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  // Any API 401 (expired/invalid token) clears the session → back to login.
   useEffect(() => {
     const onUnauth = () => {
       setUser(null)
@@ -76,16 +94,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setTenant(s.tenant)
   }
 
+  function clearViewAs() {
+    setViewAs(null)
+    localStorage.removeItem(VIEWAS_KEY)
+  }
   function logout() {
     clearToken()
+    clearViewAs()
     setUser(null)
     setTenant(null)
   }
+  function impersonate(u: ImpersonatedUser) {
+    setViewAs(u)
+    localStorage.setItem(VIEWAS_KEY, JSON.stringify(u))
+  }
 
   const hasProduct = (product: string) => !!tenant?.products?.includes(product)
+  // When impersonating, identity stays real (token, email) but the experience
+  // (role, queue, name) reflects the target user.
+  const effectiveUser: AuthUser | null =
+    viewAs && user ? { ...user, user_id: viewAs.user_id, name: viewAs.name, role: viewAs.role } : user
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated: !!user, loading, user, tenant, login, logout, hasProduct }}>
+    <AuthContext.Provider
+      value={{
+        isAuthenticated: !!user,
+        loading,
+        user,
+        tenant,
+        login,
+        logout,
+        hasProduct,
+        effectiveUser,
+        viewAs,
+        impersonate,
+        stopImpersonating: clearViewAs,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   )

@@ -203,6 +203,9 @@ export interface TeammateLite {
   user_id: string
   name: string
   role: string
+  email?: string
+  is_active?: boolean
+  last_login?: string | null
 }
 
 export function requestInfo(body: {
@@ -214,8 +217,17 @@ export function requestInfo(body: {
 }): Promise<{ ok: boolean }> {
   return postJSON('/api/accord/communications', body)
 }
-export function simulateResponse(application_id: string): Promise<{ ok: boolean }> {
-  return postJSON('/api/accord/communications/simulate-response', { application_id })
+export function simulateResponse(application_id: string, items?: string[]): Promise<{ ok: boolean }> {
+  return postJSON('/api/accord/communications/simulate-response', { application_id, items: items ?? [] })
+}
+export function inviteUser(email: string, name: string, role: string): Promise<{ user_id: string; ok: boolean }> {
+  return postJSON('/api/accord/users/invite', { email, name, role })
+}
+export function changeUserRole(userId: string, role: string): Promise<{ ok: boolean }> {
+  return postJSON(`/api/accord/users/${encodeURIComponent(userId)}/role`, { role })
+}
+export function deactivateUser(userId: string): Promise<{ ok: boolean }> {
+  return postJSON(`/api/accord/users/${encodeURIComponent(userId)}/deactivate`, {})
 }
 export function createAttentionRequest(body: {
   application_id: string

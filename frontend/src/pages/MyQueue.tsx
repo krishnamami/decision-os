@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchMyQueue, simulateResponse, type MyQueueResponse, type QueueCard } from '../api/client'
 import { useAuth } from '../context/AuthContext'
+import Modal from '../components/Modal'
 
 function money(v: number | null) {
   if (v == null) return '—'
@@ -35,7 +36,7 @@ export default function MyQueue({
   onBack?: () => void
 }) {
   const navigate = useNavigate()
-  const { user: me } = useAuth()
+  const { effectiveUser: me } = useAuth()
   const [data, setData] = useState<MyQueueResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -43,13 +44,14 @@ export default function MyQueue({
   const [openDecided, setOpenDecided] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
+  const [simCard, setSimCard] = useState<QueueCard | null>(null)
 
   const act = (msg: string) => {
     setToast(msg)
     setTimeout(() => setToast(null), 2500)
   }
-  async function onSimulate(appId: string) {
-    await simulateResponse(appId)
+  function afterSimulate() {
+    setSimCard(null)
     act('Borrower responded — loan is back in your queue 🟢')
     setReloadKey((k) => k + 1)
   }
@@ -124,7 +126,7 @@ export default function MyQueue({
       {openPending && (
         <div className="mb-8 mt-3 space-y-2">
           {data.pending.map((c) => (
-            <PendingCard key={c.application_id} c={c} canAct={canAct} onAct={act} onSimulate={onSimulate} />
+            <PendingCard key={c.application_id} c={c} canAct={canAct} onAct={act} onSimulate={() => setSimCard(c)} />
           ))}
           {data.pending.length === 0 && <p className="text-sm text-slate-400">No pending borrower requests.</p>}
         </div>
@@ -156,7 +158,60 @@ export default function MyQueue({
           {toast}
         </div>
       )}
+
+      {simCard && <SimulateResponseModal card={simCard} onClose={() => setSimCard(null)} onDone={afterSimulate} />}
     </div>
+  )
+}
+
+function SimulateResponseModal({ card, onClose, onDone }: { card: QueueCard; onClose: () => void; onDone: () => void }) {
+  const requested = card.requesting ?? []
+  const [checked, setChecked] = useState<Set<string>>(new Set(requested))
+  const [busy, setBusy] = useState(false)
+  function toggle(d: string) {
+    setChecked((prev) => {
+      const next = new Set(prev)
+      next.has(d) ? next.delete(d) : next.add(d)
+      return next
+    })
+  }
+  async function submit() {
+    setBusy(true)
+    try {
+      await simulateResponse(card.application_id, [...checked])
+      onDone()
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Modal title="Simulate borrower response" onClose={onClose}>
+      <p className="mb-3 text-sm text-slate-600">
+        Simulate that <span className="font-medium text-slate-800">{card.borrower_name}</span> uploaded documents — the loan
+        returns to the assignee's queue.
+      </p>
+      {requested.length > 0 ? (
+        <>
+          <div className="mb-1 text-xs font-medium text-slate-500">Which documents?</div>
+          <div className="mb-4 space-y-1">
+            {requested.map((d) => (
+              <label key={d} className="flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" checked={checked.has(d)} onChange={() => toggle(d)} className="accent-brand" />
+                {d}
+              </label>
+            ))}
+          </div>
+        </>
+      ) : (
+        <p className="mb-4 text-sm text-slate-400">No specific documents were requested — this marks the loan as responded.</p>
+      )}
+      <div className="flex justify-end gap-2">
+        <button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+        <button onClick={submit} disabled={busy} className="rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-40">
+          {busy ? 'Simulating…' : 'Simulate response'}
+        </button>
+      </div>
+    </Modal>
   )
 }
 
@@ -245,7 +300,7 @@ function ActionCard({
   )
 }
 
-function PendingCard({ c, canAct, onAct, onSimulate }: { c: QueueCard; canAct: boolean; onAct: (m: string) => void; onSimulate: (appId: string) => void }) {
+function PendingCard({ c, canAct, onAct, onSimulate }: { c: QueueCard; canAct: boolean; onAct: (m: string) => void; onSimulate: () => void }) {
   const due = c.due_date ? new Date(c.due_date) : null
   const daysLeft = due ? Math.ceil((due.getTime() - Date.now()) / 86400000) : null
   const overdue = daysLeft != null && daysLeft <= 1
@@ -270,7 +325,7 @@ function PendingCard({ c, canAct, onAct, onSimulate }: { c: QueueCard; canAct: b
       </div>
       {canAct && (
         <div className="mt-2 flex gap-2">
-          <button onClick={() => onSimulate(c.application_id)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">Simulate response</button>
+          <button onClick={onSimulate} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">Simulate response</button>
           <button onClick={() => onAct('Reminder sent (demo)')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">Send reminder</button>
         </div>
       )}

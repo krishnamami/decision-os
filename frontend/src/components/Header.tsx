@@ -50,7 +50,7 @@ export default function Header() {
   const userRef = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
   const location = useLocation()
-  const { user, tenant, logout, hasProduct } = useAuth()
+  const { user, tenant, logout, hasProduct, effectiveUser } = useAuth()
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
@@ -72,8 +72,9 @@ export default function Header() {
   }
 
   const isActiveProduct = (to: string) => location.pathname === to || location.pathname.startsWith(to + '/')
-  const role = user?.role ?? 'viewer'
-  const roleAllows = (product: string) => (ROLE_PRODUCTS[role] ?? ['pipeline']).includes(product)
+  const role = user?.role ?? 'viewer' // identity (avatar/menu) = real user
+  const effRole = effectiveUser?.role ?? 'viewer' // tabs follow the impersonated role
+  const roleAllows = (product: string) => (ROLE_PRODUCTS[effRole] ?? ['pipeline']).includes(product)
   const planAllows = (product: string) => product === 'pipeline' || hasProduct(product)
   const initials = (user?.name || '?').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()
 
@@ -126,7 +127,7 @@ export default function Header() {
                 </div>
                 <div className="border-t border-slate-100" />
                 {role === 'admin' && (
-                  <button className="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">Settings</button>
+                  <button onClick={() => { setUserOpen(false); navigate('/settings') }} className="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">Settings</button>
                 )}
                 <button onClick={logout} className="block w-full px-4 py-2 text-left text-sm font-medium text-red-600 hover:bg-slate-50">
                   Sign out
