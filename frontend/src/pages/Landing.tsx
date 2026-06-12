@@ -3,6 +3,14 @@ import { Link } from 'react-router-dom'
 
 const DEMO = 'mailto:demo@useaccord.com?subject=Accord%20demo%20request'
 
+// ⬇️ ONE-LINE CHANGE: paste your recorded demo here to swap the placeholder for
+// the real video. Accepts a Loom/YouTube *embed* URL (an <iframe> is rendered)
+// or a direct .mp4/.webm URL (a <video controls> is rendered). Leave '' for the
+// placeholder. See docs/DEMO_SCRIPT.md for recording the video.
+//   Loom:    https://www.loom.com/embed/<id>
+//   YouTube: https://www.youtube.com/embed/<id>
+const DEMO_VIDEO_URL = ''
+
 // ── Hero: animated loan-evaluation card (no agent counts shown) ──────
 const AGENTS: Array<[string, string, string]> = [
   ['🏦', 'Credit Assessment', 'Credit score and history'],
@@ -169,6 +177,52 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
   return <div className="mb-2 text-xs font-bold uppercase tracking-widest text-brand">{children}</div>
 }
 
+// "See Accord in action" — renders the recorded demo (DEMO_VIDEO_URL) as an
+// <iframe> or <video>, or a play-button placeholder until one is added.
+function DemoVideo() {
+  const url = DEMO_VIDEO_URL.trim()
+  const isFile = /\.(mp4|webm)(\?.*)?$/i.test(url)
+
+  let frame: React.ReactNode
+  if (!url) {
+    frame = (
+      <a
+        href={DEMO}
+        className="group flex h-full w-full flex-col items-center justify-center gap-3 bg-slate-900 text-white"
+      >
+        <span className="flex h-16 w-16 items-center justify-center rounded-full bg-white/15 text-2xl transition group-hover:scale-110 group-hover:bg-white/25">▶</span>
+        <span className="text-sm font-semibold">2-minute product demo</span>
+        <span className="text-xs text-white/50">Coming soon — request a live walkthrough</span>
+      </a>
+    )
+  } else if (isFile) {
+    frame = <video controls playsInline className="h-full w-full bg-black" src={url} />
+  } else {
+    frame = (
+      <iframe
+        title="Accord product demo"
+        src={url}
+        className="h-full w-full"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+        allowFullScreen
+      />
+    )
+  }
+
+  return (
+    <section className="mx-auto max-w-[1200px] px-6 py-20 text-center">
+      <Eyebrow>See it in action</Eyebrow>
+      <h2 className="text-3xl font-bold tracking-tight text-slate-900">Watch Accord make a decision</h2>
+      <p className="mx-auto mt-2 max-w-xl text-[17px] leading-relaxed text-slate-600">
+        Two minutes, end to end — from a loan landing in the queue to an audited decision.
+      </p>
+      <div className="mx-auto mt-8 aspect-video w-full max-w-3xl overflow-hidden rounded-2xl border border-slate-200 bg-slate-900 shadow-lg">
+        {frame}
+      </div>
+    </section>
+  )
+}
+
 export default function Landing({ scrollTo }: { scrollTo?: string }) {
   const [bannerOpen, setBannerOpen] = useState(true)
   const [openFaq, setOpenFaq] = useState<number | null>(0)
@@ -291,6 +345,9 @@ export default function Landing({ scrollTo }: { scrollTo?: string }) {
             </div>
           </div>
         </section>
+
+        {/* 4b — Demo video */}
+        <DemoVideo />
 
         {/* 5 — How it works */}
         <section id="how-it-works" className="mx-auto max-w-[1200px] px-6 py-20">
