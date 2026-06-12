@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { fetchSimHistory, type SimHistoryRow } from '../api/client'
 import DebateRunner from '../components/DebateRunner'
 import PolicySimRunner, { type PolicySimHandle } from '../components/PolicySimRunner'
@@ -31,10 +32,23 @@ export default function Simulation() {
   const policy = useRef<PolicySimHandle>(null)
   const [history, setHistory] = useState<SimHistoryRow[]>([])
   const [period, setPeriod] = useState<Period>('all')
+  const location = useLocation()
 
   useEffect(() => {
     fetchSimHistory().then((r) => setHistory(r.simulations)).catch(() => undefined)
   }, [])
+
+  // Deep links (e.g. /simulation#debate, used by the demo bookmarks) land on
+  // the matching section instead of the top of the page.
+  useEffect(() => {
+    const key = location.hash.replace('#', '')
+    if (!key) return
+    const ref = key === 'debate' ? debateRef : key === 'simulate' ? simRef : key === 'swarm' ? swarmRef : null
+    if (ref) {
+      const id = setTimeout(() => ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150)
+      return () => clearTimeout(id)
+    }
+  }, [location.hash])
 
   // Past runs are filtered client-side by their created_at against the range.
   const days = PERIOD_DAYS[period]

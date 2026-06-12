@@ -10,6 +10,7 @@ import Settings from './pages/Settings'
 import Landing from './pages/Landing'
 import Security from './pages/Security'
 import ComplianceDocs from './pages/ComplianceDocs'
+import DemoMode, { DemoRedirect, DemoWatermark } from './pages/DemoMode'
 import { AuthProvider, useAuth } from './context/AuthContext'
 
 export default function App() {
@@ -87,9 +88,19 @@ function AppShell() {
           <Route path="/simulation" element={guard('simulation', <Simulation />)} />
           <Route path="/audit" element={guard('audit', <Audit />)} />
           {user?.role === 'admin' && <Route path="/settings" element={<Settings />} />}
+          {/* Demo walkthrough — admin-only deep links into the real pages, with
+              the DEMO watermark on. See pages/DemoMode.tsx + docs/DEMO_SCRIPT.md. */}
+          {user?.role === 'admin' && <Route path="/demo" element={<DemoMode />} />}
+          {user?.role === 'admin' && <Route path="/demo/queue" element={<DemoRedirect to="/pipeline" />} />}
+          {user?.role === 'admin' && <Route path="/demo/loan/:appId" element={<DemoRedirect to="/pipeline/:appId" />} />}
+          {user?.role === 'admin' && <Route path="/demo/debate" element={<DemoRedirect to="/simulation#debate" />} />}
+          {user?.role === 'admin' && <Route path="/demo/simulate" element={<DemoRedirect to="/simulation#simulate" />} />}
+          {user?.role === 'admin' && <Route path="/demo/swarm" element={<DemoRedirect to="/simulation#swarm" />} />}
+          {user?.role === 'admin' && <Route path="/demo/audit" element={<DemoRedirect to="/audit" />} />}
           <Route path="*" element={<Navigate to={defaultPath} replace />} />
         </Routes>
       </main>
+      <DemoWatermark />
     </div>
   )
 }
