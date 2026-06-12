@@ -2785,6 +2785,79 @@ to preserve against generic deploy prompts.
 
 ---
 
+### Session 23 — June 12 2026 — The full multi-tenant workbench
+
+Accord went from "demo with one tenant" to a **real, role-based loan-ops
+workbench across 5 tenants**, then deployed live. Every slice committed, pushed,
+verified live on the container stack (and finally on the ALB). Commits:
+`4dfff44` `3784273` `71c197f` `9fa7b72` `2720916` `84bac32` `82b7df8`, then a
+deploy to task-def **rev :3**.
+
+**5 tenants + 33 users + curated loans** (`4dfff44`,
+`scripts/migrations/seed_tenants_and_users.py`) — summit (enterprise) / pacific
+(business) / heartland (growth) / atlas (enterprise) each get 8 users + 50
+curated loans; legacy (starter) holds nothing; the **~8,696 remainder stays
+under `demo`** so the original showcase still works. User-confirmed adaptations
+to the spec: **role enum extended** (users_role_check + ROLE_PERMISSIONS +
+frontend ROLE_PRODUCTS gained processor/senior_uw/closer); loan-type quotas
+dropped (data is ~97% conforming) so curated 50s vary by lifecycle status with
+backdated `assigned_at`; remainder kept under demo. Idempotent (delete-then-
+reinsert named tenants). **Also fixed a latent bug**: the workbench `conditions`
+table never created — an EDMS `conditions` table pre-existed, so it was renamed
+**`loan_conditions`**.
+
+**Role-based landing** (`3784273`) — `GET /pipeline/my-queue` (loans assigned to
+the JWT user, grouped active/pending/decided, each card with plain-English AI
+finding + data sources + recommendation, templated per blocking persona +
+outcome + entity numbers) and `GET /pipeline/team`. `Pipeline.tsx` became a
+role-aware shell: ops roles → My Queue | All Applications; manager/admin → Team
+Overview | All Applications; compliance → Audit by default. `MyQueue.tsx`,
+`TeamOverview.tsx`.
+
+**Loan detail reframed** (`71c197f`, decide `82b7df8`) — AI **recommends**, the
+user **decides**: borrower story, 🧠 AI-recommendation card (driving decision +
+confidence), 📄 evidence (docs on file + key data points incl. income stated vs
+verified), and a 6-action "Your Decision" block. `POST /pipeline/decide` makes
+approve→decided / deny→denied / escalate→Senior-UW real (were demo toasts);
+request-info / internal-review open modals.
+
+**Comms + notifications, persisted** (`9fa7b72`) — `POST /communications`
+(request docs → loan to pending_borrower), `…/simulate-response` (→ active /
+RETURNED + activity-log row), `POST /attention-requests` (target sees 🔵 even on
+loans they aren't assigned), `GET/POST /loans/{id}/notes`, and a notification
+system (`GET /notifications`, mark-one/all-read) with a Header bell. Modals:
+RequestInfoModal, AttentionModal, NotesSection, NotificationBell.
+
+**Manager experience + governance reports** (`2720916`) — team KPIs + per-member
+oldest-loan + **Reassign modal** (`POST /pipeline/reassign`); a manager-only
+**Team Performance** table on Analytics (`/analytics/team-performance`); the
+Audit "Compliance Reports" table replaced by a **Governance Reports** card grid
+(HMDA / Fair Lending w/ disparate-impact flag / Audit Trail / Override
+Justification / AI Model) exporting real tenant-scoped CSV/PDF/package via
+`GET /audit/reports/{id}/data`.
+
+**Super Admin** (`84bac32`) — `Settings.tsx` (admin only, `/settings`): company
+info · user management (`/users/invite`, `/role`, `/deactivate`) · read-only
+decision rules · **impersonation** (AuthContext `viewAs`/`effectiveUser` — identity
+stays real, experience follows the target; "Viewing as X — Exit" banner). My
+Queue's Simulate-response is now a modal with doc checkboxes.
+
+**Compliance read-only** (`82b7df8`) — viewer AND compliance can't decide
+(LoanDetail `canAct`; `/pipeline/decide` 403s them).
+
+**Verified** the whole workbench across all 5 roles + Pacific isolation (the
+spec's emails are jumbled vs the seed — real creds: processor=processor1@,
+underwriter=underwriter@, manager=manager@, compliance=compliance@, admin=admin@
+summit.com, all `accord2026`). Then **deployed** — both ECS services rolled to
+**rev :3**, every new endpoint confirmed live on the ALB.
+
+**Live:** http://accord-alb-588286075.us-east-1.elb.amazonaws.com — 5 tenants,
+role-based queues, AI-recommends/user-decides, comms + notifications, manager
+team view, governance exports, admin settings. Pilot-ready. Still open: custom
+domain + SSL; per-tenant decision-rule editing; Override still a demo toast.
+
+---
+
 ## How to resume next session
 
 Open Claude Code:
@@ -3156,4 +3229,4 @@ How to run smoke tests:
 
 ---
 
-*Decision OS · CONTEXT.md · Updated June 12 2026 (Session 22 — Accord live on AWS: JWT auth + multi-tenant isolation (4 demo users, 8,896 loans re-tenanted to demo), role/plan gating, workbench schema, first ECS Fargate deploy on the dedicated `accord` cluster/ALB; end-to-end verified on the live ALB. Domain + SSL still pending.)*
+*Decision OS · CONTEXT.md · Updated June 12 2026 (Session 23 — full multi-tenant workbench live: 5 tenants / 33 users / 200 curated loans + 8,696 bulk; role-based My Queue + Team Overview, AI-recommends/user-decides loan detail w/ real approve/deny/escalate, comms + notifications, manager governance reports, Super-Admin settings + impersonation, compliance read-only; verified across 5 roles + Pacific isolation; deployed to ECS rev :3 on the accord ALB. Domain + SSL still pending.)*
