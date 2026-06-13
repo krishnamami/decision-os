@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import ExportMenu from '../components/ExportMenu'
+import PinnedRulesNote from '../components/PinnedRulesNote'
 import { downloadCsv, downloadJson, printPdf } from '../utils/export'
 import { decideLoan, fetchLoan } from '../api/client'
 import { useAuth } from '../context/AuthContext'
@@ -289,6 +290,9 @@ export default function LoanDetail() {
             <div><span className="font-semibold text-slate-700">👉 Next step:</span> {cs.next_step}</div>
           </div>
         </section>
+
+        {/* 2b — Rules note (only when the loan is pinned to an older version) */}
+        <PinnedRulesNote applicationId={loan.application_id} borrowerName={loan.borrower.name} />
 
         {/* 3 — What the AI thinks (the verdict) */}
         <section className={`rounded-xl border p-5 ${tone.ring}`}>

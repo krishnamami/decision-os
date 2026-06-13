@@ -438,6 +438,45 @@ async def _pipeline_impact(conn, tenant_id: str, new_rules: dict) -> dict:
     return {"count": count, "examples": examples}
 
 
+# ── Loan rules-note: does this loan run under an older pinned version? ──
+@router.get("/loan-note")
+async def loan_note(application_id: str, tenant_id: str = Depends(get_tenant_id)) -> dict:
+    _require_db()
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        es = await conn.fetchrow(
+            "SELECT pinned_rule_version, application_date FROM entity_states WHERE application_id=$1 AND tenant_id=$2",
+            application_id, tenant_id)
+        if es is None or es["pinned_rule_version"] is None:
+            return {"show": False}
+        pinned = await conn.fetchrow("SELECT * FROM tenant_rules WHERE rule_version_id=$1", es["pinned_rule_version"])
+        current = await _active_version(conn, tenant_id)
+    if pinned is None or current is None or pinned["version"] == current["version"]:
+        return {"show": False}
+    pr, cr = _jsonb(pinned["rules"]), _jsonb(current["rules"])
+    diffs = []
+    for label, a, b in (("DTI max", "dti", "back_max"), ("Credit floor", "credit", "min_score"), ("LTV max", "ltv", "max")):
+        pv, cv = (pr.get(a) or {}).get(b), (cr.get(a) or {}).get(b)
+        if pv != cv:
+            diffs.append({"field": label, "pinned": pv, "current": cv})
+    return {
+        "show": True, "application_date": _iso(es["application_date"]),
+        "applied_version": pinned["version"], "applied_effective": _iso(pinned["effective_from"]),
+        "current_version": current["version"], "current_effective": _iso(current["effective_from"]),
+        "differences": diffs,
+    }
+
+
+# ── 0. Pipeline-impact preview for a proposed rule set ──────────────
+@router.post("/impact")
+async def impact(payload: dict = Body(...), tenant_id: str = Depends(get_tenant_id)) -> dict:
+    _require_db()
+    rules = payload.get("rules") or {}
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        return await _pipeline_impact(conn, tenant_id, rules)
+
+
 # ── 1. Rollback to a prior version ──────────────────────────────────
 class RollbackBody(BaseModel):
     rollback_to_version: int

@@ -437,16 +437,23 @@ export interface TenantVersion {
   programs: string[]; changes_summary: string | null; change_reason: string | null
   created_by: string | null; approved_by: string | null; effective_from: string | null
   effective_to: string | null; created_at: string | null; approved_at: string | null
+  change_type?: string | null; scheduled_for?: string | null; expires_at?: string | null
+  rolled_back_from?: number | null; pipeline_policy?: string | null
+  ratified_by?: string | null; ratified_at?: string | null; emergency_type?: string | null
 }
 export interface DataSource {
   source_id: string; source_name: string; source_url: string | null; last_download: string | null
   last_success: string | null; record_count: number | null; status: string
   next_scheduled: string | null; error_message: string | null
 }
+export interface ExpiringWaiverItem { name: string; field: string; value: number; normal: number; expires: string; days_remaining: number; severity: string }
 export interface RulesResponse {
   regulatory: RegulatoryRule[]; agency: AgencyGuideline[]; tenant: TenantVersion | null
   data_freshness: DataSource[]
   validation: { all_above_regulatory: boolean; errors: string[]; warnings: string[] }
+  scheduled?: TenantVersion[]; shadow?: TenantVersion | null
+  examination?: { active: boolean; examiner?: string; reason?: string; started_at?: string }
+  expiring?: ExpiringWaiverItem[]
 }
 export interface RuleAlert {
   alert_id: string; source: string; title: string; description: string | null
@@ -473,4 +480,46 @@ export function fetchDataFreshness(): Promise<{ sources: DataSource[]; all_ok: b
 }
 export function fetchRuleAlerts(): Promise<{ alerts: RuleAlert[]; new_count: number }> {
   return getJSON('/api/accord/rules/alerts')
+}
+
+// ── Rules versioning (advanced) ───────────────────────────────────
+export interface ScheduledVersion extends TenantVersion {}
+export interface ExpiringWaiver { name: string; field: string; value: number; normal: number; expires: string; days_remaining: number; severity: string }
+export interface ExaminationState { active: boolean; examiner?: string; reason?: string; started_at?: string }
+
+export function rollbackRules(version: number, reason: string): Promise<{ version: number; message: string; affected_pipeline_loans: number; examples: Array<{ name: string; reason: string }> }> {
+  return postJSON('/api/accord/rules/rollback', { rollback_to_version: version, reason })
+}
+export function scheduleRules(rules: Record<string, unknown>, scheduled_for: string, reason: string): Promise<{ version: number; status: string; activates: string }> {
+  return postJSON('/api/accord/rules/schedule', { rules, scheduled_for, reason })
+}
+export function startShadow(rules: Record<string, unknown>, shadow_duration_days: number, reason: string): Promise<{ shadow_version: number; loans_evaluated: number; differences: number }> {
+  return postJSON('/api/accord/rules/shadow', { rules, shadow_duration_days, reason })
+}
+export function fetchShadowReport(): Promise<any> {
+  return getJSON('/api/accord/rules/shadow-report')
+}
+export function emergencyChange(rules: Record<string, unknown>, reason: string, emergency_type: string): Promise<any> {
+  return postJSON('/api/accord/rules/emergency', { rules, reason, emergency_type })
+}
+export function ratifyEmergency(version: number, ratified: boolean, reason?: string): Promise<any> {
+  return postJSON(`/api/accord/rules/emergency/${version}/ratify`, { ratified, reason })
+}
+export function examinationMode(action: 'start' | 'end', examiner?: string, reason?: string): Promise<any> {
+  return postJSON('/api/accord/rules/examination-mode', { action, examiner, reason })
+}
+export function runRetrospective(date_range_start: string, date_range_end: string, simulate_version: number): Promise<any> {
+  return postJSON('/api/accord/rules/retrospective', { date_range_start, date_range_end, simulate_version })
+}
+export function reconstructDecision(date: string, application_id: string): Promise<any> {
+  return getJSON(`/api/accord/rules/reconstruct?date=${encodeURIComponent(date)}&application_id=${encodeURIComponent(application_id)}`)
+}
+export function setPipelinePolicy(policy: string, cutoff_date?: string): Promise<any> {
+  return putJSON('/api/accord/rules/pipeline-policy', { policy, cutoff_date })
+}
+export function fetchRuleImpact(rules: Record<string, unknown>): Promise<{ count: number; examples: Array<{ application_id: string; name: string; reason: string }> }> {
+  return postJSON('/api/accord/rules/impact', { rules })
+}
+export function fetchLoanRulesNote(applicationId: string): Promise<{ show: boolean; application_date?: string; applied_version?: number; applied_effective?: string; current_version?: number; current_effective?: string; differences?: Array<{ field: string; pinned: number; current: number }> }> {
+  return getJSON(`/api/accord/rules/loan-note?application_id=${encodeURIComponent(applicationId)}`)
 }

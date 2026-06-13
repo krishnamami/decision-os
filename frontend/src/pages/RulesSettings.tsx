@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import {
-  approveRules, fetchRuleAlerts, fetchRules, updateRules,
-  type AgencyGuideline, type RegulatoryRule, type RuleAlert, type RulesResponse,
+  approveRules, fetchRuleAlerts, fetchRules, fetchRulesHistory, ratifyEmergency,
+  type AgencyGuideline, type RegulatoryRule, type RuleAlert, type RulesResponse, type TenantVersion,
 } from '../api/client'
 import DataFreshness from '../components/DataFreshness'
 import RuleHistory from '../components/RuleHistory'
+import {
+  EmergencyModal, ExaminationToggle, ExpiringSection, LockedBadge, planAllows,
+  ReconstructPanel, RetrospectivePanel, ScheduledSection, ShadowSection, SubmitModal,
+} from '../components/RuleVersioning'
 
 // Editable customer fields per category → path into the overlay rules JSON.
 type Field = { path: [string, string]; label: string }
@@ -91,28 +95,46 @@ export default function RulesSettings() {
   const { user, tenant } = useAuth()
   const [data, setData] = useState<RulesResponse | null>(null)
   const [draft, setDraft] = useState<any>(null)
-  const [reason, setReason] = useState('')
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   const [showHistory, setShowHistory] = useState(false)
   const [showFreshness, setShowFreshness] = useState(false)
   const [showAlerts, setShowAlerts] = useState(false)
   const [alerts, setAlerts] = useState<RuleAlert[]>([])
   const [pendingVersion, setPendingVersion] = useState<number | null>(null)
+  const [versions, setVersions] = useState<TenantVersion[]>([])
+  const [emergencyPending, setEmergencyPending] = useState<TenantVersion | null>(null)
   const [busy, setBusy] = useState(false)
+  const [showSubmit, setShowSubmit] = useState(false)
+  const [showEmergency, setShowEmergency] = useState(false)
+  const [showRetro, setShowRetro] = useState(false)
+  const [showReconstruct, setShowReconstruct] = useState(false)
 
-  const canEdit = user?.role === 'admin' || user?.role === 'manager'
+  const plan = tenant?.plan
+  const examFrozen = data?.examination?.active === true
+  const canEdit = (user?.role === 'admin' || user?.role === 'manager') && planAllows(plan, 'business') && !examFrozen
   const isAdmin = user?.role === 'admin'
 
   function load() {
     fetchRules().then((d) => { setData(d); setDraft(d.tenant?.rules || {}) }).catch(() => undefined)
     fetchRuleAlerts().then((d) => setAlerts(d.alerts)).catch(() => undefined)
-    import('../api/client').then(({ fetchRulesHistory }) =>
-      fetchRulesHistory().then((h) => {
-        const pend = h.versions.find((v) => v.status === 'pending_approval')
-        setPendingVersion(pend ? pend.version : null)
-      }).catch(() => undefined))
+    fetchRulesHistory().then((h) => {
+      setVersions(h.versions)
+      const pend = h.versions.find((v) => v.status === 'pending_approval')
+      setPendingVersion(pend ? pend.version : null)
+      setEmergencyPending(h.versions.find((v) => v.change_type === 'emergency' && v.status === 'active' && !v.ratified_by) || null)
+    }).catch(() => undefined)
   }
   useEffect(load, [])
+
+  async function ratify(ok: boolean) {
+    if (!emergencyPending) return
+    setBusy(true)
+    try {
+      await ratifyEmergency(emergencyPending.version, ok)
+      setMsg({ kind: 'ok', text: ok ? `Emergency v${emergencyPending.version} ratified.` : `Emergency reverted.` })
+      load()
+    } finally { setBusy(false) }
+  }
 
   const programs: string[] = data?.tenant?.programs || ['conventional', 'fha']
   const dirty = useMemo(() => data && JSON.stringify(draft) !== JSON.stringify(data.tenant?.rules), [draft, data])
@@ -134,22 +156,6 @@ export default function RulesSettings() {
     setMsg(null)
   }
 
-  async function submit() {
-    if (!dirty) { setMsg({ kind: 'err', text: 'No changes to submit.' }); return }
-    if (issues.errs.length) { setMsg({ kind: 'err', text: issues.errs[0] }); return }
-    if (!reason.trim()) { setMsg({ kind: 'err', text: 'A reason for the change is required.' }); return }
-    setBusy(true)
-    try {
-      const r = await updateRules({ rules: draft, change_reason: reason.trim(), changes_summary: 'Overlay rule update' })
-      setMsg({ kind: 'ok', text: `Submitted as v${r.version} — pending admin approval.` })
-      setReason('')
-      load()
-    } catch (e: any) {
-      setMsg({ kind: 'err', text: e?.message || 'Submit failed' })
-    } finally {
-      setBusy(false)
-    }
-  }
 
   async function approve() {
     setBusy(true)
@@ -189,9 +195,39 @@ export default function RulesSettings() {
             <button onClick={() => setShowAlerts((v) => !v)} className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${showAlerts ? 'border-brand bg-brand-light/40 text-brand-dark' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}>
               Rule Alerts{newAlerts ? ` (${newAlerts} new)` : ''}
             </button>
+            {planAllows(plan, 'enterprise') && (
+              <button onClick={() => setShowRetro((v) => !v)} className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${showRetro ? 'border-brand bg-brand-light/40 text-brand-dark' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}>📊 Retrospective</button>
+            )}
+            {planAllows(plan, 'enterprise') && (
+              <button onClick={() => setShowReconstruct((v) => !v)} className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${showReconstruct ? 'border-brand bg-brand-light/40 text-brand-dark' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}>🔍 Reconstruct</button>
+            )}
+            {planAllows(plan, 'enterprise') && (user?.role === 'admin' || user?.role === 'manager') && !examFrozen && (
+              <button onClick={() => setShowEmergency(true)} className="rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-semibold text-red-700 hover:bg-red-100">🔴 Emergency rule change</button>
+            )}
           </div>
         </div>
       </div>
+
+      {/* Examination-freeze banner */}
+      {examFrozen && (
+        <div className="rounded-xl border border-slate-300 bg-slate-100 p-4 text-sm font-medium text-slate-700">
+          🔒 EXAMINATION MODE — Rule changes frozen{data.examination?.started_at ? ` since ${fmtDate(data.examination.started_at)}` : ''}. {data.examination?.examiner} examination. Contact Admin to end.
+        </div>
+      )}
+
+      {/* Emergency ratification banner */}
+      {emergencyPending && (
+        <div className="rounded-xl border border-red-300 bg-red-50 p-4">
+          <div className="text-sm font-semibold text-red-800">🔴 EMERGENCY RULE CHANGE requires ratification.</div>
+          <div className="mt-0.5 text-xs text-red-700">v{emergencyPending.version} · {emergencyPending.change_reason} · changed by {emergencyPending.created_by || 'a manager'}</div>
+          {isAdmin && (
+            <div className="mt-2 flex gap-2">
+              <button onClick={() => ratify(true)} disabled={busy} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50">Review and ratify</button>
+              <button onClick={() => ratify(false)} disabled={busy} className="rounded-lg border border-red-300 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50">Review and revert</button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Pending-approval banner (admin) */}
       {pendingVersion && (
@@ -224,6 +260,21 @@ export default function RulesSettings() {
       {showFreshness && (
         <div className="rounded-xl border border-slate-200 bg-white p-5"><DataFreshness /></div>
       )}
+
+      {showRetro && (planAllows(plan, 'enterprise')
+        ? <RetrospectivePanel versions={versions} />
+        : <LockedBadge feature="Retrospective analysis" min="enterprise" />)}
+      {showReconstruct && (planAllows(plan, 'enterprise')
+        ? <ReconstructPanel />
+        : <LockedBadge feature="Audit reconstruction" min="enterprise" />)}
+
+      {/* Scheduled / shadow / expiring (Business+) */}
+      <ScheduledSection scheduled={data.scheduled || []} />
+      <ShadowSection />
+      <ExpiringSection expiring={data.expiring || []} />
+
+      {/* Examination mode toggle (Enterprise admin) */}
+      {isAdmin && planAllows(plan, 'enterprise') && <ExaminationToggle exam={data.examination || { active: false }} onChange={load} />}
 
       {/* Category tables */}
       {CATEGORIES.map((cat) => {
@@ -291,24 +342,45 @@ export default function RulesSettings() {
           : <p className="text-sm font-medium text-red-600">❌ {issues.errs.length} value(s) below a hard minimum — fix before submitting.</p>}
         {issues.warns.map((w) => <p key={w} className="mt-1 text-sm text-amber-600">⚠ {w}</p>)}
 
-        {canEdit && dirty && (
-          <div className="mt-4">
-            <label className="mb-1 block text-xs font-medium text-slate-500">Reason for change (required)</label>
-            <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder="Why are you changing these rules?" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand" />
-          </div>
-        )}
-
         {msg && <p className={`mt-3 text-sm font-medium ${msg.kind === 'ok' ? 'text-green-700' : 'text-red-600'}`}>{msg.text}</p>}
 
+        {!planAllows(plan, 'business') && (
+          <div className="mt-4"><LockedBadge feature="Editing overlay rules" min="business" /></div>
+        )}
+
         <div className="mt-4 flex flex-wrap gap-2">
-          <button onClick={() => { setMsg({ kind: 'ok', text: 'Draft kept locally — submit when ready.' }) }} disabled={!canEdit || !dirty} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40">Save draft</button>
-          <button onClick={submit} disabled={!canEdit || !dirty || busy || issues.errs.length > 0} className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-40">Submit for approval</button>
+          <button
+            onClick={() => setShowSubmit(true)}
+            disabled={!canEdit || !dirty || issues.errs.length > 0}
+            title={examFrozen ? 'Rule changes frozen during active examination.' : undefined}
+            className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-40"
+          >
+            Submit for approval
+          </button>
           <button onClick={() => exportPdf(data, tenant?.name || 'Tenant')} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">📥 Export PDF</button>
         </div>
-        <p className="mt-2 text-xs text-slate-400">Changes require admin approval before taking effect.</p>
+        <p className="mt-2 text-xs text-slate-400">
+          {examFrozen ? 'Rule changes frozen during active examination.' : 'Submitting opens the timing + pipeline options. Changes require admin approval.'}
+        </p>
       </div>
 
-      {showHistory && <RuleHistory tenantName={tenant?.name || 'Tenant'} onClose={() => setShowHistory(false)} />}
+      {showHistory && <RuleHistory tenantName={tenant?.name || 'Tenant'} versions={versions} canRollback={canEdit} onRolledBack={(m) => { setMsg({ kind: 'ok', text: m }); load() }} onClose={() => { setShowHistory(false); load() }} />}
+      {showSubmit && (
+        <SubmitModal
+          original={data.tenant?.rules || {}}
+          draft={draft}
+          programs={programs}
+          onClose={() => setShowSubmit(false)}
+          onDone={(m) => { setShowSubmit(false); setMsg({ kind: 'ok', text: m }); load() }}
+        />
+      )}
+      {showEmergency && (
+        <EmergencyModal
+          draft={draft}
+          onClose={() => setShowEmergency(false)}
+          onDone={(m) => { setShowEmergency(false); setMsg({ kind: 'ok', text: m }); load() }}
+        />
+      )}
     </div>
   )
 }
