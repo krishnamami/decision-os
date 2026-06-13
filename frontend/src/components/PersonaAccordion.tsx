@@ -185,6 +185,9 @@ function DecisionRow({ d, docs, open, onToggle }: { d: DecisionDetail; docs: Doc
               ) : (
                 (() => {
                   const def = resolveRule(ruleStr)
+                  // Many engine rules already carry their own "→ outcome" suffix;
+                  // only append one when it's missing, to avoid "→ block → block".
+                  const codeLine = /(?:->|→)/.test(ruleStr) ? ruleStr : `${ruleStr} → ${d.outcome}`
                   return (
                     <div className="rounded-lg border border-slate-200 bg-white p-4">
                       <div className="flex items-start">
@@ -195,7 +198,7 @@ function DecisionRow({ d, docs, open, onToggle }: { d: DecisionDetail; docs: Doc
                         </div>
                       </div>
                       <pre className="mt-3 overflow-x-auto rounded-lg bg-slate-900 px-3 py-2 font-mono text-[12px] leading-relaxed text-slate-100">
-                        {ruleStr} → {d.outcome}
+                        {codeLine}
                       </pre>
                     </div>
                   )
