@@ -250,6 +250,21 @@ def _find_doc(docmap: dict, *types: str):
     return None
 
 
+def _dl_expired(fields: dict) -> bool:
+    """True if the license is expired. The dominant DL schema carries an
+    `expiry_date`; a minority variant carries a boolean `expired`/`expiration`."""
+    if fields.get("expired") is True:
+        return True
+    exp = fields.get("expiry_date") or fields.get("expiration")
+    if exp:
+        try:
+            from datetime import date
+            return date.fromisoformat(str(exp)[:10]) < date.today()
+        except (ValueError, TypeError):
+            return False
+    return False
+
+
 def _field(name, value, display, doc, source_field, status="verified"):
     return {
         "field_name": name, "value": value, "display_value": display,
@@ -287,16 +302,16 @@ async def source_match(application_id: str, tenant_id: str = Depends(get_tenant_
     irs = _find_doc(docmap, "IRS_TRANSCRIPT")
     inc_fields = []
     stated = None
-    if urla and urla["fields"].get("stated_income_monthly") is not None:
-        stated = float(urla["fields"]["stated_income_monthly"]) * 12
-        inc_fields.append(_field("Stated income", stated, f"{_money(stated)}/yr", urla, "stated_monthly_income × 12"))
+    if urla and urla["fields"].get("monthly_income_stated") is not None:
+        stated = float(urla["fields"]["monthly_income_stated"]) * 12
+        inc_fields.append(_field("Stated income", stated, f"{_money(stated)}/yr", urla, "monthly_income_stated × 12"))
     w2_inc = None
     if w2 and w2["fields"].get("box1_wages") is not None:
         w2_inc = float(w2["fields"]["box1_wages"])
         inc_fields.append(_field("W2 income", w2_inc, f"{_money(w2_inc)}/yr", w2, "Box 1 wages"))
-    if irs and irs["fields"].get("adjusted_gross_income") is not None:
-        irs_inc = float(irs["fields"]["adjusted_gross_income"])
-        inc_fields.append(_field("IRS income", irs_inc, f"{_money(irs_inc)}/yr", irs, "Adjusted Gross Income"))
+    if irs and irs["fields"].get("agi") is not None:
+        irs_inc = float(irs["fields"]["agi"])
+        inc_fields.append(_field("IRS income", irs_inc, f"{_money(irs_inc)}/yr", irs, "Adjusted Gross Income (AGI)"))
     inc_disc = {"exists": False}
     if stated and w2_inc:
         gap = abs(stated - w2_inc) / stated
@@ -317,10 +332,19 @@ async def source_match(application_id: str, tenant_id: str = Depends(get_tenant_
     if cr:
         cf = cr["fields"]
         fields = [_field("Credit score (mid)", cf.get("mid_score"), str(cf.get("mid_score")), cr, "Mid FICO score")]
-        obligs = cf.get("monthly_obligations")
-        if isinstance(obligs, list):
-            fields.append(_field("Tradelines", len(obligs), f"{len(obligs)} accounts", cr, "Open tradelines"))
-        fields.append(_field("Bankruptcies", cf.get("active_bankruptcy"), "None" if not cf.get("active_bankruptcy") else "Active", cr, "Public records"))
+        # Dominant schema: tradeline_count (int) + total_monthly_obligations.
+        # A minority variant carries a monthly_obligations list instead.
+        tl = cf.get("tradeline_count")
+        if tl is None and isinstance(cf.get("monthly_obligations"), list):
+            tl = len(cf["monthly_obligations"])
+        if tl is not None:
+            fields.append(_field("Tradelines", tl, f"{tl} accounts", cr, "Open tradelines"))
+        if cf.get("total_monthly_obligations") is not None:
+            fields.append(_field("Monthly obligations", cf["total_monthly_obligations"],
+                                 f"{_money(cf['total_monthly_obligations'])}/mo", cr, "Total monthly debt"))
+        if "active_bankruptcy" in cf:  # only assert this when the report actually carries it
+            fields.append(_field("Bankruptcies", cf.get("active_bankruptcy"),
+                                 "None" if not cf.get("active_bankruptcy") else "Active", cr, "Public records"))
         verifications.append({"category": "credit", "fields": fields, "discrepancy": {"exists": False}})
 
     # ── PROPERTY ──
@@ -364,17 +388,18 @@ async def source_match(application_id: str, tenant_id: str = Depends(get_tenant_
     # ── IDENTITY ──
     dl = _find_doc(docmap, "DRIVERS_LICENSE")
     id_fields = []
-    name = (w2 and w2["fields"].get("employee_name")) or (dl and dl["fields"].get("name"))
+    name = ((w2 and w2["fields"].get("employee_name")) or (dl and dl["fields"].get("name"))
+            or (urla and urla["fields"].get("borrower_name")))
     if name:
-        id_fields.append(_field("Name", name, name, w2 or dl, "Employee / licensee name"))
-    dl_state = dl["fields"].get("dl_state") if dl else None
-    prop_state = prop.get("state") or (urla and urla["fields"].get("address_state"))
+        id_fields.append(_field("Name", name, name, w2 or dl or urla, "Employee / licensee name"))
+    dl_state = (dl["fields"].get("state") or dl["fields"].get("dl_state")) if dl else None
+    prop_state = prop.get("state") or (urla["fields"].get("subject_property_state") if urla else None)
     if dl_state:
         id_fields.append(_field("License state", dl_state, dl_state, dl, "DL issuing state"))
     id_disc = {"exists": False}
     if dl_state and prop_state and dl_state != prop_state:
         id_disc = {"exists": True, "description": f"DL state ({dl_state}) does not match property state ({prop_state})", "severity": "medium"}
-    if dl and dl["fields"].get("expired"):
+    if dl and _dl_expired(dl["fields"]):
         id_disc = {"exists": True, "description": "Driver's license is expired", "severity": "medium"}
     if id_fields:
         verifications.append({"category": "identity", "fields": id_fields, "discrepancy": id_disc})
