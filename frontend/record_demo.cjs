@@ -112,55 +112,55 @@ async function main() {
   await recorder.start(OUT)
 
   try {
-    // 0 — Intro
-    await card(page, 'accord', 'AI-powered lending decisions — a 2-minute tour')
-    await sleep(3000)
+    // ═══ INTRO (3.5s) ═══
+    await card(page, 'accord', 'Every decision. In accord.')
+    await sleep(3500)
     await clearCard(page)
 
-    // 1 — Landing / hero
-    await beat(page, 'Accord turns a loan into an audited decision — with the AI shown working.', { hold: 4500 })
-    await slowScrollTo(page, 520, 2600)
-    await beat(page, 'Eight checks run on every loan: credit, fraud, income, collateral, DTI, compliance…', { hold: 4000 })
+    // ═══ BEAT 1: THE HOOK — Landing page hero (5s) ═══
+    await beat(page, 'The biggest financial decision deserves the best underwriting.', { hold: 5000 })
 
-    // 2 — Login → queue
+    // ═══ BEAT 2: THE PAIN — Scroll landing page (6s) ═══
+    await beat(page, 'Credit. Employment. Property. Title. Days to weeks.', { scrollY: 600, scrollMs: 3000, hold: 5500 })
+
+    // ═══ BEAT 3: THE SOLUTION — Scroll to stats (5s) ═══
+    await beat(page, 'Accord works like your best underwriter.', { scrollY: 1000, scrollMs: 2500, hold: 4500 })
+
+    // ═══ BEAT 4: LOGIN → MY QUEUE (6s) ═══
     await login(page)
-    await beat(page, 'After login, an officer sees just the loans that need them — their queue.', { url: '/pipeline', hold: 5000 })
+    await beat(page, 'Just the loans that need YOUR attention.', { url: '/pipeline', hold: 5500 })
 
-    // 3 — Blocked loan
-    await beat(page, 'This loan is blocked — and the AI shows exactly why, scored finding by finding.', {
-      url: '/pipeline/APP-SC02-004', hold: 4500,
-    })
-    await beat(page, 'Identity flagged a watchlist match at 95% confidence — every check itemized, not a black box.', {
-      scrollY: 600, scrollMs: 2600, hold: 4500,
-    })
-    await beat(page, 'From here it is one click to the right team — with a full, timestamped audit trail.', {
-      scrollY: 1100, scrollMs: 2400, hold: 4500,
-    })
+    // ═══ BEAT 5: LOAN DETAIL — AI RECOMMENDATION (5s) ═══
+    await beat(page, 'Every recommendation backed by evidence.', { url: '/pipeline/APP-SC02-004', hold: 5000 })
 
-    // 4 — MiroFish debate
-    await beat(page, 'MiroFish: 12 AI agents debate a loan across 3 rounds and reach consensus.', {
-      url: '/simulation#debate', hold: 5200,
-    })
+    // ═══ BEAT 6: EVIDENCE — WHY BLOCKED + WHAT PASSED (6s) ═══
+    await beat(page, "Why it's blocked. What passed. One screen.", { scrollY: 600, scrollMs: 2500, hold: 5500 })
 
-    // 5 — Policy simulator
-    await beat(page, 'Policy Simulator: change a rule and see exactly who is affected — before you ship it.', {
-      url: '/simulation#simulate', hold: 5000,
-    })
+    // ═══ BEAT 7: COMPLIANCE — RULES + REGULATIONS (7s) ═══
+    await beat(page, 'Three layers of rules. Federal. Agency. Yours. All visible.', { scrollY: 1000, scrollMs: 2500, hold: 6000 })
 
-    // 6 — Health check / swarm
-    await beat(page, 'Portfolio Health Check scans every loan for hidden risk and concentration patterns.', {
-      url: '/simulation#swarm', hold: 5000,
-    })
+    // ═══ BEAT 8: DOCUMENT TRACING (5s) ═══
+    await beat(page, 'Click any number. See the source document.', { scrollY: 1400, scrollMs: 2000, hold: 4500 })
 
-    // 7 — Audit
-    await beat(page, 'Every decision is documented. Every action is traced. Examiner-ready.', {
-      url: '/audit', hold: 4800,
-    })
+    // ═══ BEAT 9: ACTION — ONE CLICK (4s) ═══
+    await beat(page, 'One click to act. Complete audit trail.', { scrollY: 1800, scrollMs: 2000, hold: 3500 })
 
-    // 8 — Close on the landing page
+    // ═══ BEAT 10: SIMULATION (6s) ═══
+    await beat(page, '"What if we tighten DTI?" See the impact before you commit.', { url: '/simulation#simulate', hold: 5500 })
+
+    // ═══ BEAT 11: DEBATE (5s) ═══
+    await beat(page, 'Debate complex cases. Communicate seamlessly.', { url: '/simulation#debate', hold: 4500 })
+
+    // ═══ BEAT 12: AUDIT + COMPLIANCE (6s) ═══
+    await beat(page, 'Examiner asks "why?" Answer in one click.', { url: '/audit', hold: 5500 })
+
+    // ═══ BEAT 13: GOVERNANCE REPORTS (4s) ═══
+    await beat(page, 'HMDA. Fair lending. Full examiner package.', { scrollY: 600, scrollMs: 2000, hold: 3500 })
+
+    // ═══ CLOSING CARD (4s) ═══
     await page.goto(BASE + '/', { waitUntil: 'networkidle2', timeout: 60000 })
     await sleep(1200)
-    await card(page, 'accord', 'Every decision, in accord.')
+    await card(page, 'accord', 'Every decision. In accord.')
     await sleep(4000)
   } catch (e) {
     console.error('BEAT ERROR:', e.message)
