@@ -75,7 +75,7 @@ async def main() -> None:
                 "INSERT INTO tenant_rules "
                 "(tenant_id, version, status, rules, programs, changes_summary, change_reason, "
                 " created_by, approved_by, effective_from, approved_at) "
-                "VALUES ($1, 1, 'active', $2::jsonb, $3::jsonb, $4, $5, $6, $6, NOW(), NOW())",
+                "VALUES ($1, 1, 'active', $2::jsonb, $3::jsonb, $4, $5, $6, $6, TIMESTAMP '2026-04-01', TIMESTAMP '2026-04-01')",
                 tid, json.dumps(overlay), json.dumps(programs),
                 "Initial rules (Accord defaults customized for tenant)",
                 "Initial onboarding configuration", admin_id,

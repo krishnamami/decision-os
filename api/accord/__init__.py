@@ -9,9 +9,10 @@ from api.accord.mirofish_routes import router as mirofish_router
 from api.accord.analytics import router as analytics_router
 from api.accord.audit import router as audit_router
 from api.accord.auth import router as auth_router
+from api.accord.rules import router as rules_router
 
 # Every Accord router — api.main includes them all.
 # auth_router is public for /login + /signup; all other routers enforce a JWT.
-routers = [auth_router, router, mirofish_router, analytics_router, audit_router]
+routers = [auth_router, router, mirofish_router, analytics_router, audit_router, rules_router]
 
-__all__ = ["router", "mirofish_router", "analytics_router", "audit_router", "auth_router", "routers"]
+__all__ = ["router", "mirofish_router", "analytics_router", "audit_router", "auth_router", "rules_router", "routers"]
