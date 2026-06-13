@@ -134,11 +134,6 @@ const PRODUCTS = [
   ['📊', 'Analytics', 'Know your pipeline inside and out', "Who's blocked, what's aging, where risk is concentrating. Team performance, override trends, and portfolio intelligence."],
   ['📑', 'Audit', 'Pull the examiner package in one click', 'Every AI finding, every human action, every override — documented with reasoning. HMDA, fair lending, adverse action. Complete trail.'],
 ]
-const SIM_QS: Array<[string, string, string, string]> = [
-  ['What if we tighten DTI to 36%?', '3 loans affected · $1.5M volume impact', "Each borrower: why they'd fail, how to restructure. 'Sarah Johnson misses by 0.1% — approve with compensating factors or reduce loan by $1K.'", 'border-l-[#0F6E56]'],
-  ['Should this blocked loan be approved?', 'AI agents debate it from every angle', "Consensus: investigate further, don't deny yet. 3 insights that no single review would catch.", 'border-l-[#F59E0B]'],
-  ['Where are our hidden portfolio risks?', '46% have income documentation gaps', '97% concentration in one product type. All rate locks expire the same week.', 'border-l-[#EF4444]'],
-]
 const CASES = [
   ['4.2 → 1.7 hrs', 'Average review time per loan', 'AI handles initial analysis in seconds. Underwriters review AI findings instead of starting from scratch.', 'I used to spend 20 minutes pulling the credit report. Now the AI does that and tells me what to focus on.'],
   ['5 fraud cases', 'caught that manual review missed', 'AI identified watchlist matches and synthetic identity patterns. The portfolio health check found 46% of loans had income discrepancies — a systematic problem invisible to file-by-file review.', 'The health check found a pattern across thousands of loans that no individual review would have caught.'],
@@ -255,78 +250,429 @@ function DemoVideo() {
   )
 }
 
-// Marketing illustration for the Simulation section. NOT wired to the real
-// engine — clicking Run reveals a pre-built sample result inline (Option A).
-const SIM_OPTIONS = ['36% (tighten)', '38%', '40%', '50% (relax)', 'Custom…']
-const SIM_AFFECTED: Array<[string, string]> = [
-  ['Conventional · $420K', 'DTI 38% → over limit · restructure available'],
-  ['FHA · $295K', 'DTI 41% → over limit · co-signer option'],
-  ['Conventional · $510K', 'DTI 39% → over limit · larger down payment'],
+// ── Interactive (marketing) Simulation section ──────────────────────────────
+// Fully static / pre-built data — NO API calls. Multi-select scenarios on the
+// left drive dynamic single-scenario simulators or combined-impact summaries on
+// the right, each with a code-driven animated preview.
+type SimKey = 'dti' | 'rates' | 'debate' | 'health'
+type Vote = { n: number; cls: string; label: string }
+
+const SIM_ORDER: SimKey[] = ['dti', 'rates', 'debate', 'health']
+const SHORT: Record<SimKey, string> = { dti: 'Policy', rates: 'Stress', debate: 'Debate', health: 'Portfolio' }
+
+const SCENARIOS: Array<{ key: SimKey; title: string; subtitle: string; detail: string; color: string; tint: string }> = [
+  { key: 'dti', title: 'What if we tighten DTI to 36%?', subtitle: '3 loans affected · $1.5M volume impact', detail: 'Each borrower: why they’d fail, how to restructure', color: '#0F6E56', tint: 'bg-emerald-50' },
+  { key: 'rates', title: 'What if rates rise 200 basis points?', subtitle: '47 loans exceed DTI at new payment amounts', detail: 'Higher monthly payments push borderline borrowers over the limit', color: '#F59E0B', tint: 'bg-amber-50' },
+  { key: 'debate', title: 'Should this blocked loan be approved?', subtitle: 'AI agents debate it from every angle', detail: 'Consensus: investigate further, don’t deny yet', color: '#8B5CF6', tint: 'bg-violet-50' },
+  { key: 'health', title: 'Where are our hidden portfolio risks?', subtitle: '46% income gaps · 97% one product type', detail: 'Risks no individual file review would catch', color: '#EF4444', tint: 'bg-red-50' },
 ]
 
-function PolicySimDemo() {
-  const [selected, setSelected] = useState(SIM_OPTIONS[0])
-  const [status, setStatus] = useState<'idle' | 'running' | 'done'>('idle')
+const DTI: Record<string, { affected: string; who: string; reason: string }> = {
+  '36%': { affected: '3 loans affected · -$1.5M volume', who: 'Sarah Johnson · $520K · DTI 36.1%', reason: 'Misses the new limit by just 0.1%. Approve with compensating factors or reduce loan by $1K.' },
+  '38%': { affected: '2 loans affected · -$950K volume', who: 'Michael Lee · $380K · DTI 38.7%', reason: 'Would need income increase of $862/mo or loan reduction of $27K to qualify.' },
+  '40%': { affected: '1 loan affected · -$380K volume', who: 'Emily Davis · $610K · DTI 41.9%', reason: 'Significantly over. Would need major restructure.' },
+  '50%': { affected: '0 loans affected — all qualify under relaxed limit', who: '', reason: 'No borrowers affected. All current loans qualify under the relaxed 50% DTI limit.' },
+}
+const RATE: Record<string, { affected: string; detail: string }> = {
+  '+100bps': { affected: '12 loans affected · -$4.8M', detail: 'DTI increases push 12 over limit' },
+  '+200bps': { affected: '47 loans affected · -$16.7M', detail: 'Monthly payments up ~$280 avg' },
+  '+300bps': { affected: '89 loans affected · -$32.1M', detail: 'Severe stress, 10% of book' },
+}
+const DEBATE: Record<string, { label: string; consensus: string; votes: Vote[]; insight: string }> = {
+  david: {
+    label: 'David Park · $400K · Blocked (income)', consensus: 'ESCALATE (7/12)',
+    votes: [{ n: 7, cls: 'bg-[#0F6E56]', label: 'escalate' }, { n: 3, cls: 'bg-red-500', label: 'block' }, { n: 1, cls: 'bg-amber-500', label: 'review' }, { n: 1, cls: 'bg-slate-400', label: 'approve' }],
+    insight: '3 agents independently flagged income. Credit score masks ability-to-repay risk.',
+  },
+  mark: {
+    label: 'Mark Singh · $490K · Halted (fraud)', consensus: 'BLOCK (9/12)',
+    votes: [{ n: 9, cls: 'bg-red-500', label: 'block' }, { n: 2, cls: 'bg-amber-500', label: 'escalate' }, { n: 1, cls: 'bg-slate-400', label: 'review' }],
+    insight: 'Federal watchlist match 78%. Mandatory BSA referral.',
+  },
+  sam: {
+    label: 'Sam Patel · $450K · In Review (self-employed)', consensus: 'RECOMMEND (8/12)',
+    votes: [{ n: 8, cls: 'bg-amber-500', label: 'recommend' }, { n: 2, cls: 'bg-[#0F6E56]', label: 'approve' }, { n: 2, cls: 'bg-slate-400', label: 'escalate' }],
+    insight: 'Self-employed income needs additional verification. Business tax returns support the stated income.',
+  },
+}
+const HEALTH_CRIT = ['5 loans flagged for possible fraud', '5 loans with compound risk (high LTV + high DTI)']
+const HEALTH_WARN = ['46% have income documentation gaps', '97% concentration in one product type', 'All rate locks expire the same week', '61% decline rate — policy may be too tight']
 
-  const run = () => {
-    setStatus('running')
-    setTimeout(() => setStatus('done'), 700)
+const SIM_KEYFRAMES = `
+@keyframes accFade{from{opacity:0}to{opacity:1}}
+@keyframes accUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes accRight{from{opacity:0;transform:translateX(22px)}to{opacity:1;transform:none}}
+@keyframes accPop{0%{opacity:0;transform:scale(.8)}60%{transform:scale(1.06)}100%{opacity:1;transform:scale(1)}}
+@keyframes accFill{from{width:0}to{width:100%}}
+.acc-fade2{animation:accFade .22s ease both}
+.acc-up{animation:accUp .4s ease both}
+.acc-right{animation:accRight .45s ease both}
+.acc-pop{animation:accPop .4s ease both}
+.acc-bar{animation:accFill 1.6s ease-out both}
+`
+
+function VoteBar({ votes }: { votes: Vote[] }) {
+  const total = votes.reduce((s, v) => s + v.n, 0) || 12
+  return (
+    <div>
+      <div className="flex h-3 w-full overflow-hidden rounded-full bg-slate-100">
+        {votes.map((v, i) => <div key={i} className={v.cls} style={{ width: `${(v.n / total) * 100}%` }} />)}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500">
+        {votes.map((v, i) => (
+          <span key={i} className="flex items-center gap-1"><span className={`h-2 w-2 rounded-full ${v.cls}`} />{v.n} {v.label}</span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function SimDropdown({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: Array<[string, string]> }) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+    >
+      {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+    </select>
+  )
+}
+
+function SimHead({ title, subtitle }: { title: string; subtitle: string }) {
+  return <div className="mb-3"><div className="text-sm font-bold text-slate-900">{title}</div><div className="text-xs text-slate-500">{subtitle}</div></div>
+}
+
+// Code-driven animated walkthrough (replaces video clips). Play → timed reveal.
+function AnimatedPreview(props: {
+  kind: 'policy' | 'debate' | 'health'
+  result?: string
+  reason?: string
+  votes?: Vote[]
+  consensus?: string
+  insight?: string
+  findings?: Array<{ icon: string; text: string }>
+}) {
+  const { kind } = props
+  const [phase, setPhase] = useState<'idle' | 'playing' | 'done'>('idle')
+  const [run, setRun] = useState(0)
+  const [typed, setTyped] = useState('')
+  const [scan, setScan] = useState('')
+  const timers = useRef<number[]>([])
+  const clear = () => { timers.current.forEach((t) => { clearTimeout(t); clearInterval(t) }); timers.current = [] }
+  useEffect(() => () => clear(), [])
+
+  const start = () => {
+    clear()
+    setTyped('')
+    setRun((r) => r + 1)
+    setPhase('playing')
+    setScan(kind === 'policy' ? 'Evaluating 8,896 loans…' : kind === 'debate' ? 'AI agents evaluating…' : 'Scanning portfolio…')
+    if (kind === 'policy') {
+      timers.current.push(window.setTimeout(() => setScan('3,558 evaluated…'), 800))
+      timers.current.push(window.setTimeout(() => setScan('Analysis complete ✓'), 1600))
+      if (props.reason) {
+        timers.current.push(window.setTimeout(() => {
+          let i = 0
+          const iv = window.setInterval(() => {
+            i += 1
+            setTyped(props.reason!.slice(0, i))
+            if (i >= props.reason!.length) clearInterval(iv)
+          }, 20)
+          timers.current.push(iv)
+        }, 2400))
+      }
+    }
+    const total = kind === 'policy' ? 5200 : kind === 'health' ? 4200 : 3600
+    timers.current.push(window.setTimeout(() => setPhase('done'), total))
+  }
+
+  if (phase === 'idle') {
+    return (
+      <div className="mt-4 flex min-h-[110px] items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white">
+        <button type="button" onClick={start} className="group flex flex-col items-center gap-2 py-3">
+          <span className="flex h-12 w-12 items-center justify-center rounded-full bg-brand text-lg text-white shadow-md transition group-hover:scale-110">▶</span>
+          <span className="text-sm font-semibold text-slate-600">See how this looks in Accord</span>
+        </button>
+      </div>
+    )
   }
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6 text-left">
-      <div className="mb-3 text-sm font-semibold text-slate-700">Policy Simulator — DTI limit</div>
-      <div className="space-y-2">
-        {SIM_OPTIONS.map((o) => (
-          <button
-            key={o}
-            type="button"
-            onClick={() => { setSelected(o); setStatus('idle') }}
-            className={`block w-full rounded-lg border px-3 py-2 text-left text-sm transition ${
-              selected === o ? 'border-brand bg-brand-light/40 font-semibold text-brand-dark' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-            }`}
-          >
-            {o}
-          </button>
-        ))}
-      </div>
-
-      {status === 'idle' && (
-        <div className="mt-4 rounded-lg border border-dashed border-slate-300 bg-white p-3 text-sm text-slate-500">
-          Pick a limit and run a sample simulation.
-        </div>
-      )}
-      {status === 'running' && (
-        <div className="mt-4 flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-600">
-          <span className="h-2 w-2 animate-pulse rounded-full bg-brand" /> Simulating across the sample portfolio…
-        </div>
-      )}
-      {status === 'done' && (
-        <div className="mt-4 space-y-2">
-          <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm">
-            <div className="font-semibold text-slate-900">3 loans affected · $1.5M impact</div>
-            <div className="text-xs text-slate-500">At a {selected.replace(/ .*/, '')} DTI limit · each with restructure options</div>
+    <div key={run} className="acc-fade2 mt-4 min-h-[200px] rounded-xl border border-slate-200 bg-white p-4">
+      {kind === 'policy' && (
+        <div className="space-y-3">
+          <div className="acc-fade2">
+            <div className="text-xs text-slate-500">{scan}</div>
+            <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100"><div className="acc-bar h-full rounded-full bg-brand" /></div>
           </div>
-          {SIM_AFFECTED.map(([loan, detail]) => (
-            <div key={loan} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs">
-              <span className="font-medium text-slate-700">{loan}</span>
-              <span className="text-right text-slate-500">{detail}</span>
+          <div className="acc-up rounded-lg bg-emerald-50 p-3 text-sm font-semibold text-slate-900" style={{ animationDelay: '1.9s' }}>{props.result}</div>
+          <div className="acc-right rounded-lg border border-slate-200 p-3 text-xs text-slate-600" style={{ animationDelay: '2.4s' }}>
+            {typed}<span className="animate-pulse text-slate-400">▌</span>
+          </div>
+        </div>
+      )}
+      {kind === 'debate' && (
+        <div className="space-y-3">
+          <div className="acc-fade2 text-xs text-slate-500">{scan}</div>
+          <div className="flex gap-1">
+            {Array.from({ length: 12 }).map((_, i) => (
+              <span key={i} className="acc-pop h-3 w-3 rounded-full bg-slate-300" style={{ animationDelay: `${i * 0.07}s` }} />
+            ))}
+          </div>
+          <div className="acc-up" style={{ animationDelay: '1.5s' }}><VoteBar votes={props.votes!} /></div>
+          <div className="acc-up rounded-lg bg-slate-50 p-2 text-sm font-bold text-slate-900" style={{ animationDelay: '2.2s' }}>Consensus: {props.consensus}</div>
+          <div className="acc-up text-xs italic text-slate-500" style={{ animationDelay: '2.8s' }}>{props.insight}</div>
+        </div>
+      )}
+      {kind === 'health' && (
+        <div className="space-y-2">
+          <div className="acc-fade2">
+            <div className="text-xs text-slate-500">{scan}</div>
+            <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100"><div className="acc-bar h-full rounded-full bg-red-400" /></div>
+          </div>
+          {props.findings!.map((f, i) => (
+            <div key={i} className="acc-up flex items-center gap-2 rounded-lg border border-slate-200 p-2 text-xs text-slate-700" style={{ animationDelay: `${1.8 + i * 0.45}s` }}>
+              <span>{f.icon}</span><span>{f.text}</span>
             </div>
           ))}
-          <p className="text-[11px] text-slate-400">
-            Sample data. <Link to="/login" className="text-brand hover:underline">Log in</Link> to run on your portfolio.
-          </p>
         </div>
       )}
+      {phase === 'done' && (
+        <button type="button" onClick={start} className="mt-3 text-xs font-semibold text-brand hover:underline">↻ Replay</button>
+      )}
+    </div>
+  )
+}
 
-      <button
-        type="button"
-        onClick={run}
-        disabled={status === 'running'}
-        className="mt-4 w-full rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-60"
+function DtiSim() {
+  const [pct, setPct] = useState('36%')
+  const r = DTI[pct]
+  return (
+    <div>
+      <SimHead title="Policy Simulator — DTI Limit" subtitle="Current threshold: 43%" />
+      <SimDropdown value={pct} onChange={setPct} options={[['36%', '36% (tighten)'], ['38%', '38%'], ['40%', '40%'], ['50%', '50% (relax)']]} />
+      <div key={pct} className="acc-fade2 mt-3 rounded-lg bg-emerald-50 p-3 text-sm">
+        <div className="font-semibold text-slate-900">{r.affected}</div>
+        <div className="mt-1 text-xs leading-relaxed text-slate-600">{r.who && <span className="font-medium text-slate-700">{r.who} — </span>}{r.reason}</div>
+      </div>
+      <AnimatedPreview key={pct} kind="policy" result={r.affected} reason={r.reason} />
+    </div>
+  )
+}
+
+function RateSim() {
+  const [bps, setBps] = useState('+200bps')
+  const r = RATE[bps]
+  return (
+    <div>
+      <SimHead title="Stress Test — Interest Rate Increase" subtitle="Current average rate: 6.5%" />
+      <SimDropdown value={bps} onChange={setBps} options={[['+100bps', '+100bps (+1.0%)'], ['+200bps', '+200bps (+2.0%)'], ['+300bps', '+300bps (+3.0%)']]} />
+      <div key={bps} className="acc-fade2 mt-3 rounded-lg bg-amber-50 p-3 text-sm">
+        <div className="font-semibold text-slate-900">{r.affected}</div>
+        <div className="mt-1 text-xs text-slate-600">{r.detail}</div>
+      </div>
+      <AnimatedPreview key={bps} kind="policy" result={r.affected} reason={r.detail} />
+    </div>
+  )
+}
+
+function DebateSim() {
+  const [who, setWho] = useState('david')
+  const d = DEBATE[who]
+  return (
+    <div>
+      <SimHead title="AI Loan Debate" subtitle="Pick a loan. Watch AI agents deliberate." />
+      <SimDropdown value={who} onChange={setWho} options={[['david', DEBATE.david.label], ['mark', DEBATE.mark.label], ['sam', DEBATE.sam.label]]} />
+      <div key={who} className="acc-fade2 mt-3 space-y-3 rounded-lg bg-violet-50 p-3">
+        <div className="text-sm font-bold text-slate-900">{d.consensus}</div>
+        <VoteBar votes={d.votes} />
+        <div className="text-xs italic text-slate-600">{d.insight}</div>
+      </div>
+      <AnimatedPreview key={who} kind="debate" votes={d.votes} consensus={d.consensus} insight={d.insight} />
+    </div>
+  )
+}
+
+function HealthSim() {
+  return (
+    <div>
+      <SimHead title="Portfolio Health Check" subtitle="AI scans every loan for hidden risks" />
+      <div className="space-y-3 rounded-lg bg-red-50 p-3">
+        <div>
+          <div className="text-sm font-bold text-red-700">🔴 2 critical findings</div>
+          <ul className="mt-1 space-y-1 text-xs text-slate-600">{HEALTH_CRIT.map((f) => <li key={f}>• {f}</li>)}</ul>
+        </div>
+        <div>
+          <div className="text-sm font-bold text-amber-600">🟡 4 warnings</div>
+          <ul className="mt-1 space-y-1 text-xs text-slate-600">{HEALTH_WARN.map((f) => <li key={f}>• {f}</li>)}</ul>
+        </div>
+        <div className="text-xs text-slate-400">ℹ️ + 5 more informational findings</div>
+      </div>
+      <AnimatedPreview
+        kind="health"
+        findings={[
+          { icon: '🔴', text: HEALTH_CRIT[0] }, { icon: '🔴', text: HEALTH_CRIT[1] },
+          { icon: '🟡', text: HEALTH_WARN[0] }, { icon: '🟡', text: HEALTH_WARN[1] },
+        ]}
+      />
+    </div>
+  )
+}
+
+function SingleSim({ k }: { k: SimKey }) {
+  if (k === 'dti') return <DtiSim />
+  if (k === 'rates') return <RateSim />
+  if (k === 'debate') return <DebateSim />
+  return <HealthSim />
+}
+
+function CombinedResults({ checked }: { checked: Set<SimKey> }) {
+  const has = (k: SimKey) => checked.has(k)
+  const all4 = checked.size === 4
+
+  let body: React.ReactNode
+  if (all4) {
+    body = (
+      <div className="space-y-3">
+        <div className="text-sm font-bold text-slate-900">Full Analysis: Policy + Stress + Portfolio + Loan Debate</div>
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          {[['47', 'loans affected by policy + stress'], ['11', 'portfolio risks identified'], ['AI', 'debate provides loan-level reasoning'], ['$18.2M', 'total volume impact']].map(([a, b]) => (
+            <div key={b} className="rounded-lg border border-slate-200 bg-white p-3"><div className="text-base font-bold text-brand">{a}</div><div className="text-slate-500">{b}</div></div>
+          ))}
+        </div>
+        <p className="text-xs leading-relaxed text-slate-600">This is the power of Accord — not just one test, but cascading, multi-dimensional analysis across your entire book. No spreadsheet can do this.</p>
+      </div>
+    )
+  } else if (has('debate')) {
+    body = (
+      <div className="space-y-2">
+        <div className="text-sm font-bold text-slate-900">Loan debate + portfolio analysis</div>
+        <p className="text-xs leading-relaxed text-slate-600">AI Debate analyzes individual loans while Policy and Stress tests analyze the portfolio. Run both to get the complete picture — loan-level reasoning plus portfolio-level impact.</p>
+      </div>
+    )
+  } else if (has('dti') && has('rates') && has('health')) {
+    body = (
+      <div className="space-y-2">
+        <div className="text-sm font-bold text-slate-900">Comprehensive stress analysis</div>
+        <p className="text-xs leading-relaxed text-slate-600">47 loans fail from policy + rate changes. 11 portfolio risks compound the picture. Total exposure: <span className="font-semibold text-slate-800">$18.2M</span> in direct impact plus systemic concentration risks.</p>
+      </div>
+    )
+  } else if (has('dti') && has('rates')) {
+    body = (
+      <div className="space-y-3">
+        <div className="text-sm font-bold text-slate-900">DTI 36% + Rate shock +200bps</div>
+        <div className="overflow-hidden rounded-lg border border-slate-200 text-xs">
+          <div className="bg-slate-50 px-3 py-1.5 font-semibold text-slate-500">Individual impact</div>
+          <div className="flex justify-between px-3 py-1.5"><span className="text-slate-600">DTI alone</span><span className="font-medium text-slate-800">3 loans · -$1.5M</span></div>
+          <div className="flex justify-between px-3 py-1.5"><span className="text-slate-600">Rates alone</span><span className="font-medium text-slate-800">44 loans · -$16.7M</span></div>
+          <div className="bg-emerald-50 px-3 py-1.5 font-semibold text-brand-dark">Combined impact</div>
+          <div className="flex justify-between px-3 py-1.5"><span className="text-slate-600">Together</span><span className="font-bold text-slate-900">47 loans · -$18.2M</span></div>
+          <div className="flex justify-between px-3 py-1.5"><span className="text-slate-600">Approval rate</span><span className="font-medium text-slate-800">31% → 26%</span></div>
+        </div>
+        <p className="text-xs leading-relaxed text-slate-600">When multiple changes combine, the impact compounds. Higher rates push monthly payments up, which pushes DTI ratios up, which means more borrowers fail the tighter 36% limit.</p>
+      </div>
+    )
+  } else if (has('dti') && has('health')) {
+    body = (
+      <div className="space-y-2">
+        <div className="text-sm font-bold text-slate-900">Policy change + Portfolio scan</div>
+        <p className="text-xs leading-relaxed text-slate-600">3 loans fail under new DTI rule. Separately, portfolio has 11 systemic risks. Combined view: tightening DTI while 46% have income gaps may trigger additional fallout.</p>
+      </div>
+    )
+  } else {
+    body = (
+      <div className="space-y-2">
+        <div className="text-sm font-bold text-slate-900">Rate stress + Portfolio risks</div>
+        <p className="text-xs leading-relaxed text-slate-600">47 loans fail under rate shock. Portfolio already has concentration risks. Combined: rate-sensitive sectors (real estate, construction) are also the highest LTV borrowers.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <div className="mb-1 text-sm font-bold text-slate-900">Combined Scenario Analysis</div>
+      <div className="mb-4 flex flex-wrap items-center gap-2 text-[11px] font-medium text-slate-500">
+        {SIM_ORDER.filter((k) => has(k)).map((k) => {
+          const sc = SCENARIOS.find((s) => s.key === k)!
+          return <span key={k} className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ backgroundColor: sc.color }} />{SHORT[k]}</span>
+        })}
+      </div>
+      {body}
+    </div>
+  )
+}
+
+function ScenarioCard({ sc, checked, onToggle }: { sc: (typeof SCENARIOS)[number]; checked: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={checked}
+      className={`flex w-full items-start gap-3 rounded-xl border border-l-4 p-4 text-left transition-all duration-200 ${checked ? sc.tint : 'bg-white opacity-80 hover:opacity-100'}`}
+      style={{ borderLeftColor: checked ? sc.color : '#E5E7EB' }}
+    >
+      <span
+        className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border-2 text-xs leading-none text-white transition"
+        style={checked ? { backgroundColor: sc.color, borderColor: sc.color } : { borderColor: '#CBD5E1' }}
       >
-        {status === 'running' ? 'Simulating…' : status === 'done' ? 'Run again' : 'Run simulation'}
-      </button>
+        {checked ? '✓' : ''}
+      </span>
+      <span className="min-w-0">
+        <span className="block text-sm font-bold text-slate-900">{sc.title}</span>
+        <span className="mt-0.5 block text-xs font-semibold" style={{ color: checked ? sc.color : '#6B7280' }}>{sc.subtitle}</span>
+        <span className="mt-1 block text-[11px] italic text-slate-400">{sc.detail}</span>
+      </span>
+    </button>
+  )
+}
+
+function SimulationSection() {
+  const [checked, setChecked] = useState<Set<SimKey>>(new Set<SimKey>(['dti']))
+  const toggle = (k: SimKey) =>
+    setChecked((prev) => {
+      const next = new Set(prev)
+      if (next.has(k)) next.delete(k)
+      else next.add(k)
+      return next
+    })
+  const sig = SIM_ORDER.filter((k) => checked.has(k)).join('+')
+  const only = SIM_ORDER.filter((k) => checked.has(k))
+
+  return (
+    <div>
+      <style>{SIM_KEYFRAMES}</style>
+      <div className="grid gap-6 md:grid-cols-[2fr_3fr]">
+        {/* LEFT — multi-select scenarios */}
+        <div className="space-y-3">
+          {SCENARIOS.map((sc) => (
+            <ScenarioCard key={sc.key} sc={sc} checked={checked.has(sc.key)} onToggle={() => toggle(sc.key)} />
+          ))}
+        </div>
+
+        {/* RIGHT — dynamic results */}
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 md:p-6">
+          <div key={sig} className="acc-fade2">
+            {checked.size === 0 && (
+              <div className="flex min-h-[200px] items-center justify-center text-center text-sm text-slate-400">
+                Select one or more scenarios to see the analysis.
+              </div>
+            )}
+            {checked.size === 1 && <SingleSim k={only[0]} />}
+            {checked.size >= 2 && <CombinedResults checked={checked} />}
+          </div>
+        </div>
+      </div>
+
+      {/* BOTTOM CTA */}
+      <div className="mt-10 text-center">
+        <p className="text-sm text-slate-500">✦ These results are from a real portfolio of 8,896 loans.</p>
+        <div className="mt-4 flex flex-wrap justify-center gap-3">
+          <a href={DEMO} className="rounded-lg bg-brand px-6 py-3 text-sm font-semibold text-white hover:bg-brand-dark">Request a demo →</a>
+          <a href="mailto:demo@useaccord.com?subject=Accord%20free%20trial" className="rounded-lg border border-brand px-6 py-3 text-sm font-semibold text-brand hover:bg-brand-light/40">Start free trial →</a>
+        </div>
+        <p className="mt-2 text-xs text-slate-400">14-day free trial. No credit card required.</p>
+      </div>
     </div>
   )
 }
@@ -511,21 +857,9 @@ export default function Landing({ scrollTo }: { scrollTo?: string }) {
             <h2 className="text-[32px] font-bold tracking-tight">What would happen if…?</h2>
             <p className="mx-auto mt-2 max-w-2xl text-base text-[#6B7280]">Ask any question about your portfolio. See the answer — with AI reasoning — in seconds.</p>
           </div>
-          <div className="mt-12 grid gap-8 lg:grid-cols-2">
-            <div className="space-y-4">
-              {SIM_QS.map(([q, ans, detail, bar]) => (
-                <div key={q} className={`rounded-xl border border-slate-200 border-l-4 bg-white p-5 ${bar}`}>
-                  <div className="font-bold text-slate-900">{q}</div>
-                  <div className="mt-1 text-sm text-[#6B7280]">{ans}</div>
-                  <div className="mt-1 text-[13px] italic text-[#9CA3AF]">{detail}</div>
-                </div>
-              ))}
-            </div>
-            <PolicySimDemo />
+          <div className="mt-12">
+            <SimulationSection />
           </div>
-          <p className="mx-auto mt-8 max-w-2xl text-center text-[15px] italic text-[#374151]">
-            No spreadsheets. No guesswork. AI reasoning for every scenario, every borrower, every decision.
-          </p>
         </section>
 
         {/* 8 — Case studies */}
