@@ -58,6 +58,28 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>
 }
 
+// Like postJSON but for PUT, and it surfaces the FastAPI `detail` message
+// (e.g. a rule-validation rejection) instead of a generic status string.
+async function putJSON<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'PUT',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  })
+  if (res.status === 401) handle401(path)
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`
+    try {
+      const j = await res.json()
+      if (j && typeof j.detail === 'string') detail = j.detail
+    } catch {
+      /* non-JSON body */
+    }
+    throw new Error(detail)
+  }
+  return res.json() as Promise<T>
+}
+
 // ── Auth ─────────────────────────────────────────────────────────────
 export interface AuthUser {
   user_id: string
@@ -396,4 +418,59 @@ export function fetchAdverseAction(period?: string): Promise<{ total: number; ad
 
 export function fetchReports(period?: string): Promise<{ reports: ReportRow[] }> {
   return getJSON(withPeriod(`/api/accord/audit/reports`, period))
+}
+
+// ── Rules Dashboard ───────────────────────────────────────────────
+export interface RegulatoryRule {
+  rule_id: string; authority: string; state_code: string | null; category: string
+  rule_name: string; rule_value: Record<string, unknown>; display_value: string | null
+  description: string; citation: string | null; source_url: string | null; effective_date: string | null
+}
+export interface AgencyGuideline {
+  guideline_id: string; agency: string; category: string; guideline_name: string
+  guideline_value: Record<string, unknown>; display_value: string | null; description: string
+  conditions: string | null; citation: string | null; source_url: string | null
+  effective_date: string | null; last_verified: string | null; verified_by: string | null
+}
+export interface TenantVersion {
+  rule_version_id: string; version: number; status: string; rules: Record<string, any>
+  programs: string[]; changes_summary: string | null; change_reason: string | null
+  created_by: string | null; approved_by: string | null; effective_from: string | null
+  effective_to: string | null; created_at: string | null; approved_at: string | null
+}
+export interface DataSource {
+  source_id: string; source_name: string; source_url: string | null; last_download: string | null
+  last_success: string | null; record_count: number | null; status: string
+  next_scheduled: string | null; error_message: string | null
+}
+export interface RulesResponse {
+  regulatory: RegulatoryRule[]; agency: AgencyGuideline[]; tenant: TenantVersion | null
+  data_freshness: DataSource[]
+  validation: { all_above_regulatory: boolean; errors: string[]; warnings: string[] }
+}
+export interface RuleAlert {
+  alert_id: string; source: string; title: string; description: string | null
+  url: string | null; published_date: string | null; status: string
+}
+
+export function fetchRules(): Promise<RulesResponse> {
+  return getJSON('/api/accord/rules')
+}
+export function fetchRulesHistory(): Promise<{ versions: TenantVersion[] }> {
+  return getJSON('/api/accord/rules/history')
+}
+export function updateRules(body: { rules: Record<string, unknown>; change_reason: string; changes_summary?: string; programs?: string[] }): Promise<{ version: number; status: string; warnings: string[] }> {
+  return putJSON('/api/accord/rules', body)
+}
+export function approveRules(): Promise<{ ok: boolean; version: number; status: string }> {
+  return postJSON('/api/accord/rules/approve', {})
+}
+export function lookupRules(date: string): Promise<{ found: boolean; date: string; version?: number; rules?: TenantVersion; message?: string }> {
+  return getJSON(`/api/accord/rules/lookup?date=${encodeURIComponent(date)}`)
+}
+export function fetchDataFreshness(): Promise<{ sources: DataSource[]; all_ok: boolean; stale: DataSource[] }> {
+  return getJSON('/api/accord/rules/data-freshness')
+}
+export function fetchRuleAlerts(): Promise<{ alerts: RuleAlert[]; new_count: number }> {
+  return getJSON('/api/accord/rules/alerts')
 }

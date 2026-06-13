@@ -11,6 +11,8 @@ import Landing from './pages/Landing'
 import Security from './pages/Security'
 import ComplianceDocs from './pages/ComplianceDocs'
 import DemoMode, { DemoRedirect, DemoWatermark } from './pages/DemoMode'
+import RulesSettings from './pages/RulesSettings'
+import { StaleDataBanner } from './components/DataFreshness'
 import { AuthProvider, useAuth } from './context/AuthContext'
 
 export default function App() {
@@ -72,6 +74,7 @@ function AppShell() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
+      <StaleDataBanner />
       {viewAs && (
         <div className="flex items-center justify-center gap-3 bg-amber-500 px-4 py-1.5 text-sm font-medium text-white">
           👁 Viewing as {viewAs.name} ({viewAs.role.replace(/_/g, ' ')})
@@ -88,6 +91,7 @@ function AppShell() {
           <Route path="/simulation" element={guard('simulation', <Simulation />)} />
           <Route path="/audit" element={guard('audit', <Audit />)} />
           {user?.role === 'admin' && <Route path="/settings" element={<Settings />} />}
+          {(user?.role === 'admin' || user?.role === 'manager') && <Route path="/settings/rules" element={<div className="mx-auto max-w-4xl px-6 py-6"><RulesSettings /></div>} />}
           {/* Demo walkthrough — admin-only deep links into the real pages, with
               the DEMO watermark on. See pages/DemoMode.tsx + docs/DEMO_SCRIPT.md. */}
           {user?.role === 'admin' && <Route path="/demo" element={<DemoMode />} />}

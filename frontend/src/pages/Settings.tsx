@@ -3,18 +3,10 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { changeUserRole, deactivateUser, fetchTeammates, inviteUser, type TeammateLite } from '../api/client'
 import { relativeTime } from '../components/NotesSection'
+import RulesSettings from './RulesSettings'
 
 const ROLES = ['admin', 'manager', 'processor', 'underwriter', 'senior_uw', 'closer', 'compliance', 'viewer']
 const prettyRole = (r: string) => r.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-
-// Read-only agent thresholds (Decision Rules — per-tenant customization is future).
-const DECISION_RULES: Array<[string, string]> = [
-  ['DTI limit', '43%'],
-  ['Credit score floor', '620'],
-  ['LTV cap (no MI)', '80%'],
-  ['Max LTV', '97%'],
-  ['Fraud score block threshold', '0.80'],
-]
 
 function Section({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
@@ -33,6 +25,7 @@ export default function Settings() {
   const [toast, setToast] = useState<string | null>(null)
   const [inv, setInv] = useState({ email: '', name: '', role: 'processor' })
   const [target, setTarget] = useState('')
+  const [tab, setTab] = useState<'general' | 'rules'>('general')
 
   const load = () => fetchTeammates().then((d) => setUsers(d.users)).catch(() => undefined)
   useEffect(() => {
@@ -80,6 +73,24 @@ export default function Settings() {
     <div className="mx-auto max-w-4xl space-y-5 px-6 py-6">
       <h1 className="text-2xl font-semibold text-slate-900">Settings</h1>
 
+      {/* Tabs */}
+      <div className="border-b border-slate-200">
+        <div className="flex gap-6">
+          {([['general', 'General'], ['rules', 'Decision Rules']] as const).map(([k, label]) => (
+            <button
+              key={k}
+              onClick={() => setTab(k)}
+              className={`-mb-px border-b-2 py-2.5 text-sm font-medium transition ${tab === k ? 'border-brand text-brand' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {tab === 'rules' && <RulesSettings />}
+
+      {tab === 'general' && <>
       {/* A. Company info */}
       <Section title="Company info">
         <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
@@ -166,18 +177,6 @@ export default function Settings() {
         </div>
       </Section>
 
-      {/* C. Decision rules (read-only) */}
-      <Section title="Decision rules" subtitle="Current AI agent thresholds. Per-tenant customization is coming soon — read-only for now.">
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {DECISION_RULES.map(([k, v]) => (
-            <div key={k} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-sm">
-              <span className="text-slate-600">{k}</span>
-              <span className="font-semibold text-slate-900">{v}</span>
-            </div>
-          ))}
-        </div>
-      </Section>
-
       {/* D. Impersonate */}
       <Section title="Impersonate user" subtitle="View Accord exactly as another team member sees it — their queue, their role. Useful for support + debugging.">
         <div className="flex flex-wrap items-center gap-2">
@@ -190,6 +189,7 @@ export default function Settings() {
           <button onClick={doImpersonate} disabled={!target} className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-40">Impersonate</button>
         </div>
       </Section>
+      </>}
 
       {toast && (
         <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>
