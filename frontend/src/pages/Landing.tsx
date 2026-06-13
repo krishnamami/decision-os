@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 const DEMO = 'mailto:demo@useaccord.com?subject=Accord%20demo%20request'
@@ -121,12 +121,22 @@ const STATS = [
   ['80%', 'faster underwriting', 'Reduce cycle times from days to hours'],
   ['60%', 'fewer manual reviews', 'AI handles the analysis, you make the call'],
   ['100%', 'audit traceability', 'Full decision trail for every loan'],
-  ['Same-day', 'setup', 'Connect your LOS and go live today'],
 ]
-const STEPS = [
-  ['01', '🔌', 'Connect your loan system', 'Upload a CSV or connect your LOS. Your loan data flows into Accord automatically. Go live the same day.'],
-  ['02', '🧠', 'AI checks every aspect', 'Credit, fraud, income, collateral, compliance, employment, debt ratios, product eligibility, pricing, and closing readiness — all checked in seconds.'],
-  ['03', '✅', 'Review findings, make your call', 'See what AI found, what data it analyzed, and what it recommends — in plain English. Approve clean files with one click. Every action documented.'],
+const STEPS4 = [
+  ['01', 'READ', 'AI reads every document in the loan file'],
+  ['02', 'CHECK', 'Matches every data point to regulations and policy'],
+  ['03', 'RECOMMEND', 'Delivers a recommendation backed by evidence'],
+  ['04', 'DECIDE', 'Your team reviews and makes the final call'],
+]
+const STAKEHOLDERS: Array<[string, string, string, string]> = [
+  ['🏦', 'Lenders', 'Faster decisions. Fewer manual reviews.', 'AI handles the analysis — credit, fraud, income, collateral, compliance — your team reviews the findings and makes the call. Every decision documented with evidence and regulation citations.'],
+  ['🏠', 'Borrowers', 'Faster answers on the biggest purchase of their life.', "No more waiting days for an underwriting decision. Accord evaluates in seconds so your team can respond in hours, not weeks. Transparent process — borrowers know exactly what's needed and why."],
+  ['⚖️', 'Examiners & Compliance', 'Every decision documented. Every action traced.', 'When an examiner asks "why?" — pull the answer in one click. Full audit trail: which rules applied, which data was analyzed, who decided, and why. HMDA, fair lending, adverse action — one place.'],
+]
+const COMPLIANCE: Array<[string, string, string]> = [
+  ['🔒', 'Three Layers of Rules', "Federal law, agency guidelines, and your overlays — all visible. OFAC screening is automatic. QM safe harbor is enforced. State rules apply by property location. You can't accidentally violate a regulation."],
+  ['📋', 'Every Decision Traceable', 'Click any data point — see the source document. Click any rule — see the regulation citation. Click any decision — see who decided, when, and why. Examiners get the full package in one click.'],
+  ['📊', 'Continuous Monitoring', 'OFAC watchlists updated daily. Agency guidelines monitored for changes. Rule validation tests run automatically. Data freshness dashboard shows every source and when it was last updated.'],
 ]
 const PRODUCTS = [
   ['📋', 'Pipeline', 'See what AI found on every loan', "Review findings, take action, move on. AI tells you what's wrong, what's fine, and what to do next — for every loan in your pipeline."],
@@ -170,6 +180,14 @@ const FAQS = [
 
 function Eyebrow({ children }: { children: React.ReactNode }) {
   return <div className="mb-2 text-xs font-bold uppercase tracking-widest text-brand">{children}</div>
+}
+
+function FlowBox({ title }: { title: string }) {
+  return (
+    <div className="min-w-[150px] flex-1 rounded-lg border border-[#E5E7EB] bg-white p-4 text-center text-sm font-bold text-slate-900">
+      {title}
+    </div>
+  )
 }
 
 // "See Accord in action" — renders the recorded demo (DEMO_VIDEO_URL). For a
@@ -765,24 +783,15 @@ export default function Landing({ scrollTo }: { scrollTo?: string }) {
               AI-powered lending decisions with <span className="text-brand">complete audit trail</span>
             </h1>
             <p className="mt-5 max-w-[480px] text-[17px] leading-[1.7] text-[#4B5563]">
-              Specialized AI checks every aspect of every loan — credit, fraud, income, collateral, compliance,
-              and more. Decisions in hours, not days. Every step documented for examiners.
+              Accord works like your best underwriter — reviewing every file the same way, every time.
+              Your team reviews the findings and makes the call.
             </p>
             <div className="mt-6 flex flex-wrap gap-x-6 gap-y-2 text-[13px] text-[#6B7280]">
               <Link to="/security" className="hover:text-slate-900">🔒 Enterprise security</Link>
               <Link to="/security#soc2" className="hover:text-slate-900">🏛️ SOC 2 ready</Link>
               <Link to="/compliance" className="hover:text-slate-900">⚖️ Compliant by design</Link>
             </div>
-            <div className="mt-9 grid grid-cols-2 gap-4">
-              {STATS.map(([big, label, sub]) => (
-                <div key={label} className="rounded-lg border border-slate-200 p-4">
-                  <div className="text-[28px] font-bold text-brand">{big}</div>
-                  <div className="text-[13px] font-bold text-slate-800">{label}</div>
-                  <div className="text-[11px] text-slate-500">{sub}</div>
-                </div>
-              ))}
-            </div>
-            <div className="mt-8 flex flex-wrap gap-3">
+            <div className="mt-9 flex flex-wrap gap-3">
               <a href={DEMO} className="rounded-lg bg-brand px-7 py-3 text-sm font-semibold text-white hover:bg-brand-dark">Request a demo →</a>
               <button
                 type="button"
@@ -792,6 +801,19 @@ export default function Landing({ scrollTo }: { scrollTo?: string }) {
             </div>
           </div>
           <div className="flex justify-center lg:justify-end"><EvaluationCard /></div>
+        </section>
+
+        {/* 3b — Stats */}
+        <section className="py-12" style={{ background: '#F9FAFB' }}>
+          <div className="mx-auto grid max-w-[1000px] gap-8 px-6 text-center sm:grid-cols-3">
+            {STATS.map(([big, label, sub]) => (
+              <div key={label}>
+                <div className="text-[56px] font-extrabold leading-none text-brand">{big}</div>
+                <div className="mt-2 text-base font-bold text-[#111]">{label}</div>
+                <div className="mt-1 text-[13px] text-[#6B7280]">{sub}</div>
+              </div>
+            ))}
+          </div>
         </section>
 
         {/* 4 — Logo bar */}
@@ -807,24 +829,59 @@ export default function Landing({ scrollTo }: { scrollTo?: string }) {
         {/* 4b — Demo video */}
         <DemoVideo />
 
-        {/* 5 — How it works */}
+        {/* 5 — How it works (4 one-word steps) */}
         <section id="how-it-works" className="mx-auto max-w-[1200px] px-6 py-20">
           <div className="text-center">
             <Eyebrow>How it works</Eyebrow>
-            <h2 className="text-[28px] font-bold tracking-tight">From loan submission to decision in 3 steps</h2>
+            <h2 className="text-[28px] font-bold tracking-tight">From file to decision in four steps</h2>
           </div>
-          <div className="relative mt-12 grid gap-6 md:grid-cols-3">
-            {STEPS.map(([num, icon, title, desc]) => (
-              <div key={num} className="relative z-10 rounded-xl border border-slate-200 bg-white p-7">
-                <div className="text-[48px] font-extrabold leading-none text-[#D1FAE5]">{num}</div>
-                <div className="mt-2 text-3xl">{icon}</div>
-                <h3 className="mt-3 text-base font-bold text-slate-900">{title}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-slate-600">{desc}</p>
-              </div>
+          <div className="mt-12 flex flex-col items-stretch gap-2 md:flex-row md:items-start">
+            {STEPS4.map(([num, title, desc], i) => (
+              <Fragment key={num}>
+                <div className="flex flex-1 flex-col items-center text-center">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 text-xs font-semibold text-slate-400">{num}</div>
+                  <div className="mt-3 text-[28px] font-extrabold tracking-tight text-brand">{title}</div>
+                  <p className="mx-auto mt-2 max-w-[200px] text-sm leading-relaxed text-[#6B7280]">{desc}</p>
+                </div>
+                {i < STEPS4.length - 1 && (
+                  <div className="flex shrink-0 items-center justify-center self-center text-2xl text-[#D1D5DB] md:self-start md:pt-9">
+                    <span className="hidden md:inline">→</span><span className="md:hidden">↓</span>
+                  </div>
+                )}
+              </Fragment>
             ))}
-            <div className="pointer-events-none absolute left-[33%] right-[33%] top-20 hidden border-t-2 border-dotted border-slate-300 md:block" />
           </div>
         </section>
+
+        {/* 5b — Flow diagram (U-shape) */}
+        <section className="mx-auto max-w-[840px] px-6 pb-6">
+          <div className="space-y-2">
+            <div className="flex flex-col items-stretch gap-2 md:flex-row md:items-center">
+              <FlowBox title="Borrower applies" />
+              <span className="self-center text-xl text-brand"><span className="hidden md:inline">→</span><span className="md:hidden">↓</span></span>
+              <FlowBox title="Documents uploaded" />
+              <span className="self-center text-xl text-brand"><span className="hidden md:inline">→</span><span className="md:hidden">↓</span></span>
+              <FlowBox title="AI evaluates every aspect" />
+            </div>
+            <div className="flex justify-center text-xl text-brand md:justify-end md:pr-[12%]">↓</div>
+            <div className="flex flex-col items-stretch gap-2 md:flex-row-reverse md:items-center">
+              <FlowBox title="Recommendation with evidence" />
+              <span className="self-center text-xl text-brand"><span className="hidden md:inline">←</span><span className="md:hidden">↓</span></span>
+              <FlowBox title="Underwriter decides" />
+              <span className="self-center text-xl text-brand"><span className="hidden md:inline">←</span><span className="md:hidden">↓</span></span>
+              <FlowBox title="Audit trail documented" />
+            </div>
+          </div>
+          <p className="mt-6 text-center text-sm italic text-[#6B7280]">
+            Every step creates an immutable record. What the AI found. What the human decided. Why.
+          </p>
+        </section>
+
+        {/* 5c — No new systems callout */}
+        <div className="mx-auto my-8 max-w-[600px] border-y border-[#E5E7EB] px-6 py-8 text-center">
+          <div className="text-[20px] font-semibold tracking-wide text-[#374151]">No new apps.&nbsp;&nbsp;No new portals.&nbsp;&nbsp;No new logins.</div>
+          <div className="mt-2 text-base text-[#6B7280]">Accord works alongside your LOS. Your team keeps using Encompass.</div>
+        </div>
 
         {/* 6 — Products */}
         <section id="products" className="bg-slate-50 py-20">
@@ -886,14 +943,14 @@ export default function Landing({ scrollTo }: { scrollTo?: string }) {
         <section id="who" className="mx-auto max-w-[1200px] px-6 py-20">
           <div className="text-center">
             <Eyebrow>Who it's for</Eyebrow>
-            <h2 className="text-[28px] font-bold tracking-tight">Built for every role in the lending workflow</h2>
+            <h2 className="text-[28px] font-bold tracking-tight">Built for everyone the loan touches</h2>
           </div>
-          <div className="mt-12 grid gap-5 md:grid-cols-2 lg:grid-cols-4">
-            {PERSONAS.map(([icon, who, head, body]) => (
+          <div className="mt-12 grid gap-5 md:grid-cols-3">
+            {STAKEHOLDERS.map(([icon, who, head, body]) => (
               <div key={who} className="rounded-xl border border-slate-200 bg-slate-50 p-6">
                 <div className="text-[28px]">{icon}</div>
-                <div className="mt-2 text-xs font-semibold uppercase tracking-wide text-brand">{who}</div>
-                <h3 className="mt-1 font-semibold text-slate-900">{head}</h3>
+                <div className="mt-2 text-lg font-bold text-slate-900">{who}</div>
+                <h3 className="mt-1 font-semibold text-brand-dark">{head}</h3>
                 <p className="mt-2 text-[13px] leading-relaxed text-[#6B7280]">{body}</p>
               </div>
             ))}
@@ -925,6 +982,26 @@ export default function Landing({ scrollTo }: { scrollTo?: string }) {
               <a href={DEMO} className="mt-3 text-sm font-medium text-brand hover:underline">Learn more →</a>
             </div>
           </div>
+        </section>
+
+        {/* 10b — Compliance built in */}
+        <section className="mx-auto max-w-[1200px] px-6 py-20">
+          <div className="text-center">
+            <Eyebrow>Compliance</Eyebrow>
+            <h2 className="mx-auto max-w-2xl text-[28px] font-bold tracking-tight">Regulatory compliance isn’t a feature. It’s the foundation.</h2>
+          </div>
+          <div className="mt-10 grid gap-5 md:grid-cols-3">
+            {COMPLIANCE.map(([icon, title, body]) => (
+              <div key={title} className="rounded-xl border border-slate-200 bg-white p-6">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-light text-xl">{icon}</span>
+                  <div className="text-lg font-semibold text-slate-900">{title}</div>
+                </div>
+                <p className="mt-3 text-sm leading-relaxed text-[#6B7280]">{body}</p>
+              </div>
+            ))}
+          </div>
+          <p className="mt-8 text-center text-sm text-[#9CA3AF]">Built for HMDA · ECOA · TRID · Fair Lending · BSA/AML</p>
         </section>
 
         {/* 11 — Pricing */}
