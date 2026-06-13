@@ -4,7 +4,7 @@ import { fetchDocuments, type DocItem } from '../api/client'
 import { resolveRule } from '../config/ruleLabels'
 import { RuleLayerBadge } from './RuleLayerBadge'
 import DecisionPill, { outcomeMeta } from './DecisionPill'
-import ExtractionDetail from './ExtractionDetail'
+import { EvidenceDocumentPanel, type EvidenceDocumentPanelProps } from './EvidenceDocumentPanel'
 
 const SIGNAL_DOT: Record<string, string> = {
   pass: 'bg-green-500',
@@ -24,6 +24,60 @@ function matchDoc(name: string, docs: DocItem[]): DocItem | undefined {
     const dt = norm(d.document_type)
     return dn === n || dt === n || dn.includes(n) || n.includes(dn) || (!!dt && (dt.includes(n) || n.includes(dt)))
   })
+}
+
+// Short type badge per document_type.
+const TYPE_BADGE: Record<string, string> = {
+  W2_CURRENT: 'W-2', W2_PRIOR: 'W-2', PAY_STUBS: 'Pay Stub', PAYSTUB: 'Pay Stub',
+  BANK_STATEMENT: 'Bank Statement', BANK_STATEMENTS: 'Bank Statement', CREDIT_REPORT: 'Credit Report',
+  IRS_TRANSCRIPT: 'IRS Transcript', URLA_1003: 'URLA 1003', DRIVERS_LICENSE: "Driver's License",
+  PURCHASE_AGREEMENT: 'Purchase Agreement', APPRAISAL_URAR: 'Appraisal', OFAC_CHECK: 'OFAC Check',
+  EMPLOYER_VERIFICATION: 'VOE', VOE: 'VOE',
+}
+// Which service typically verifies each document type.
+const SOURCE_BY_TYPE: Record<string, string> = {
+  CREDIT_REPORT: 'Experian', W2_CURRENT: 'The Work Number (TWN)', W2_PRIOR: 'The Work Number (TWN)',
+  PAY_STUBS: 'The Work Number (TWN)', PAYSTUB: 'The Work Number (TWN)',
+  EMPLOYER_VERIFICATION: 'The Work Number (TWN)', VOE: 'The Work Number (TWN)',
+  BANK_STATEMENT: 'Argyle', BANK_STATEMENTS: 'Argyle', IRS_TRANSCRIPT: 'IRS (4506-C)',
+  APPRAISAL_URAR: 'AMC', OFAC_CHECK: 'OFAC / Treasury',
+  URLA_1003: 'Lender upload', PURCHASE_AGREEMENT: 'Lender upload', DRIVERS_LICENSE: 'Lender upload',
+}
+// Friendly label for the document's key extracted field.
+const FIELD_LABEL: Record<string, string> = {
+  box1_wages: 'Gross annual income', gross_monthly_income: 'Gross monthly income',
+  stated_income_monthly: 'Stated annual income', adjusted_gross_income: 'Adjusted gross income',
+  mid_score: 'Credit score (mid)', total_balance: 'Total balance', appraised_value: 'Appraised value',
+  purchase_price: 'Purchase price', match_score: 'Watchlist match score',
+}
+const humanizeField = (k: string) => k.replace(/_/g, ' ').replace(/\bbox(\d)\b/i, 'Box $1').replace(/\b\w/g, (c) => c.toUpperCase())
+const fmtVal = (v: unknown) => (typeof v === 'boolean' ? (v ? 'Yes' : 'No') : Array.isArray(v) ? `${v.length} item(s)` : String(v))
+
+function extractedValueText(doc: DocItem | null): string | null {
+  if (!doc) return null
+  if (doc.key_value) {
+    const label = FIELD_LABEL[doc.key_field ?? ''] ?? (doc.key_field ? humanizeField(doc.key_field) : 'Extracted value')
+    return `${label}: ${doc.key_value}`
+  }
+  const entries = Object.entries(doc.extracted_data || {}).filter(([, v]) => v != null && typeof v !== 'object')
+  if (entries.length) return entries.slice(0, 2).map(([k, v]) => `${humanizeField(k)}: ${fmtVal(v)}`).join(' · ')
+  return null
+}
+
+// Derive the EvidenceDocumentPanel props from an evidence row + its matched doc.
+function buildEvidenceProps(ev: Evidence, doc: DocItem | null): Omit<EvidenceDocumentPanelProps, 'onClose'> {
+  const confMatch = /(\d+)\s*%/.exec(ev.detail || '')
+  const confidence = doc?.confidence ?? (confMatch ? Number(confMatch[1]) / 100 : null)
+  const page = (doc?.extracted_data?.page ?? doc?.extracted_data?.page_number ?? null) as number | string | null
+  return {
+    documentName: doc?.display_name || ev.document,
+    documentType: doc ? TYPE_BADGE[doc.document_type] ?? ev.document : ev.document,
+    extractedValue: extractedValueText(doc),
+    confidence,
+    source: doc ? SOURCE_BY_TYPE[doc.document_type] ?? 'Lender upload' : 'Lender upload',
+    page,
+    edmsId: doc?.document_id ?? null,
+  }
 }
 
 // The 5 lifecycle stages, keyed by the `wave` each decision already carries.
@@ -111,7 +165,7 @@ export default function PersonaAccordion({ decisions, applicationId }: { decisio
 
 function DecisionRow({ d, docs, open, onToggle }: { d: DecisionDetail; docs: DocItem[]; open: boolean; onToggle: () => void }) {
   const m = outcomeMeta(d.outcome)
-  const [openEv, setOpenEv] = useState<{ ev: Evidence; doc: DocItem | null } | null>(null)
+  const [openEv, setOpenEv] = useState<Omit<EvidenceDocumentPanelProps, 'onClose'> | null>(null)
   const ruleStr = (d.rule || '').trim()
   const isDefaultEscalate = ruleStr.toLowerCase() === 'default escalate'
 
@@ -217,14 +271,14 @@ function DecisionRow({ d, docs, open, onToggle }: { d: DecisionDetail; docs: Doc
                   return (
                     <li key={i}>
                       <button
-                        onClick={() => setOpenEv({ ev: e, doc: doc ?? null })}
+                        onClick={() => setOpenEv(buildEvidenceProps(e, doc ?? null))}
                         title="View extracted data"
-                        className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition hover:bg-white hover:shadow-sm"
+                        className="group flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition hover:bg-white hover:shadow-sm"
                       >
                         <span className="text-slate-400">📄</span>
-                        <span className="font-medium text-slate-700">{e.document}</span>
-                        <span className="text-brand">↗</span>
+                        <span className="font-medium text-slate-700 underline decoration-dotted decoration-slate-300 underline-offset-2 group-hover:decoration-brand">{e.document}</span>
                         <span className="text-slate-400">— {e.detail}</span>
+                        <span className="ml-auto text-base text-slate-300 group-hover:text-brand">›</span>
                       </button>
                     </li>
                   )
@@ -247,44 +301,9 @@ function DecisionRow({ d, docs, open, onToggle }: { d: DecisionDetail; docs: Doc
           </div>
 
           {/* Evidence document detail (slide-over) */}
-          {openEv && (
-            openEv.doc && openEv.doc.extracted_data && Object.keys(openEv.doc.extracted_data).length > 0 ? (
-              <ExtractionDetail
-                doc={openEv.doc}
-                allDocs={docs}
-                onClose={() => setOpenEv(null)}
-                onOpenDoc={(id) => setOpenEv({ ev: openEv.ev, doc: docs.find((x) => x.document_id === id) ?? null })}
-              />
-            ) : (
-              <EvidenceComingSoon ev={openEv.ev} doc={openEv.doc} onClose={() => setOpenEv(null)} />
-            )
-          )}
+          {openEv && <EvidenceDocumentPanel {...openEv} onClose={() => setOpenEv(null)} />}
         </div>
       )}
-    </div>
-  )
-}
-
-// Fallback slide-over when an evidence document has no structured extraction yet.
-function EvidenceComingSoon({ ev, doc, onClose }: { ev: Evidence; doc: DocItem | null; onClose: () => void }) {
-  const confMatch = /(\d+)\s*%/.exec(ev.detail || '')
-  const conf = doc?.confidence != null ? `${Math.round(doc.confidence * 100)}%` : confMatch ? `${confMatch[1]}%` : null
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
-      <div className="flex-1 bg-black/30" />
-      <div className="w-[420px] max-w-full animate-[slideIn_.2s_ease] overflow-y-auto bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <style>{`@keyframes slideIn{from{transform:translateX(40px);opacity:.6}to{transform:none;opacity:1}}`}</style>
-        <div className="border-b border-slate-100 p-5">
-          <button onClick={onClose} className="mb-3 text-sm font-medium text-brand hover:underline">← Back</button>
-          <h2 className="text-lg font-bold text-slate-900">📄 {ev.document}</h2>
-          {ev.detail && <p className="text-sm text-slate-500">{ev.detail}</p>}
-        </div>
-        <div className="p-5">
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-relaxed text-slate-600">
-            Document indexed{conf ? ` at ${conf} confidence` : ''}. Detailed extraction view coming soon.
-          </div>
-        </div>
-      </div>
     </div>
   )
 }
