@@ -14,6 +14,11 @@ const SIGNAL_DOT: Record<string, string> = {
   info: 'bg-slate-400',
 }
 
+// "default escalate" is a system fallback, not a policy rule — detect it so we
+// render an amber review notice (no layer badge) instead of a rule.
+const isDefaultEscalate = (ruleId: string | null | undefined) =>
+  ['default_escalate', 'default escalate', 'escalate_default'].includes((ruleId || '').trim().toLowerCase())
+
 // Match a free-text evidence name to an indexed document.
 function matchDoc(name: string, docs: DocItem[]): DocItem | undefined {
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -167,7 +172,7 @@ function DecisionRow({ d, docs, open, onToggle }: { d: DecisionDetail; docs: Doc
   const m = outcomeMeta(d.outcome)
   const [openEv, setOpenEv] = useState<Omit<EvidenceDocumentPanelProps, 'onClose'> | null>(null)
   const ruleStr = (d.rule || '').trim()
-  const isDefaultEscalate = ruleStr.toLowerCase() === 'default escalate'
+  const defaultEscalate = isDefaultEscalate(ruleStr)
 
   return (
     <div>
@@ -221,19 +226,16 @@ function DecisionRow({ d, docs, open, onToggle }: { d: DecisionDetail; docs: Doc
           {d.rule && (
             <div>
               <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Rule applied</div>
-              {isDefaultEscalate ? (
-                <div className="rounded-lg border border-slate-200 bg-white p-4">
-                  <div className="flex items-start">
-                    <RuleLayerBadge layer="system" />
-                    <div>
-                      <p className="text-[15px] leading-relaxed text-slate-700">
-                        No specific rule matched for this check. The system escalated to a human reviewer because the
-                        data didn&apos;t clearly pass or fail any defined threshold.
-                      </p>
-                      <p className="mt-2 text-sm leading-relaxed text-slate-500">
-                        This typically means: missing data, edge case values, or a scenario not covered by current rules.
-                      </p>
-                    </div>
+              {defaultEscalate ? (
+                <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
+                  <span className="text-xl">⚠️</span>
+                  <div>
+                    <p className="font-semibold text-amber-800">Escalated for underwriter review</p>
+                    <p className="mt-1 text-sm text-amber-700">
+                      No automated rule triggered a clear approve or decline. This file requires underwriter judgment.
+                      All conditions fall within acceptable ranges, but compensating factors or incomplete data prevent
+                      an automated decision.
+                    </p>
                   </div>
                 </div>
               ) : (
