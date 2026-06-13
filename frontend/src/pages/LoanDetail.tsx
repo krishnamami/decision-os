@@ -6,7 +6,8 @@ import DocumentChecklist from '../components/DocumentChecklist'
 import SourceMatch from '../components/SourceMatch'
 import ComparisonDecision from '../components/ComparisonDecision'
 import { downloadCsv, downloadJson, printPdf } from '../utils/export'
-import { decideLoan, fetchLoan } from '../api/client'
+import { decideLoan, fetchLoan, fetchDocuments } from '../api/client'
+import { OFACBadge, deriveOFACStatus } from '../components/OFACBadge'
 import { useAuth } from '../context/AuthContext'
 import type { DecisionDetail, LoanDetail as LoanDetailT } from '../types/accord'
 import PersonaAccordion from '../components/PersonaAccordion'
@@ -157,6 +158,7 @@ export default function LoanDetail() {
   const [error, setError] = useState<string | null>(null)
   const [confirmation, setConfirmation] = useState<ActionConfirmationData | null>(null)
   const [modal, setModal] = useState<'request_info' | 'internal' | null>(null)
+  const [ofac, setOfac] = useState<{ checkedAt?: string; listDate?: string }>({})
 
   useEffect(() => {
     let alive = true
@@ -169,6 +171,20 @@ export default function LoanDetail() {
     return () => {
       alive = false
     }
+  }, [appId])
+
+  // OFAC screening dates come from the OFAC_CHECK document's extracted fields
+  // (the loan-detail documents list only carries field names, not values).
+  useEffect(() => {
+    let alive = true
+    fetchDocuments(appId)
+      .then((d) => {
+        if (!alive) return
+        const o = d.documents.find((x) => x.document_type === 'OFAC_CHECK')
+        if (o) setOfac({ checkedAt: o.extracted_data?.checked_at as string, listDate: o.extracted_data?.list_date as string })
+      })
+      .catch(() => undefined)
+    return () => { alive = false }
   }, [appId])
 
   // The decision that drives the AI's recommendation: the active block, else the
@@ -272,11 +288,14 @@ export default function LoanDetail() {
       <div className="mt-4 space-y-5">
         {/* 1 — Borrower story */}
         <section className="rounded-xl border border-slate-200 bg-white p-5">
-          <h1 className="text-[22px] font-semibold text-slate-900">
-            {loan.borrower.name}
-            {loan.borrower.age ? <span className="text-slate-400"> · {loan.borrower.age}</span> : null}
-            {loan.borrower.employer ? <span className="text-slate-400"> · {loan.borrower.employer}</span> : null}
-          </h1>
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-[22px] font-semibold text-slate-900">
+              {loan.borrower.name}
+              {loan.borrower.age ? <span className="text-slate-400"> · {loan.borrower.age}</span> : null}
+              {loan.borrower.employer ? <span className="text-slate-400"> · {loan.borrower.employer}</span> : null}
+            </h1>
+            <OFACBadge status={deriveOFACStatus(loan.decisions ?? [])} checkedAt={ofac.checkedAt} listDate={ofac.listDate} />
+          </div>
           <p className="text-sm text-slate-500">
             {moneyK(m.loan_amount)} · {loan.application_id}
           </p>
