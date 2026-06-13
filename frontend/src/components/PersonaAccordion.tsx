@@ -1,6 +1,8 @@
-import { useState } from 'react'
-import type { DecisionDetail } from '../types/accord'
+import { useEffect, useState } from 'react'
+import type { DecisionDetail, Evidence } from '../types/accord'
+import { fetchDocuments, type DocItem } from '../api/client'
 import DecisionPill, { outcomeMeta } from './DecisionPill'
+import ExtractionDetail from './ExtractionDetail'
 
 const SIGNAL_DOT: Record<string, string> = {
   pass: 'bg-green-500',
@@ -8,6 +10,107 @@ const SIGNAL_DOT: Record<string, string> = {
   warn: 'bg-amber-500',
   no_data: 'bg-slate-300',
   info: 'bg-slate-400',
+}
+
+// ── Rule translation: code → plain English + regulatory layer ────────────────
+type Layer = 'federal' | 'agency' | 'customer' | 'system'
+
+const LAYER_META: Record<Layer, { icon: string; label: string; badge: string; defaultSource: string }> = {
+  federal: { icon: '🔒', label: 'Federal', badge: 'bg-red-50 text-red-700', defaultSource: 'Federal regulation' },
+  agency: { icon: '📋', label: 'Agency', badge: 'bg-blue-50 text-blue-700', defaultSource: 'Agency guideline' },
+  customer: { icon: '🔧', label: 'Your policy', badge: 'bg-green-50 text-green-700', defaultSource: 'Your policy' },
+  system: { icon: '⚙️', label: 'System', badge: 'bg-slate-50 text-slate-700', defaultSource: 'System default' },
+}
+
+interface RuleInfo { english: string; layer: Layer; source: string; icon: string }
+
+const RULE_TRANSLATIONS: Record<string, RuleInfo> = {
+  'credit_score >= 680 AND no_derogatory_last_24_months == true': {
+    english: 'Credit score must be 680+ with no derogatory marks in 24 months',
+    layer: 'agency', source: 'Fannie Mae Selling Guide B3-5.1-01', icon: '📋',
+  },
+  'fraud_score': {
+    english: 'Fraud risk score exceeds threshold',
+    layer: 'federal', source: 'BSA/AML (31 CFR Part 501)', icon: '🔒',
+  },
+  'hmda_complete=True, fair_lending_violation=False, missing_disclosures=False': {
+    english: 'HMDA data complete, no fair lending violations, all disclosures present',
+    layer: 'federal', source: 'HMDA (Reg C) / ECOA (Reg B)', icon: '🔒',
+  },
+  'continuity_coverage_pct < 0.80': {
+    english: 'Employment continuity coverage is below 80%',
+    layer: 'customer', source: 'Your policy (Summit v3)', icon: '🔧',
+  },
+  'reconciliation_status == missing': {
+    english: 'Income reconciliation data is missing',
+    layer: 'customer', source: 'Your policy (Summit v3)', icon: '🔧',
+  },
+  'default escalate': {
+    english: 'No specific rule matched — escalated for human review',
+    layer: 'system', source: 'System default', icon: '⚙️',
+  },
+}
+
+// Classify an unmapped rule into a layer by keyword.
+function classifyLayer(rule: string): Layer {
+  const r = rule.toLowerCase()
+  if (/fraud|ofac|watchlist/.test(r)) return 'federal'
+  if (/hmda|fair_lending|disclosures/.test(r)) return 'federal'
+  if (/cd_timing|trid/.test(r)) return 'federal'
+  if (/credit_score/.test(r)) return 'agency'
+  if (/default/.test(r)) return 'system'
+  return 'customer'
+}
+
+// Convert a rule expression to readable English (fallback for unmapped rules).
+function humanizeRule(rule: string): string {
+  const s = rule
+    .replace(/\s*&&\s*|\s+AND\s+/gi, ' and ')
+    .replace(/\s*\|\|\s*|\s+OR\s+/gi, ' or ')
+    .replace(/>=/g, 'must be at least')
+    .replace(/<=/g, 'must be at most')
+    .replace(/==/g, 'equals')
+    .replace(/!=/g, 'does not equal')
+    .replace(/>/g, 'exceeds')
+    .replace(/</g, 'is below')
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+function translateRule(rule: string): RuleInfo {
+  const exact = RULE_TRANSLATIONS[rule]
+  if (exact) return exact
+  for (const [key, info] of Object.entries(RULE_TRANSLATIONS)) {
+    if (key !== 'default escalate' && rule.includes(key)) return info
+  }
+  const layer = classifyLayer(rule)
+  return { english: humanizeRule(rule), layer, source: LAYER_META[layer].defaultSource, icon: LAYER_META[layer].icon }
+}
+
+function LayerTag({ layer, source, icon }: { layer: Layer; source: string; icon?: string }) {
+  const meta = LAYER_META[layer]
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[13px] font-medium ${meta.badge}`}>
+      <span>{icon || meta.icon}</span>
+      <span>{meta.label}</span>
+      <span className="opacity-50">·</span>
+      <span className="font-normal">{source}</span>
+    </span>
+  )
+}
+
+// Match a free-text evidence name to an indexed document.
+function matchDoc(name: string, docs: DocItem[]): DocItem | undefined {
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const n = norm(name)
+  if (!n) return undefined
+  return docs.find((d) => {
+    const dn = norm(d.display_name)
+    const dt = norm(d.document_type)
+    return dn === n || dt === n || dn.includes(n) || n.includes(dn) || (!!dt && (dt.includes(n) || n.includes(dt)))
+  })
 }
 
 // The 5 lifecycle stages, keyed by the `wave` each decision already carries.
@@ -28,12 +131,20 @@ function overall(ds: DecisionDetail[]): { label: string; cls: string } {
   return { label: 'Pending', cls: 'bg-gray-100 text-gray-400' }
 }
 
-export default function PersonaAccordion({ decisions }: { decisions: DecisionDetail[] }) {
+export default function PersonaAccordion({ decisions, applicationId }: { decisions: DecisionDetail[]; applicationId?: string }) {
   // One open decision per stage. Default: open the first blocking/escalating one.
   const [openByWave, setOpenByWave] = useState<Record<number, string | null>>(() => {
     const blocker = decisions.find((d) => d.outcome === 'block' || d.outcome === 'escalate')
     return blocker ? { [blocker.wave]: blocker.decision_id } : {}
   })
+  // Indexed documents, so evidence rows can open the real extraction.
+  const [docs, setDocs] = useState<DocItem[]>([])
+  useEffect(() => {
+    if (!applicationId) return
+    let alive = true
+    fetchDocuments(applicationId).then((d) => alive && setDocs(d.documents)).catch(() => undefined)
+    return () => { alive = false }
+  }, [applicationId])
 
   return (
     <div>
@@ -65,6 +176,7 @@ export default function PersonaAccordion({ decisions }: { decisions: DecisionDet
                     <DecisionRow
                       key={d.decision_id}
                       d={d}
+                      docs={docs}
                       open={openByWave[stage.wave] === d.decision_id}
                       onToggle={() =>
                         setOpenByWave((s) => ({
@@ -84,8 +196,12 @@ export default function PersonaAccordion({ decisions }: { decisions: DecisionDet
   )
 }
 
-function DecisionRow({ d, open, onToggle }: { d: DecisionDetail; open: boolean; onToggle: () => void }) {
+function DecisionRow({ d, docs, open, onToggle }: { d: DecisionDetail; docs: DocItem[]; open: boolean; onToggle: () => void }) {
   const m = outcomeMeta(d.outcome)
+  const [openEv, setOpenEv] = useState<{ ev: Evidence; doc: DocItem | null } | null>(null)
+  const ruleStr = (d.rule || '').trim()
+  const isDefaultEscalate = ruleStr.toLowerCase() === 'default escalate'
+
   return (
     <div>
       <button onClick={onToggle} className="flex w-full items-center gap-3 px-5 py-3 text-left hover:bg-slate-50">
@@ -134,28 +250,60 @@ function DecisionRow({ d, open, onToggle }: { d: DecisionDetail; open: boolean; 
             </div>
           )}
 
-          {/* Rule matched */}
+          {/* Rule applied */}
           {d.rule && (
             <div>
-              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Rule matched</div>
-              <pre className="overflow-x-auto rounded-lg bg-slate-900 px-3 py-2 font-mono text-[11px] text-slate-100">
-                {d.rule}
-              </pre>
+              <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Rule applied</div>
+              {isDefaultEscalate ? (
+                <div className="rounded-lg border border-slate-200 bg-white p-4">
+                  <p className="text-[15px] leading-relaxed text-slate-700">
+                    No specific rule matched for this check. The system escalated to a human reviewer because the data
+                    didn&apos;t clearly pass or fail any defined threshold.
+                  </p>
+                  <p className="mt-2 text-sm leading-relaxed text-slate-500">
+                    This typically means: missing data, edge case values, or a scenario not covered by current rules.
+                  </p>
+                  <div className="mt-3"><LayerTag layer="system" source="System default" /></div>
+                </div>
+              ) : (
+                (() => {
+                  const info = translateRule(ruleStr)
+                  return (
+                    <div className="rounded-lg border border-slate-200 bg-white p-4">
+                      <p className="text-[15px] font-medium text-[#374151]">&ldquo;{info.english}&rdquo;</p>
+                      <div className="mt-2"><LayerTag layer={info.layer} source={info.source} icon={info.icon} /></div>
+                      <pre className="mt-3 overflow-x-auto rounded-lg bg-slate-900 px-3 py-2 font-mono text-[12px] leading-relaxed text-slate-100">
+                        {ruleStr} → {d.outcome}
+                      </pre>
+                    </div>
+                  )
+                })()
+              )}
             </div>
           )}
 
-          {/* Evidence */}
+          {/* Evidence — each document is clickable */}
           {d.evidence.length > 0 && (
             <div>
               <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Evidence</div>
               <ul className="space-y-1">
-                {d.evidence.map((e, i) => (
-                  <li key={i} className="flex items-center gap-2 text-sm">
-                    <span className="text-slate-400">📄</span>
-                    <span className="font-medium text-slate-700">{e.document}</span>
-                    <span className="text-slate-400">— {e.detail}</span>
-                  </li>
-                ))}
+                {d.evidence.map((e, i) => {
+                  const doc = matchDoc(e.document, docs)
+                  return (
+                    <li key={i}>
+                      <button
+                        onClick={() => setOpenEv({ ev: e, doc: doc ?? null })}
+                        title="View extracted data"
+                        className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition hover:bg-white hover:shadow-sm"
+                      >
+                        <span className="text-slate-400">📄</span>
+                        <span className="font-medium text-slate-700">{e.document}</span>
+                        <span className="text-brand">↗</span>
+                        <span className="text-slate-400">— {e.detail}</span>
+                      </button>
+                    </li>
+                  )
+                })}
               </ul>
             </div>
           )}
@@ -172,8 +320,46 @@ function DecisionRow({ d, open, onToggle }: { d: DecisionDetail; open: boolean; 
             <span>Reviewer: <span className="font-medium text-slate-600">{d.reviewer ?? 'System'}</span></span>
             {d.reviewed_at && <span>{new Date(d.reviewed_at).toLocaleString()}</span>}
           </div>
+
+          {/* Evidence document detail (slide-over) */}
+          {openEv && (
+            openEv.doc && openEv.doc.extracted_data && Object.keys(openEv.doc.extracted_data).length > 0 ? (
+              <ExtractionDetail
+                doc={openEv.doc}
+                allDocs={docs}
+                onClose={() => setOpenEv(null)}
+                onOpenDoc={(id) => setOpenEv({ ev: openEv.ev, doc: docs.find((x) => x.document_id === id) ?? null })}
+              />
+            ) : (
+              <EvidenceComingSoon ev={openEv.ev} doc={openEv.doc} onClose={() => setOpenEv(null)} />
+            )
+          )}
         </div>
       )}
+    </div>
+  )
+}
+
+// Fallback slide-over when an evidence document has no structured extraction yet.
+function EvidenceComingSoon({ ev, doc, onClose }: { ev: Evidence; doc: DocItem | null; onClose: () => void }) {
+  const confMatch = /(\d+)\s*%/.exec(ev.detail || '')
+  const conf = doc?.confidence != null ? `${Math.round(doc.confidence * 100)}%` : confMatch ? `${confMatch[1]}%` : null
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
+      <div className="flex-1 bg-black/30" />
+      <div className="w-[420px] max-w-full animate-[slideIn_.2s_ease] overflow-y-auto bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <style>{`@keyframes slideIn{from{transform:translateX(40px);opacity:.6}to{transform:none;opacity:1}}`}</style>
+        <div className="border-b border-slate-100 p-5">
+          <button onClick={onClose} className="mb-3 text-sm font-medium text-brand hover:underline">← Back</button>
+          <h2 className="text-lg font-bold text-slate-900">📄 {ev.document}</h2>
+          {ev.detail && <p className="text-sm text-slate-500">{ev.detail}</p>}
+        </div>
+        <div className="p-5">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-relaxed text-slate-600">
+            Document indexed{conf ? ` at ${conf} confidence` : ''}. Detailed extraction view coming soon.
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
