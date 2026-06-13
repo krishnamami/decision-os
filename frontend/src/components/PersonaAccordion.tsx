@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { DecisionDetail, Evidence } from '../types/accord'
 import { fetchDocuments, type DocItem } from '../api/client'
-import { resolveRule, type RuleLayer } from '../config/ruleLabels'
+import { resolveRule } from '../config/ruleLabels'
+import { RuleLayerBadge } from './RuleLayerBadge'
 import DecisionPill, { outcomeMeta } from './DecisionPill'
 import ExtractionDetail from './ExtractionDetail'
 
@@ -11,31 +12,6 @@ const SIGNAL_DOT: Record<string, string> = {
   warn: 'bg-amber-500',
   no_data: 'bg-slate-300',
   info: 'bg-slate-400',
-}
-
-// Visual treatment per regulatory layer (icon + badge colors). The plain-English
-// labels, layer assignment, and citations all live in config/ruleLabels.ts.
-const LAYER_META: Record<RuleLayer, { icon: string; label: string; badge: string }> = {
-  federal: { icon: '🔒', label: 'Federal', badge: 'bg-red-50 text-red-700' },
-  agency: { icon: '📋', label: 'Agency', badge: 'bg-blue-50 text-blue-700' },
-  lender: { icon: '🔧', label: 'Lender', badge: 'bg-green-50 text-green-700' },
-  system: { icon: '⚙️', label: 'System', badge: 'bg-slate-50 text-slate-700' },
-}
-
-function LayerTag({ layer, citation }: { layer: RuleLayer; citation?: string }) {
-  const meta = LAYER_META[layer]
-  return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[13px] font-medium ${meta.badge}`}>
-      <span>{meta.icon}</span>
-      <span>{meta.label}</span>
-      {citation && (
-        <>
-          <span className="opacity-50">·</span>
-          <span className="font-normal">{citation}</span>
-        </>
-      )}
-    </span>
-  )
 }
 
 // Match a free-text evidence name to an indexed document.
@@ -193,22 +169,31 @@ function DecisionRow({ d, docs, open, onToggle }: { d: DecisionDetail; docs: Doc
               <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Rule applied</div>
               {isDefaultEscalate ? (
                 <div className="rounded-lg border border-slate-200 bg-white p-4">
-                  <p className="text-[15px] leading-relaxed text-slate-700">
-                    No specific rule matched for this check. The system escalated to a human reviewer because the data
-                    didn&apos;t clearly pass or fail any defined threshold.
-                  </p>
-                  <p className="mt-2 text-sm leading-relaxed text-slate-500">
-                    This typically means: missing data, edge case values, or a scenario not covered by current rules.
-                  </p>
-                  <div className="mt-3"><LayerTag layer="system" /></div>
+                  <div className="flex items-start">
+                    <RuleLayerBadge layer="system" />
+                    <div>
+                      <p className="text-[15px] leading-relaxed text-slate-700">
+                        No specific rule matched for this check. The system escalated to a human reviewer because the
+                        data didn&apos;t clearly pass or fail any defined threshold.
+                      </p>
+                      <p className="mt-2 text-sm leading-relaxed text-slate-500">
+                        This typically means: missing data, edge case values, or a scenario not covered by current rules.
+                      </p>
+                    </div>
+                  </div>
                 </div>
               ) : (
                 (() => {
                   const def = resolveRule(ruleStr)
                   return (
                     <div className="rounded-lg border border-slate-200 bg-white p-4">
-                      <p className="text-[15px] font-medium text-[#374151]">&ldquo;{def.label}&rdquo;</p>
-                      <div className="mt-2"><LayerTag layer={def.layer} citation={def.citation} /></div>
+                      <div className="flex items-start">
+                        <RuleLayerBadge layer={def.layer} />
+                        <div>
+                          <p className="text-[15px] font-medium text-[#374151]">{def.label}</p>
+                          {def.citation && <p className="mt-0.5 text-xs text-slate-500">Citation: {def.citation}</p>}
+                        </div>
+                      </div>
                       <pre className="mt-3 overflow-x-auto rounded-lg bg-slate-900 px-3 py-2 font-mono text-[12px] leading-relaxed text-slate-100">
                         {ruleStr} → {d.outcome}
                       </pre>
