@@ -13,6 +13,7 @@ import ComplianceDocs from './pages/ComplianceDocs'
 import DemoMode, { DemoRedirect, DemoWatermark } from './pages/DemoMode'
 import RulesSettings from './pages/RulesSettings'
 import ComparisonMode from './pages/ComparisonMode'
+import ImportLoans from './pages/ImportLoans'
 import { StaleDataBanner } from './components/DataFreshness'
 import { AuthProvider, useAuth } from './context/AuthContext'
 
@@ -92,6 +93,7 @@ function AppShell() {
           <Route path="/simulation" element={guard('simulation', <Simulation />)} />
           <Route path="/audit" element={guard('audit', <Audit />)} />
           {user?.role === 'admin' && <Route path="/settings" element={<Settings />} />}
+          {(user?.role === 'admin' || user?.role === 'manager') && <Route path="/settings/import" element={<ImportLoans />} />}
           {(user?.role === 'admin' || user?.role === 'manager') && <Route path="/settings/rules" element={<div className="mx-auto max-w-4xl px-6 py-6"><RulesSettings /></div>} />}
           {(user?.role === 'admin' || user?.role === 'manager') && <Route path="/comparison" element={<ComparisonMode />} />}
           {/* Demo walkthrough — admin-only deep links into the real pages, with

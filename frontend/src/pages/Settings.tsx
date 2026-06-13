@@ -112,6 +112,11 @@ export default function Settings() {
         </dl>
       </Section>
 
+      {/* A2. Import loans */}
+      <Section title="Import loans" subtitle="Bring your pipeline into Accord from any LOS export (Encompass, ICE, or a generic CSV).">
+        <button onClick={() => navigate('/settings/import')} className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-dark">📥 Import loans from CSV</button>
+      </Section>
+
       {/* B. User management */}
       <Section title="User management" subtitle={`${users.filter((u) => u.is_active !== false).length} active users in ${tenant?.name}`}>
         <div className="mb-3 flex flex-wrap items-end gap-2 rounded-lg bg-slate-50 p-3">

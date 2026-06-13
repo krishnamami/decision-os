@@ -580,3 +580,52 @@ export function recordManual(application_id: string, manual_outcome: string, man
 export function fetchComparisonReport(): Promise<ComparisonReport> { return getJSON('/api/accord/comparison/report') }
 export function fetchComparisonStatus(applicationId?: string): Promise<{ active: boolean; ends_at: string | null; existing: { accord_outcome: string; manual_outcome: string; agreement: string } | null }> { return getJSON(`/api/accord/comparison/status${applicationId ? `?application_id=${encodeURIComponent(applicationId)}` : ''}`) }
 export function completeComparison(): Promise<{ ok: boolean }> { return postJSON('/api/accord/comparison/complete', {}) }
+
+// ── Onboarding / CSV import ───────────────────────────────────────
+export interface ImportValidation {
+  valid: boolean; row_count: number; valid_count: number
+  errors: Array<{ row: number; error: string }>; warnings: string[]
+  preview: Array<{ loan_number: string; borrower: string; amount: number | null; type?: string; status: string; error?: string }>
+  headers: string[]; needs_mapping: boolean
+  auto_mapping?: Record<string, string | null>; mapping_stats?: { auto: number; skipped: number; total: number }
+}
+export interface ImportResult {
+  imported: number; skipped: number; errors: Array<{ row: number; error: string }>; warnings: string[]
+  summary: { total_loans: number; by_type: Record<string, number>; by_status: Record<string, number>; avg_amount: number; avg_score: number; assignments: Record<string, number> }
+  evaluation?: Record<string, number>; next_steps: string[]
+}
+async function postForm<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, { method: 'POST', headers: authHeaders(), body: form })
+  if (res.status === 401) handle401(path)
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`
+    try { const j = await res.json(); if (j?.detail) detail = j.detail } catch { /* */ }
+    throw new Error(detail)
+  }
+  return res.json() as Promise<T>
+}
+export async function downloadImportTemplate(): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/accord/onboarding/template`, { headers: authHeaders() })
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a'); a.href = url; a.download = 'accord_import_template.csv'
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+export function validateImport(file: File, mapping?: Record<string, string | null>): Promise<ImportValidation> {
+  const f = new FormData(); f.append('file', file); if (mapping) f.append('mapping', JSON.stringify(mapping))
+  return postForm('/api/accord/onboarding/validate', f)
+}
+export function importLoans(file: File, mapping?: Record<string, string | null>): Promise<ImportResult> {
+  const f = new FormData(); f.append('file', file); if (mapping) f.append('mapping', JSON.stringify(mapping))
+  return postForm('/api/accord/onboarding/import', f)
+}
+export const IMPORT_FIELDS = [
+  'loan_number', 'application_date', 'loan_purpose', 'loan_type', 'channel', 'borrower_first_name', 'borrower_last_name',
+  'borrower_email', 'borrower_phone', 'borrower_dob', 'borrower_ssn_last4', 'borrower_citizenship', 'employer_name',
+  'employment_type', 'employment_years', 'employer_phone', 'stated_annual_income', 'verified_annual_income', 'monthly_income',
+  'other_income', 'income_source', 'credit_score_experian', 'credit_score_transunion', 'credit_score_equifax', 'mid_credit_score',
+  'monthly_debt_payments', 'monthly_housing_payment', 'property_address', 'property_type', 'property_state', 'property_county',
+  'property_zip', 'occupancy', 'purchase_price', 'appraised_value', 'estimated_value', 'loan_amount', 'interest_rate',
+  'loan_term_months', 'amortization_type', 'ltv', 'dti_front', 'dti_back', 'coborrower_first_name', 'coborrower_last_name',
+  'coborrower_income', 'coborrower_credit_score', 'loan_status', 'assigned_to_email',
+]
