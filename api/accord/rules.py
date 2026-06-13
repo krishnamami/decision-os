@@ -241,6 +241,15 @@ async def update_rules(body: RulesUpdate, user: dict = Depends(get_current_user)
         if errors:
             raise HTTPException(400, errors[0])
 
+        # Auto-run the boundary validation suite on the proposed rules — a bad
+        # rule that slips past the guardrail can never go live.
+        from api.accord.validation import run_validation
+        val = await run_validation(tenant_id, proposed_rules=body.rules, programs=programs)
+        if val["failed"] > 0:
+            fails = [t for t in val["tests"] if not t["passed"]][:3]
+            detail = "; ".join(f"{t['id']}: expected {t['expected']} but got {t['actual']}" for t in fails)
+            raise HTTPException(400, f"Rule change cannot be activated — {val['failed']} validation test(s) failed: {detail}")
+
         next_version = (await conn.fetchval(
             "SELECT COALESCE(MAX(version), 0) + 1 FROM tenant_rules WHERE tenant_id=$1", tenant_id)) or 1
         # Only one pending draft at a time — replace any prior pending.

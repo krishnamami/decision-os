@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import {
-  approveRules, fetchRuleAlerts, fetchRules, fetchRulesHistory, ratifyEmergency,
+  approveRules, fetchRuleAlerts, fetchRules, fetchRulesHistory, fetchValidationReport, ratifyEmergency,
   type AgencyGuideline, type RegulatoryRule, type RuleAlert, type RulesResponse, type TenantVersion,
 } from '../api/client'
+import RuleValidation from '../components/RuleValidation'
 import DataFreshness from '../components/DataFreshness'
 import RuleHistory from '../components/RuleHistory'
 import {
@@ -108,6 +109,8 @@ export default function RulesSettings() {
   const [showEmergency, setShowEmergency] = useState(false)
   const [showRetro, setShowRetro] = useState(false)
   const [showReconstruct, setShowReconstruct] = useState(false)
+  const [showValidation, setShowValidation] = useState(false)
+  const [validationFailed, setValidationFailed] = useState(0)
 
   const plan = tenant?.plan
   const examFrozen = data?.examination?.active === true
@@ -123,6 +126,7 @@ export default function RulesSettings() {
       setPendingVersion(pend ? pend.version : null)
       setEmergencyPending(h.versions.find((v) => v.change_type === 'emergency' && v.status === 'active' && !v.ratified_by) || null)
     }).catch(() => undefined)
+    fetchValidationReport().then((r) => setValidationFailed(r.failed)).catch(() => undefined)
   }
   useEffect(load, [])
 
@@ -195,6 +199,9 @@ export default function RulesSettings() {
             <button onClick={() => setShowAlerts((v) => !v)} className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${showAlerts ? 'border-brand bg-brand-light/40 text-brand-dark' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}>
               Rule Alerts{newAlerts ? ` (${newAlerts} new)` : ''}
             </button>
+            <button onClick={() => setShowValidation((v) => !v)} className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${validationFailed ? 'border-red-300 bg-red-50 text-red-700' : showValidation ? 'border-brand bg-brand-light/40 text-brand-dark' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}>
+              {validationFailed ? `🔴 Validation (${validationFailed} failed)` : '✅ Rule Validation'}
+            </button>
             {planAllows(plan, 'enterprise') && (
               <button onClick={() => setShowRetro((v) => !v)} className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${showRetro ? 'border-brand bg-brand-light/40 text-brand-dark' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}>📊 Retrospective</button>
             )}
@@ -207,6 +214,15 @@ export default function RulesSettings() {
           </div>
         </div>
       </div>
+
+      {/* Dashboard-wide validation-failure banner */}
+      {validationFailed > 0 && !showValidation && (
+        <button onClick={() => setShowValidation(true)} className="w-full rounded-xl border border-red-300 bg-red-50 p-4 text-left text-sm font-bold text-red-800 hover:bg-red-100">
+          🔴 {validationFailed} rule validation test{validationFailed === 1 ? '' : 's'} failed. Review immediately.
+        </button>
+      )}
+
+      {showValidation && <RuleValidation tenantName={tenant?.name || 'Tenant'} />}
 
       {/* Examination-freeze banner */}
       {examFrozen && (

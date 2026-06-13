@@ -551,3 +551,15 @@ export function fetchDocuments(appId: string): Promise<DocsResponse> {
 export function fetchSourceMatch(appId: string): Promise<SourceMatchResponse> {
   return getJSON(`/api/accord/documents/${encodeURIComponent(appId)}/source-match`)
 }
+
+// ── Rule validation suite ─────────────────────────────────────────
+export interface ValidationTest { id: string; category: string; description: string; input: Record<string, any>; expected: string; actual: string; passed: boolean; flags: string[] }
+export interface ValidationReport {
+  tenant_id: string; rule_version: number | null; total_tests: number; passed: number; failed: number
+  duration_ms: number; run_at: string
+  categories: Record<string, { total: number; passed: number; failed: number }>
+  warnings: Array<{ id: string; severity: string; description: string }>
+  tests: ValidationTest[]
+}
+export function runValidation(): Promise<ValidationReport> { return postJSON('/api/accord/rules/validate', {}) }
+export function fetchValidationReport(): Promise<ValidationReport> { return getJSON('/api/accord/rules/validation-report') }
