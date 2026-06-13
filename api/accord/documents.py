@@ -40,23 +40,74 @@ def _money(v: Any) -> Optional[str]:
         return None
 
 
-# doc_type → (display name, key extracted field, how to render the key value)
+# doc_type → (display name, key extracted field, how to render the key value).
+# Reconciled against all 53 live document_type values in document_index. Each
+# `key` is verified to exist in that type's extracted_fields; `fmt` is one of
+# money | money_mo | income_mo | score | bool | raw. `year` (optional) appends a
+# tax/effective year to the display name. Grouped by document_category.
 DOC_META: dict[str, dict] = {
-    "URLA_1003": {"name": "URLA 1003", "key": "stated_income_monthly", "fmt": "income_mo"},
+    # ── income ──
+    "W2_CURRENT": {"name": "W-2", "key": "box1_wages", "fmt": "money", "year": "tax_year"},
+    "W2_PRIOR": {"name": "W-2 (Prior Year)", "key": "box1_wages", "fmt": "money", "year": "tax_year"},
+    "PAYSTUB_CURRENT": {"name": "Pay Stub", "key": "gross_pay", "fmt": "money"},
+    "IRS_TRANSCRIPT": {"name": "IRS Transcript", "key": "agi", "fmt": "money", "year": "tax_year"},
+    "TAX_RETURN_1040": {"name": "1040 Tax Return", "key": "agi", "fmt": "money", "year": "tax_year"},
+    "1099_NEC": {"name": "1099-NEC", "key": "nonemployee_compensation", "fmt": "money", "year": "tax_year"},
+    "SCHEDULE_C": {"name": "Schedule C", "key": "net_profit", "fmt": "money", "year": "tax_year"},
+    "SCHEDULE_E": {"name": "Schedule E", "key": "net_rental_income", "fmt": "money"},
+    "COMMISSION_HISTORY": {"name": "Commission History", "key": "two_year_average", "fmt": "money", "year": "tax_year"},
+    "OFFER_LETTER": {"name": "Offer Letter", "key": "salary", "fmt": "money"},
+    "EMPLOYMENT_GAP_LETTER": {"name": "Employment Gap Letter", "key": None, "fmt": None},
+    "PENSION_LETTER": {"name": "Pension Letter", "key": "monthly_benefit", "fmt": "money_mo"},
+    "SSA_AWARD_LETTER": {"name": "SSA Award Letter", "key": "monthly_benefit", "fmt": "money_mo"},
+    "RENTAL_LEASE": {"name": "Rental Lease", "key": "monthly_rent", "fmt": "money_mo"},
+    "FOREIGN_INCOME_DOCS": {"name": "Foreign Income Docs", "key": "annual_income", "fmt": "money"},
+    "FLOOD_INSURANCE": {"name": "Flood Insurance", "key": "coverage_amount", "fmt": "money"},
+    # ── employment ──
+    "VOE_TWN": {"name": "Employment Verification (TWN)", "key": "income_amount", "fmt": "money"},
+    "VOE": {"name": "Employer Verification (VOE)", "key": "current_salary", "fmt": "money"},
+    # ── credit ──
     "CREDIT_REPORT": {"name": "Credit Report", "key": "mid_score", "fmt": "score"},
-    "W2_CURRENT": {"name": "W2", "key": "box1_wages", "fmt": "money", "year": "tax_year"},
-    "W2_PRIOR": {"name": "W2 (prior year)", "key": "box1_wages", "fmt": "money", "year": "tax_year"},
-    "IRS_TRANSCRIPT": {"name": "IRS Transcript", "key": "adjusted_gross_income", "fmt": "money", "year": "tax_year"},
-    "PAY_STUBS": {"name": "Pay Stubs", "key": "gross_monthly_income", "fmt": "money_mo"},
-    "PAYSTUB": {"name": "Pay Stubs", "key": "gross_monthly_income", "fmt": "money_mo"},
-    "BANK_STATEMENT": {"name": "Bank Statements", "key": "total_balance", "fmt": "money"},
-    "BANK_STATEMENTS": {"name": "Bank Statements", "key": "total_balance", "fmt": "money"},
-    "DRIVERS_LICENSE": {"name": "Driver's License", "key": None, "fmt": None},
-    "PURCHASE_AGREEMENT": {"name": "Purchase Agreement", "key": "purchase_price", "fmt": "money"},
+    # ── asset ──
+    "BANK_STATEMENT_M1": {"name": "Bank Statement (Month 1)", "key": "ending_balance", "fmt": "money"},
+    "BANK_STATEMENT_M2": {"name": "Bank Statement (Month 2)", "key": "ending_balance", "fmt": "money"},
+    "BANK_STATEMENT_M3": {"name": "Bank Statement (Month 3)", "key": "ending_balance", "fmt": "money"},
+    "GIFT_LETTER": {"name": "Gift Letter", "key": "gift_amount", "fmt": "money"},
+    "GIFT_DONOR_BANK_STATEMENT": {"name": "Gift Donor Bank Statement", "key": "withdrawal_amount", "fmt": "money"},
+    # ── property ──
     "APPRAISAL_URAR": {"name": "Appraisal (URAR)", "key": "appraised_value", "fmt": "money"},
-    "OFAC_CHECK": {"name": "OFAC Check", "key": "match_score", "fmt": "raw"},
-    "EMPLOYER_VERIFICATION": {"name": "Employer Verification (VOE)", "key": None, "fmt": None},
-    "VOE": {"name": "Employer Verification (VOE)", "key": None, "fmt": None},
+    "PURCHASE_AGREEMENT": {"name": "Purchase Agreement", "key": "purchase_price", "fmt": "money"},
+    "BUILDER_CONTRACT": {"name": "Builder Contract", "key": "contract_price", "fmt": "money"},
+    "CONDO_QUESTIONNAIRE": {"name": "Condo Questionnaire", "key": "fannie_approved", "fmt": "bool"},
+    "PROPERTY_TAX_BILL": {"name": "Property Tax Bill", "key": "annual_tax", "fmt": "money", "year": "tax_year"},
+    "FLOOD_CERT": {"name": "Flood Certification", "key": "flood_zone", "fmt": "raw"},
+    "TITLE_COMMITMENT": {"name": "Title Commitment", "key": "policy_amount", "fmt": "money"},
+    "TITLE_INSURANCE": {"name": "Title Insurance", "key": "coverage_amount", "fmt": "money"},
+    "HOI_BINDER": {"name": "Homeowner's Insurance Binder", "key": "coverage_dwelling", "fmt": "money"},
+    # ── identity ──
+    "DRIVERS_LICENSE": {"name": "Driver's License", "key": None, "fmt": None},
+    "PASSPORT": {"name": "Passport", "key": None, "fmt": None},
+    "SSN_VALIDATION": {"name": "SSN Validation", "key": None, "fmt": None},
+    "OFAC_CHECK": {"name": "OFAC Check", "key": None, "fmt": None},
+    "EAD_CARD": {"name": "EAD Card", "key": None, "fmt": None},
+    "I94": {"name": "Form I-94", "key": None, "fmt": None},
+    "VISA_H1B": {"name": "H-1B Visa", "key": None, "fmt": None},
+    # ── legal ──
+    "DIVORCE_DECREE": {"name": "Divorce Decree", "key": "alimony_amount", "fmt": "money"},
+    "ALIMONY_RECEIPT_HISTORY": {"name": "Alimony Receipt History", "key": "monthly_amount", "fmt": "money_mo"},
+    # ── loan / loan_terms ──
+    "URLA_1003": {"name": "URLA 1003", "key": "loan_amount", "fmt": "money"},
+    "CLOSING_DISCLOSURE": {"name": "Closing Disclosure", "key": "section_a_total", "fmt": "money"},
+    "LOAN_ESTIMATE": {"name": "Loan Estimate", "key": "section_a_total", "fmt": "money"},
+    "RATE_LOCK": {"name": "Rate Lock", "key": "loan_amount", "fmt": "money"},
+    "ESCROW_ANALYSIS": {"name": "Escrow Analysis", "key": "monthly_escrow", "fmt": "money_mo"},
+    "MORTGAGE_PAYOFF": {"name": "Mortgage Payoff", "key": "current_balance", "fmt": "money"},
+    "PAYMENT_HISTORY_24MO": {"name": "Payment History (24mo)", "key": "late_payments", "fmt": "raw"},
+    # ── vendor ──
+    "AUS_DU_FINDINGS": {"name": "AUS Findings (DU)", "key": "recommendation", "fmt": "raw"},
+    "MI_CERTIFICATE": {"name": "MI Certificate", "key": "monthly_premium", "fmt": "money_mo"},
+    "USDA_ELIGIBILITY": {"name": "USDA Eligibility", "key": "income_eligible", "fmt": "bool"},
+    "VA_COE": {"name": "VA Certificate of Eligibility", "key": "entitlement_amount", "fmt": "money"},
 }
 
 
@@ -84,6 +135,8 @@ def _key_value(doc_type: str, fields: dict) -> tuple[Optional[str], Optional[str
         return (f"{_money(float(val) * 12)}/yr" if _money(float(val) * 12) else None), key
     if fmt == "score":
         return f"Score {val}", key
+    if fmt == "bool":
+        return ("Yes" if val else "No"), key
     return str(val), key
 
 
@@ -160,6 +213,7 @@ async def get_documents(application_id: str, tenant_id: str = Depends(get_tenant
         documents.append({
             "document_id": r["document_id"],
             "document_type": r["document_type"],
+            "document_category": r["document_category"],
             "display_name": _display_name(r["document_type"], fields),
             "status": r["status"],
             "indexed_at": _iso(r["received_at"]),

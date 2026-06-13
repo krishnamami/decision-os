@@ -7,6 +7,7 @@ const EDMS_BASE = 'http://accord-alb-588286075.us-east-1.elb.amazonaws.com'
 export interface EvidenceDocumentPanelProps {
   documentName: string
   documentType: string // short badge text, e.g. "W-2", "Bank Statement"
+  category?: string | null // document_category, e.g. "income", "property"
   extractedValue?: string | null // e.g. "Gross annual income: $95,000"
   confidence?: number | null // 0..1 fraction
   source?: string | null // verifying service, e.g. "Experian", "TWN", "AMC"
@@ -15,8 +16,10 @@ export interface EvidenceDocumentPanelProps {
   onClose: () => void
 }
 
+const prettyCategory = (c: string) => c.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase())
+
 export function EvidenceDocumentPanel({
-  documentName, documentType, extractedValue, confidence, source, page, edmsId, onClose,
+  documentName, documentType, category, extractedValue, confidence, source, page, edmsId, onClose,
 }: EvidenceDocumentPanelProps) {
   const pct = confidence != null ? Math.round(confidence * 100) : null
   const bar = pct == null ? 'bg-slate-300' : pct >= 90 ? 'bg-green-500' : pct >= 75 ? 'bg-amber-500' : 'bg-red-500'
@@ -34,7 +37,10 @@ export function EvidenceDocumentPanel({
           <button onClick={onClose} className="mb-3 text-sm font-medium text-brand hover:underline">← Back</button>
           <div className="flex items-start justify-between gap-3">
             <h2 className="text-xl font-bold text-slate-900">📄 {documentName}</h2>
-            <span className="mt-1 shrink-0 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">{documentType}</span>
+            <div className="mt-1 flex shrink-0 flex-col items-end gap-1">
+              <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">{documentType}</span>
+              {category && <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[11px] font-medium text-brand">{prettyCategory(category)}</span>}
+            </div>
           </div>
         </div>
 

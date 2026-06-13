@@ -526,7 +526,7 @@ export function fetchLoanRulesNote(applicationId: string): Promise<{ show: boole
 
 // ── Document viewer ───────────────────────────────────────────────
 export interface DocItem {
-  document_id: string; document_type: string; display_name: string; status: string
+  document_id: string; document_type: string; document_category?: string | null; display_name: string; status: string
   indexed_at: string | null; extraction_method: string | null; confidence: number | null
   key_value: string | null; key_field: string | null; extracted_data: Record<string, any>; file_path: string | null
 }
