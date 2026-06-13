@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { fetchComparisonStatus } from '../api/client'
 import NotificationBell from './NotificationBell'
 
 const PRODUCTS = [
@@ -46,6 +47,7 @@ export default function Header() {
   const [bannerOpen, setBannerOpen] = useState(true)
   const [productsOpen, setProductsOpen] = useState(false)
   const [userOpen, setUserOpen] = useState(false)
+  const [comparisonActive, setComparisonActive] = useState(false)
   const navRef = useRef<HTMLDivElement>(null)
   const userRef = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
@@ -77,6 +79,11 @@ export default function Header() {
   const roleAllows = (product: string) => (ROLE_PRODUCTS[effRole] ?? ['pipeline']).includes(product)
   const planAllows = (product: string) => product === 'pipeline' || hasProduct(product)
   const initials = (user?.name || '?').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()
+  const canCompare = role === 'admin' || role === 'manager'
+
+  useEffect(() => {
+    if (canCompare) fetchComparisonStatus().then((s) => setComparisonActive(s.active)).catch(() => undefined)
+  }, [canCompare])
 
   return (
     <header className="sticky top-0 z-30">
@@ -200,6 +207,14 @@ export default function Header() {
               </NavLink>
             )
           })}
+          {comparisonActive && canCompare && (
+            <NavLink
+              to="/comparison"
+              className={({ isActive }) => `-mb-px border-b-2 py-3 text-sm font-medium transition ${isActive ? 'border-brand text-brand' : 'border-transparent text-[#6B7280] hover:text-slate-800'}`}
+            >
+              🔄 Comparison
+            </NavLink>
+          )}
         </nav>
       </div>
     </header>

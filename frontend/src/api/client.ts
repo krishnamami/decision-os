@@ -563,3 +563,20 @@ export interface ValidationReport {
 }
 export function runValidation(): Promise<ValidationReport> { return postJSON('/api/accord/rules/validate', {}) }
 export function fetchValidationReport(): Promise<ValidationReport> { return getJSON('/api/accord/rules/validation-report') }
+
+// ── Comparison Mode ───────────────────────────────────────────────
+export interface ComparisonDetail { application_id: string; borrower: string; description: string | null; accord_decision: string; manual_decision: string; resolution: string | null }
+export interface ComparisonRow { application_id: string; borrower: string; accord_outcome: string; manual_outcome: string; agreement: string }
+export interface ComparisonReport {
+  active: boolean; ended?: boolean
+  period?: { started: string; ends: string; day: number; duration: number }
+  summary?: { total_loans: number; agree: number; accord_stricter: number; accord_looser: number; disagree: number; agreement_rate: number }
+  accord_caught?: ComparisonDetail[]; manual_caught?: ComparisonDetail[]; disagreements?: ComparisonDetail[]
+  weekly_trend?: Array<{ week: number; loans: number; agreement: number }>
+  all_comparisons?: ComparisonRow[]
+}
+export function startComparison(duration_days: number): Promise<{ period_id: string; ends_at: string }> { return postJSON('/api/accord/comparison/start', { duration_days }) }
+export function recordManual(application_id: string, manual_outcome: string, manual_reasoning: string): Promise<{ ok: boolean; accord_outcome: string; manual_outcome: string; agreement: string; label: string }> { return postJSON('/api/accord/comparison/record-manual', { application_id, manual_outcome, manual_reasoning }) }
+export function fetchComparisonReport(): Promise<ComparisonReport> { return getJSON('/api/accord/comparison/report') }
+export function fetchComparisonStatus(applicationId?: string): Promise<{ active: boolean; ends_at: string | null; existing: { accord_outcome: string; manual_outcome: string; agreement: string } | null }> { return getJSON(`/api/accord/comparison/status${applicationId ? `?application_id=${encodeURIComponent(applicationId)}` : ''}`) }
+export function completeComparison(): Promise<{ ok: boolean }> { return postJSON('/api/accord/comparison/complete', {}) }

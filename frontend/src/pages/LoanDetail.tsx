@@ -4,6 +4,7 @@ import ExportMenu from '../components/ExportMenu'
 import PinnedRulesNote from '../components/PinnedRulesNote'
 import DocumentChecklist from '../components/DocumentChecklist'
 import SourceMatch from '../components/SourceMatch'
+import ComparisonDecision from '../components/ComparisonDecision'
 import { downloadCsv, downloadJson, printPdf } from '../utils/export'
 import { decideLoan, fetchLoan } from '../api/client'
 import { useAuth } from '../context/AuthContext'
@@ -329,6 +330,9 @@ export default function LoanDetail() {
             the AI’s recommendation and evidence but cannot take action on this loan.
           </section>
         )}
+
+        {/* 5b — Comparison mode (only during an active period) */}
+        <ComparisonDecision applicationId={loan.application_id} />
 
         {modal === 'request_info' && (
           <RequestInfoModal
