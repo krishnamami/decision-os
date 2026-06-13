@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import ExportMenu from '../components/ExportMenu'
 import PinnedRulesNote from '../components/PinnedRulesNote'
+import DocumentChecklist from '../components/DocumentChecklist'
+import SourceMatch from '../components/SourceMatch'
 import { downloadCsv, downloadJson, printPdf } from '../utils/export'
 import { decideLoan, fetchLoan } from '../api/client'
 import { useAuth } from '../context/AuthContext'
@@ -307,7 +309,11 @@ export default function LoanDetail() {
         {/* 4 — Evidence, grouped by issue */}
         <GroupedEvidence loan={loan} narr={narr} />
 
-        {/* 4 — Your decision */}
+        {/* 4b — Documents on file + data-source verification (collapsible) */}
+        <DocumentChecklist applicationId={loan.application_id} />
+        <SourceMatch applicationId={loan.application_id} />
+
+        {/* 5 — Your decision */}
         {canAct ? (
           <YourDecision
             category={blockCategory(narr)}

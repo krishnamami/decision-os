@@ -523,3 +523,31 @@ export function fetchRuleImpact(rules: Record<string, unknown>): Promise<{ count
 export function fetchLoanRulesNote(applicationId: string): Promise<{ show: boolean; application_date?: string; applied_version?: number; applied_effective?: string; current_version?: number; current_effective?: string; differences?: Array<{ field: string; pinned: number; current: number }> }> {
   return getJSON(`/api/accord/rules/loan-note?application_id=${encodeURIComponent(applicationId)}`)
 }
+
+// ── Document viewer ───────────────────────────────────────────────
+export interface DocItem {
+  document_id: string; document_type: string; display_name: string; status: string
+  indexed_at: string | null; extraction_method: string | null; confidence: number | null
+  key_value: string | null; key_field: string | null; extracted_data: Record<string, any>; file_path: string | null
+}
+export interface MissingDoc { document_type: string; display_name: string; required: boolean; reason: string }
+export interface DocsResponse {
+  application_id: string; documents: DocItem[]; missing_documents: MissingDoc[]
+  summary: { total_on_file: number; total_missing: number; total_required_missing: number }
+}
+export interface SourceField {
+  field_name: string; value: any; display_value: string | null; source_document: string | null
+  source_field: string | null; document_id: string | null; confidence: number | null; status: string
+}
+export interface VerificationCategory {
+  category: string; fields: SourceField[]
+  discrepancy: { exists: boolean; description?: string; severity?: string; ai_used?: string }
+}
+export interface SourceMatchResponse { application_id: string; verifications: VerificationCategory[] }
+
+export function fetchDocuments(appId: string): Promise<DocsResponse> {
+  return getJSON(`/api/accord/documents/${encodeURIComponent(appId)}`)
+}
+export function fetchSourceMatch(appId: string): Promise<SourceMatchResponse> {
+  return getJSON(`/api/accord/documents/${encodeURIComponent(appId)}/source-match`)
+}
