@@ -1,7 +1,10 @@
-// Records a ~2-minute captioned product walkthrough of the LIVE Accord app to
-// an .mp4 — no Loom, no human voice. On-screen caption bars carry the narration
-// from docs/DEMO_SCRIPT.md. It only NAVIGATES and scrolls; it never submits an
-// action or runs an engine, so it does not mutate production data.
+// Records a captioned product walkthrough of the LIVE Accord app to an .mp4 — no
+// Loom, no human voice. On-screen caption bars complement the ElevenLabs voiceover
+// (merged in afterwards). It clicks through the real features (OFAC badge, QM,
+// clickable metrics, evidence panel, decision-journey layer badges, examiner
+// report, /data-health, rules lock) but never submits an action or runs an
+// engine, so it does not mutate production data. Driven as admin@summit.com (the
+// one role that can reach every page in the script).
 const path = require('path')
 const puppeteer = require('puppeteer-core')
 const { PuppeteerScreenRecorder } = require('puppeteer-screen-recorder')
@@ -10,6 +13,7 @@ const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path
 const BASE = 'http://accord-alb-588286075.us-east-1.elb.amazonaws.com'
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 const OUT = path.resolve(__dirname, '..', 'accord_demo.mp4')
+const LOAN = 'APP-SC02-004' // OFAC Clear badge + rich decision journey + evidence
 const W = 1280, H = 720
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -46,7 +50,7 @@ async function card(page, title, sub) {
 }
 const clearCard = (page) => page.evaluate(() => document.getElementById('__card__')?.remove())
 
-async function slowScrollTo(page, y, ms = 2400, steps = 30) {
+async function slowScrollTo(page, y, ms = 2000, steps = 26) {
   const cur = await page.evaluate(() => window.scrollY)
   for (let i = 1; i <= steps; i++) {
     await page.evaluate((v) => window.scrollTo(0, v), cur + (y - cur) * (i / steps))
@@ -54,11 +58,37 @@ async function slowScrollTo(page, y, ms = 2400, steps = 30) {
   }
 }
 
-async function login(page) {
-  await page.goto(BASE + '/login', { waitUntil: 'networkidle2', timeout: 60000 })
-  await sleep(700)
-  await caption(page, 'A loan officer signs in to their workbench…')
+async function go(page, url) {
+  await page.goto(BASE + url, { waitUntil: 'networkidle2', timeout: 60000 })
+  await sleep(1400)
+}
+
+// Click the first element (default: button) whose text matches `re`.
+async function clickText(page, re, tag = 'button') {
+  return page.evaluate((src, tag) => {
+    const rx = new RegExp(src, 'i')
+    const el = [...document.querySelectorAll(tag)].find((e) => rx.test(e.textContent || ''))
+    if (el) { el.scrollIntoView({ block: 'center' }); el.click(); return true }
+    return false
+  }, re.source, tag)
+}
+
+// Close any open slide-over / popover (← Back, ✕, or click the overlay).
+async function closePanel(page) {
   await page.evaluate(() => {
+    const back = [...document.querySelectorAll('button')].find((b) => /←\s*Back/i.test(b.textContent || ''))
+    const x = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '✕')
+    if (back) back.click()
+    else if (x) x.click()
+    else document.querySelector('.bg-black\\/30')?.click()
+  })
+  await sleep(700)
+}
+
+async function login(page, email) {
+  await go(page, '/login')
+  await caption(page, 'Log in. See exactly the loans that need your attention.')
+  await page.evaluate((em) => {
     const ins = [...document.querySelectorAll('input')]
     const email = ins.find((i) => /email/i.test(i.type + i.name + i.placeholder)) || ins[0]
     const pass = ins.find((i) => i.type === 'password')
@@ -66,28 +96,15 @@ async function login(page) {
       Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value').set.call(el, v)
       el.dispatchEvent(new Event('input', { bubbles: true }))
     }
-    set(email, 'senioruw@summit.com')
+    set(email, em)
     set(pass, 'accord2026')
-  })
-  await sleep(1200)
+  }, email)
+  await sleep(1100)
   await page.evaluate(() => {
     const b = [...document.querySelectorAll('button')].find((x) => /sign in|log in|continue/i.test(x.innerText))
     if (b) b.click()
   })
   await sleep(3500)
-}
-
-// A beat: optional navigate, set caption, optional slow-scroll, then hold.
-async function beat(page, text, opts = {}) {
-  const { url, scrollY = 0, hold = 4500, scrollMs = 2400, preHold = 900 } = opts
-  if (url) {
-    await page.goto(BASE + url, { waitUntil: 'networkidle2', timeout: 60000 })
-    await sleep(1300)
-  }
-  await caption(page, text)
-  await sleep(preHold)
-  if (scrollY) await slowScrollTo(page, scrollY, scrollMs)
-  await sleep(hold)
 }
 
 async function main() {
@@ -100,67 +117,82 @@ async function main() {
   const page = await browser.newPage()
   await page.setViewport({ width: W, height: H })
   const recorder = new PuppeteerScreenRecorder(page, {
-    fps: 25,
-    ffmpeg_Path: ffmpegPath,
-    videoFrame: { width: W, height: H },
-    aspectRatio: '16:9',
+    fps: 25, ffmpeg_Path: ffmpegPath, videoFrame: { width: W, height: H }, aspectRatio: '16:9',
   })
 
-  // Land first so there's a body to draw the intro card on.
-  await page.goto(BASE + '/', { waitUntil: 'networkidle2', timeout: 60000 })
-  await sleep(800)
+  await go(page, '/')
   await recorder.start(OUT)
 
   try {
     // ═══ INTRO (3.5s) ═══
-    await card(page, 'accord', 'Every decision. In accord.')
+    await card(page, 'accord', 'Every lending decision, in accord.')
     await sleep(3500)
     await clearCard(page)
 
-    // ═══ BEAT 1: THE HOOK — Landing page hero (5s) ═══
-    await beat(page, 'The biggest financial decision deserves the best underwriting.', { hold: 5000 })
+    // ═══ 1 — Landing hero ═══
+    await caption(page, 'The biggest financial decision deserves the best underwriting.')
+    await slowScrollTo(page, 600, 2500)
+    await sleep(2500)
 
-    // ═══ BEAT 2: THE PAIN — Scroll landing page (6s) ═══
-    await beat(page, 'Credit. Employment. Property. Title. Days to weeks.', { scrollY: 600, scrollMs: 3000, hold: 5500 })
+    // ═══ 2 — Login → pipeline ═══
+    await login(page, 'admin@summit.com') // caption set inside login()
+    await go(page, '/pipeline')
+    await caption(page, 'Log in. See exactly the loans that need your attention.')
+    await sleep(4500)
 
-    // ═══ BEAT 3: THE SOLUTION — Scroll to stats (5s) ═══
-    await beat(page, 'Accord works like your best underwriter.', { scrollY: 1000, scrollMs: 2500, hold: 4500 })
+    // ═══ 3 — Loan header: OFAC + QM badges + clickable metrics ═══
+    await go(page, '/pipeline/' + LOAN)
+    await caption(page, 'Every data point on this loan is backed by a source document.')
+    await sleep(5000)
 
-    // ═══ BEAT 4: LOGIN → MY QUEUE (6s) ═══
-    await login(page)
-    await beat(page, 'Just the loans that need YOUR attention.', { url: '/pipeline', hold: 5500 })
+    // ═══ 4 — Click credit score → evidence panel (top of page) ═══
+    await caption(page, 'Click any number — see exactly where it came from.')
+    await clickText(page, /Credit Score/)
+    await sleep(5000)
+    await closePanel(page)
 
-    // ═══ BEAT 5: LOAN DETAIL — AI RECOMMENDATION (5s) ═══
-    await beat(page, 'Every recommendation backed by evidence.', { url: '/pipeline/APP-SC02-004', hold: 5000 })
+    // ═══ 5 — Click OFAC badge → popover (still at top) ═══
+    await caption(page, 'OFAC screening is automatic. The source document is right there.')
+    await clickText(page, /OFAC/)
+    await sleep(5000)
+    await closePanel(page)
 
-    // ═══ BEAT 6: EVIDENCE — WHY BLOCKED + WHAT PASSED (6s) ═══
-    await beat(page, "Why it's blocked. What passed. One screen.", { scrollY: 600, scrollMs: 2500, hold: 5500 })
+    // ═══ 6 — Decision Journey: three-layer rule badges (~y2780) ═══
+    await caption(page, 'Every rule mapped to three layers. Federal law. Agency guidelines. Your policies.')
+    await slowScrollTo(page, 2780, 3000)
+    await page.evaluate(() => { document.querySelectorAll('button').forEach((b) => { if (/▼/.test(b.textContent || '')) b.click() }) })
+    await sleep(900)
+    await slowScrollTo(page, 3250, 1600) // a "Rule applied" row with its 🔒/📋/🔧 layer badge
+    await sleep(5000)
 
-    // ═══ BEAT 7: COMPLIANCE — RULES + REGULATIONS (7s) ═══
-    await beat(page, 'Three layers of rules. Federal. Agency. Yours. All visible.', { scrollY: 1000, scrollMs: 2500, hold: 6000 })
+    // ═══ 7 — Click an evidence document → extraction panel (same area) ═══
+    await slowScrollTo(page, 2960, 1500)
+    await caption(page, 'Click any evidence — see what Accord extracted, confidence, verified by whom.')
+    await clickText(page, /📄.*indexed/) // an evidence row in the decision journey
+    await sleep(5500)
+    await closePanel(page)
 
-    // ═══ BEAT 8: DOCUMENT TRACING (5s) ═══
-    await beat(page, 'Click any number. See the source document.', { scrollY: 1400, scrollMs: 2000, hold: 4500 })
+    // ═══ 8 — Examiner report (full package) ═══
+    await go(page, '/loans/' + LOAN + '/examiner-report')
+    await caption(page, 'Examiners get the full package in one click.')
+    await slowScrollTo(page, 500, 2500)
+    await sleep(4000)
 
-    // ═══ BEAT 9: ACTION — ONE CLICK (4s) ═══
-    await beat(page, 'One click to act. Complete audit trail.', { scrollY: 1800, scrollMs: 2000, hold: 3500 })
+    // ═══ 9 — Data freshness ═══
+    await go(page, '/data-health')
+    await caption(page, 'Every data source. When it was last updated. Rule tests run automatically.')
+    await slowScrollTo(page, 360, 2200)
+    await sleep(4500)
 
-    // ═══ BEAT 10: SIMULATION (6s) ═══
-    await beat(page, '"What if we tighten DTI?" See the impact before you commit.', { url: '/simulation#simulate', hold: 5500 })
+    // ═══ 10 — Rules Dashboard: locked layers ═══
+    await go(page, '/settings/rules')
+    await caption(page, "You can't accidentally change a federal regulation.")
+    await slowScrollTo(page, 1600, 3000)
+    await sleep(5000)
 
-    // ═══ BEAT 11: DEBATE (5s) ═══
-    await beat(page, 'Debate complex cases. Communicate seamlessly.', { url: '/simulation#debate', hold: 4500 })
-
-    // ═══ BEAT 12: AUDIT + COMPLIANCE (6s) ═══
-    await beat(page, 'Examiner asks "why?" Answer in one click.', { url: '/audit', hold: 5500 })
-
-    // ═══ BEAT 13: GOVERNANCE REPORTS (4s) ═══
-    await beat(page, 'HMDA. Fair lending. Full examiner package.', { scrollY: 600, scrollMs: 2000, hold: 3500 })
-
-    // ═══ CLOSING CARD (4s) ═══
-    await page.goto(BASE + '/', { waitUntil: 'networkidle2', timeout: 60000 })
-    await sleep(1200)
-    await card(page, 'accord', 'Every decision. In accord.')
+    // ═══ CLOSING ═══
+    await go(page, '/')
+    await card(page, 'accord', 'Every lending decision, in accord.')
     await sleep(4000)
   } catch (e) {
     console.error('BEAT ERROR:', e.message)
