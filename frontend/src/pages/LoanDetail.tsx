@@ -8,6 +8,7 @@ import ComparisonDecision from '../components/ComparisonDecision'
 import { downloadCsv, downloadJson, printPdf } from '../utils/export'
 import { decideLoan, fetchLoan, fetchDocuments, type DocItem } from '../api/client'
 import { OFACBadge, deriveOFACStatus } from '../components/OFACBadge'
+import { QMBadge } from '../components/QMBadge'
 import { EvidenceDocumentPanel } from '../components/EvidenceDocumentPanel'
 import { panelPropsFromDoc } from '../components/evidenceDoc'
 import { useAuth } from '../context/AuthContext'
@@ -357,6 +358,7 @@ export default function LoanDetail() {
               {loan.borrower.employer ? <span className="text-slate-400"> · {loan.borrower.employer}</span> : null}
             </h1>
             <OFACBadge status={deriveOFACStatus(loan.decisions ?? [])} checkedAt={ofac.checkedAt} listDate={ofac.listDate} />
+            {loan.qm && <QMBadge qm={loan.qm} />}
           </div>
           <p className="text-sm text-slate-500">
             {moneyK(m.loan_amount)} · {loan.application_id}

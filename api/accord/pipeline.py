@@ -1190,6 +1190,63 @@ def _conversational_summary(decisions: list[dict], m: dict, name: str) -> dict:
             "next_step": next_step, "headline": headline, "tone": tone}
 
 
+_QM_LABEL = {
+    "safe_harbor": "Safe Harbor QM",
+    "rebuttable_presumption": "Rebuttable Presumption QM",
+    "non_qm": "Non-QM",
+    "pending": "QM Pending",
+}
+
+
+def _qm_status(e: dict, loan_terms: dict) -> dict:
+    """QM / Ability-to-Repay determination (CFPB 12 CFR §1026.43(e)) derived from
+    the loan's real metrics. dti_back is in percent units (e.g. 44.27). DTI is the
+    governing test; points & fees is not captured in the source data, so it is
+    surfaced as informational (pass=None) rather than fabricated, and a missing
+    DTI yields a 'pending' determination rather than a false safe harbor."""
+    dti = _f(e.get("dti_back"))
+    program = ((loan_terms.get("rate_lock") or {}) if isinstance(loan_terms.get("rate_lock"), dict) else {}).get("loan_program") or ""
+    pl = program.lower()
+    # term in years from the program string (e.g. "Conv 30yr fixed")
+    term_yrs = None
+    for tok in pl.replace("yr", " yr ").split():
+        if tok.isdigit():
+            term_yrs = int(tok)
+            break
+    has_balloon = "balloon" in pl
+
+    tests = []
+    if dti and dti > 0:
+        tests.append({"test": "DTI", "value": f"{dti:.1f}%", "limit": "≤ 43%", "pass": dti <= 43})
+    else:
+        tests.append({"test": "DTI", "value": "Not calculated", "limit": "≤ 43%", "pass": None})
+    tests.append({"test": "Points & fees", "value": "Not captured", "limit": "≤ 3%", "pass": None})
+    if term_yrs:
+        tests.append({"test": "Loan term", "value": f"{term_yrs}yr", "limit": "≤ 30yr", "pass": term_yrs <= 30})
+    else:
+        tests.append({"test": "Loan term", "value": "—", "limit": "≤ 30yr", "pass": None})
+    tests.append({"test": "Balloon payment", "value": "Present" if has_balloon else "None",
+                  "limit": "Not allowed", "pass": not has_balloon})
+
+    if not dti or dti <= 0:
+        status = "pending"
+    elif dti > 50:
+        status = "non_qm"
+    elif dti > 43:
+        status = "rebuttable_presumption"
+    else:
+        status = "safe_harbor"
+    if (term_yrs and term_yrs > 30) or has_balloon:  # hard QM disqualifiers
+        status = "non_qm"
+
+    return {
+        "status": status,
+        "determination": _QM_LABEL[status],
+        "citation": "12 CFR §1026.43(e) — Ability-to-Repay / QM Rule",
+        "tests": tests,
+    }
+
+
 @router.get("/loans/{application_id}")
 async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_id)) -> dict:
     _require_db()
@@ -1342,6 +1399,7 @@ async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_i
         "application_id": application_id,
         "borrower": _borrower_block(ap, borrower, e, loan_terms),
         "metrics": metrics_out,
+        "qm": _qm_status(e, loan_terms),
         "conversational_summary": _conversational_summary(decisions, metrics_out, full_name.split()[0]),
         "status": status,
         "urgency": urgency,

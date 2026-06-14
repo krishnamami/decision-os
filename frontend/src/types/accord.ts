@@ -97,6 +97,12 @@ export interface LoanDetail {
     income_stated?: number | null
     income_verified?: number | null
   }
+  qm?: {
+    status: 'safe_harbor' | 'rebuttable_presumption' | 'non_qm' | 'pending'
+    determination: string
+    citation: string
+    tests: { test: string; value: string; limit: string; pass: boolean | null }[]
+  }
   conversational_summary?: {
     summary: string
     issue: string | null
