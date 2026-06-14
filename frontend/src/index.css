@@ -7,3 +7,7 @@
   --color-brand-dark: #0a5743;
   --color-brand-light: #e7f2ee;
 }
+
+body {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
