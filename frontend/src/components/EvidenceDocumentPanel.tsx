@@ -13,13 +13,14 @@ export interface EvidenceDocumentPanelProps {
   source?: string | null // verifying service, e.g. "Experian", "TWN", "AMC"
   page?: number | string | null // page reference, if known
   edmsId?: string | null
+  showEdms?: boolean // default true — preserves all existing (non-workbench) callers
   onClose: () => void
 }
 
 const prettyCategory = (c: string) => c.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase())
 
 export function EvidenceDocumentPanel({
-  documentName, documentType, category, extractedValue, confidence, source, page, edmsId, onClose,
+  documentName, documentType, category, extractedValue, confidence, source, page, edmsId, showEdms, onClose,
 }: EvidenceDocumentPanelProps) {
   const pct = confidence != null ? Math.round(confidence * 100) : null
   const bar = pct == null ? 'bg-slate-300' : pct >= 90 ? 'bg-green-500' : pct >= 75 ? 'bg-amber-500' : 'bg-red-500'
@@ -79,18 +80,20 @@ export function EvidenceDocumentPanel({
           </div>
         </div>
 
-        {/* View in EDMS */}
-        <div className="border-t border-slate-100 p-5">
-          <a
-            href={edmsUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark"
-          >
-            View in EDMS ↗
-          </a>
-          {!edmsId && <p className="mt-2 text-xs text-slate-400">Opens the EDMS document simulator.</p>}
-        </div>
+        {/* View in EDMS — hidden in the workbench (showEdms={false}); shown for other callers */}
+        {showEdms !== false && (
+          <div className="border-t border-slate-100 p-5">
+            <a
+              href={edmsUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark"
+            >
+              View in EDMS ↗
+            </a>
+            {!edmsId && <p className="mt-2 text-xs text-slate-400">Opens the EDMS document simulator.</p>}
+          </div>
+        )}
       </div>
     </div>
   )

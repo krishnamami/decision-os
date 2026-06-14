@@ -273,7 +273,7 @@ function DecisionRow({ d, docs, notes = [], open, onToggle }: { d: DecisionDetai
           </div>
 
           {/* Evidence document detail (slide-over) */}
-          {openEv && <EvidenceDocumentPanel {...openEv} onClose={() => setOpenEv(null)} />}
+          {openEv && <EvidenceDocumentPanel {...openEv} showEdms={false} onClose={() => setOpenEv(null)} />}
         </div>
       )}
     </div>

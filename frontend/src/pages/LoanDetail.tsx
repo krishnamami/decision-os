@@ -131,7 +131,7 @@ export default function LoanDetail() {
 
       <AuditStrip loan={loan} docsCount={docs.length} teamCount={teamCount} />
 
-      {openDoc && <EvidenceDocumentPanel {...panelPropsFromDoc(openDoc)} onClose={() => setOpenDoc(null)} />}
+      {openDoc && <EvidenceDocumentPanel {...panelPropsFromDoc(openDoc)} showEdms={false} onClose={() => setOpenDoc(null)} />}
       {toast && (
         <div className="fixed bottom-16 left-1/2 z-40 -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>
       )}

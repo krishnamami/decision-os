@@ -68,7 +68,7 @@ export default function EvidenceTab({ docs }: { docs: DocItem[] }) {
         </div>
       ))}
 
-      {openDoc && <EvidenceDocumentPanel {...panelPropsFromDoc(openDoc)} onClose={() => setOpenDoc(null)} />}
+      {openDoc && <EvidenceDocumentPanel {...panelPropsFromDoc(openDoc)} showEdms={false} onClose={() => setOpenDoc(null)} />}
     </div>
   )
 }
