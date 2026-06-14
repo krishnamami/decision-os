@@ -58,3 +58,28 @@ export function IconBox({ children, size = 40 }: { children: ReactNode; size?: n
 export function Container({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <div className={`mx-auto max-w-[1200px] px-6 ${className}`}>{children}</div>
 }
+
+// Brand mark — solid green rounded square with a white "A". Rendered in code
+// (not the logo image) so it stays crisp at any size.
+export function BrandMark({ size = 28 }: { size?: number }) {
+  return (
+    <span
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+        width: size,
+        height: size,
+        borderRadius: Math.round(size * 0.25),
+        backgroundColor: BRAND.dark,
+        color: '#fff',
+        fontSize: Math.round(size * 0.58),
+        fontWeight: 700,
+        lineHeight: 1,
+      }}
+    >
+      A
+    </span>
+  )
+}

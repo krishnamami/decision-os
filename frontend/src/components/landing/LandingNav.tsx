@@ -1,13 +1,14 @@
 import { Link } from 'react-router-dom'
 import { BRAND, DEMO } from './brand'
+import { BrandMark } from './primitives'
 
-// Sticky top nav. Logo image already contains the wordmark — no text beside it.
+// Sticky top nav. Brand mark (green "A" badge) + "accord" wordmark.
 export default function LandingNav() {
   return (
     <header className="sticky top-0 z-40 bg-white" style={{ borderBottom: '0.5px solid #E5E7EB' }}>
       <div className="mx-auto flex max-w-[1200px] items-center px-6" style={{ paddingTop: '18px', paddingBottom: '18px' }}>
-        <a href="#top" className="flex items-center" style={{ gap: '4px', lineHeight: 1 }}>
-          <img src="/accord_logo.png" alt="Accord" style={{ height: '26px', display: 'block', verticalAlign: 'middle' }} />
+        <a href="#top" className="flex items-center" style={{ gap: '8px', lineHeight: 1 }}>
+          <BrandMark size={28} />
           <span style={{ fontSize: '20px', fontWeight: 700, color: BRAND.nearblack, letterSpacing: '-0.5px', lineHeight: 1, display: 'block' }}>accord</span>
         </a>
         <nav className="ml-10 hidden items-center md:flex" style={{ gap: '32px', fontSize: '16px', fontWeight: 400, color: BRAND.nearblack }}>
