@@ -12,6 +12,7 @@ import Security from './pages/Security'
 import ComplianceDocs from './pages/ComplianceDocs'
 import DemoMode, { DemoRedirect, DemoWatermark } from './pages/DemoMode'
 import ExaminerReport from './pages/ExaminerReport'
+import DataHealth from './pages/DataHealth'
 import RulesSettings from './pages/RulesSettings'
 import ComparisonMode from './pages/ComparisonMode'
 import ImportLoans from './pages/ImportLoans'
@@ -103,6 +104,7 @@ function AppShell() {
           <Route path="/analytics" element={guard('analytics', <Analytics />)} />
           <Route path="/simulation" element={guard('simulation', <Simulation />)} />
           <Route path="/audit" element={guard('audit', <Audit />)} />
+          <Route path="/data-health" element={<DataHealth />} />
           {user?.role === 'admin' && <Route path="/settings" element={<Settings />} />}
           {(user?.role === 'admin' || user?.role === 'manager') && <Route path="/settings/import" element={<ImportLoans />} />}
           {(user?.role === 'admin' || user?.role === 'manager') && <Route path="/settings/rules" element={<div className="mx-auto max-w-4xl px-6 py-6"><RulesSettings /></div>} />}

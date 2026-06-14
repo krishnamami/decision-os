@@ -215,6 +215,12 @@ export default function Header() {
               🔄 Comparison
             </NavLink>
           )}
+          <NavLink
+            to="/data-health"
+            className={({ isActive }) => `-mb-px border-b-2 py-3 text-sm font-medium transition ${isActive ? 'border-brand text-brand' : 'border-transparent text-[#6B7280] hover:text-slate-800'}`}
+          >
+            Data health
+          </NavLink>
         </nav>
       </div>
     </header>

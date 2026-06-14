@@ -318,6 +318,24 @@ export function fetchExaminerReport(appId: string): Promise<ExaminerReportData> 
   return getJSON<ExaminerReportData>(`/api/accord/loans/${encodeURIComponent(appId)}/examiner-report`)
 }
 
+export interface DataSourceHealth {
+  source: string
+  category: 'federal' | 'agency' | 'system' | 'external'
+  last_updated: string | null
+  next_refresh: string
+  status: 'current' | 'stale' | 'unknown' | 'failing'
+  regulation?: string | null
+  record_count?: number | null
+  tests_total?: number | null
+  tests_passed?: number | null
+  tests_failed?: number | null
+  error?: string | null
+}
+export interface DataHealthResponse { sources: DataSourceHealth[]; as_of: string }
+export function fetchDataHealth(): Promise<DataHealthResponse> {
+  return getJSON<DataHealthResponse>('/api/accord/data-health')
+}
+
 // ── Human-review actions ─────────────────────────────────────────────
 
 export function approveLoan(appId: string, decisionId: string, reviewer: string, notes?: string) {
