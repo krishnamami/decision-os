@@ -6,8 +6,10 @@ import DocumentChecklist from '../components/DocumentChecklist'
 import SourceMatch from '../components/SourceMatch'
 import ComparisonDecision from '../components/ComparisonDecision'
 import { downloadCsv, downloadJson, printPdf } from '../utils/export'
-import { decideLoan, fetchLoan, fetchDocuments } from '../api/client'
+import { decideLoan, fetchLoan, fetchDocuments, type DocItem } from '../api/client'
 import { OFACBadge, deriveOFACStatus } from '../components/OFACBadge'
+import { EvidenceDocumentPanel } from '../components/EvidenceDocumentPanel'
+import { panelPropsFromDoc } from '../components/evidenceDoc'
 import { useAuth } from '../context/AuthContext'
 import type { DecisionDetail, LoanDetail as LoanDetailT } from '../types/accord'
 import PersonaAccordion from '../components/PersonaAccordion'
@@ -32,6 +34,63 @@ function moneyK(v: number | null | undefined) {
 const pct = (v: number | null | undefined) => (v == null ? '—' : `${v.toFixed(1)}%`)
 const creditBand = (s: number | null | undefined) =>
   s == null ? '' : s >= 760 ? 'super-prime' : s >= 700 ? 'prime' : s >= 640 ? 'near-prime' : 'sub-prime'
+
+// ── Clickable summary metrics → source document ──
+type Metric = 'credit_score' | 'dti' | 'ltv' | 'income'
+// The decision whose cited evidence backs each metric.
+const METRIC_DECISIONS: Record<Metric, string[]> = {
+  credit_score: ['credit_assessment'],
+  dti: ['dti_calculation', 'income_verification'],
+  ltv: ['ltv_assessment'],
+  income: ['income_verification', 'employment_reconciliation'],
+}
+// Fallback: canonical document types per metric, in priority order.
+const METRIC_DOC_TYPES: Record<Metric, string[]> = {
+  credit_score: ['CREDIT_REPORT'],
+  dti: ['PAYSTUB_CURRENT', 'W2_CURRENT', 'CREDIT_REPORT'],
+  ltv: ['APPRAISAL_URAR', 'PURCHASE_AGREEMENT'],
+  income: ['W2_CURRENT', 'PAYSTUB_CURRENT', 'VOE_TWN', 'VOE', 'IRS_TRANSCRIPT'],
+}
+function findDocForMetric(metric: Metric, decisions: DecisionDetail[], documents: DocItem[]): DocItem | null {
+  // 1) the document the backing decision actually cited as evidence
+  const dec = decisions.find((d) => METRIC_DECISIONS[metric].includes(d.decision_id) && d.evidence?.length)
+  if (dec) {
+    const first = dec.evidence[0].document?.toLowerCase().split(' ')[0]
+    const m = first ? documents.find((doc) => doc.document_type?.toLowerCase().includes(first)) : undefined
+    if (m) return m
+  }
+  // 2) fall back to the canonical document type for this metric
+  for (const t of METRIC_DOC_TYPES[metric]) {
+    const m = documents.find((doc) => doc.document_type === t)
+    if (m) return m
+  }
+  return null
+}
+
+// One summary metric — clickable when a backing document exists, else static.
+function MetricChip({ label, value, doc, onOpen }: { label: string; value: string; doc: DocItem | null; onOpen: (d: DocItem) => void }) {
+  if (!doc) {
+    return (
+      <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{label}</div>
+        <div className="text-sm font-semibold text-slate-800">{value}</div>
+      </div>
+    )
+  }
+  return (
+    <button
+      onClick={() => onOpen(doc)}
+      title="Click to see source document"
+      className="group rounded-lg border border-slate-200 bg-white px-3 py-2 text-left transition hover:border-brand/40 hover:bg-slate-50"
+    >
+      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{label}</div>
+      <div className="flex items-center gap-1">
+        <span className="text-sm font-semibold text-slate-800 underline decoration-dotted decoration-slate-300 group-hover:decoration-brand">{value}</span>
+        <span className="text-xs text-slate-400 group-hover:text-brand">↗</span>
+      </div>
+    </button>
+  )
+}
 
 // Friendly check name per persona (drives the summary + grouped evidence).
 const FRIENDLY: Record<string, string> = {
@@ -159,6 +218,8 @@ export default function LoanDetail() {
   const [confirmation, setConfirmation] = useState<ActionConfirmationData | null>(null)
   const [modal, setModal] = useState<'request_info' | 'internal' | null>(null)
   const [ofac, setOfac] = useState<{ checkedAt?: string; listDate?: string }>({})
+  const [docs, setDocs] = useState<DocItem[]>([])
+  const [openDoc, setOpenDoc] = useState<DocItem | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -180,6 +241,7 @@ export default function LoanDetail() {
     fetchDocuments(appId)
       .then((d) => {
         if (!alive) return
+        setDocs(d.documents)
         const o = d.documents.find((x) => x.document_type === 'OFAC_CHECK')
         if (o) setOfac({ checkedAt: o.extracted_data?.checked_at as string, listDate: o.extracted_data?.list_date as string })
       })
@@ -300,6 +362,14 @@ export default function LoanDetail() {
             {moneyK(m.loan_amount)} · {loan.application_id}
           </p>
           {loan.borrower.story && <p className="mt-3 text-[15px] leading-relaxed text-slate-700">{loan.borrower.story}</p>}
+
+          {/* Clickable summary metrics — each opens its source document */}
+          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <MetricChip label="Credit Score" value={m.credit_score != null ? String(m.credit_score) : '—'} doc={findDocForMetric('credit_score', loan.decisions, docs)} onOpen={setOpenDoc} />
+            <MetricChip label="DTI" value={pct(m.dti)} doc={findDocForMetric('dti', loan.decisions, docs)} onOpen={setOpenDoc} />
+            <MetricChip label="LTV" value={pct(m.ltv)} doc={findDocForMetric('ltv', loan.decisions, docs)} onOpen={setOpenDoc} />
+            <MetricChip label="Income (verified)" value={moneyK(m.income_verified)} doc={findDocForMetric('income', loan.decisions, docs)} onOpen={setOpenDoc} />
+          </div>
         </section>
 
         {/* 2 — Summary (the conversational story + the three lines) */}
@@ -352,6 +422,9 @@ export default function LoanDetail() {
 
         {/* 5b — Comparison mode (only during an active period) */}
         <ComparisonDecision applicationId={loan.application_id} />
+
+        {/* Source-document panel for a clicked summary metric */}
+        {openDoc && <EvidenceDocumentPanel {...panelPropsFromDoc(openDoc)} onClose={() => setOpenDoc(null)} />}
 
         {modal === 'request_info' && (
           <RequestInfoModal
