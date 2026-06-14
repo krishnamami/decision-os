@@ -39,12 +39,26 @@ def _iso(dt) -> str | None:
 
 
 def _freshness(category: str, last) -> str:
+    """Fallback freshness for sources with no published schedule (system feeds)."""
     if last is None:
         return "unknown"
     if last.tzinfo is None:
         last = last.replace(tzinfo=timezone.utc)
     age = (datetime.now(timezone.utc) - last).total_seconds()
     return "current" if age <= _STALE_AFTER.get(category, 30 * 86400) else "stale"
+
+
+def _scheduled_freshness(ok: bool, last, next_scheduled) -> str:
+    """A tracked feed is stale only when it is OVERDUE against its own published
+    schedule (so an annual source isn't 'stale' five months in)."""
+    if not ok:
+        return "failing"
+    if last is None:
+        return "unknown"
+    if next_scheduled is not None:
+        ns = next_scheduled if next_scheduled.tzinfo else next_scheduled.replace(tzinfo=timezone.utc)
+        return "stale" if datetime.now(timezone.utc) > ns else "current"
+    return "current"
 
 
 @router.get("/data-health")
@@ -73,7 +87,7 @@ async def data_health(user: dict = Depends(get_current_user)) -> dict:
             "last_updated": _iso(last),
             "next_refresh": meta.get("next") or "On schedule",
             "record_count": int(r["record_count"]) if r["record_count"] is not None else None,
-            "status": _freshness(cat, last) if ok else "failing",
+            "status": _scheduled_freshness(ok, last, r["next_scheduled"]),
             "regulation": meta["regulation"],
             "error": None if ok else (r["error_message"] or "download failed"),
         })
