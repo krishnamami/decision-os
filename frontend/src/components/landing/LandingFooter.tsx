@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { BRAND } from './brand'
 import { Container } from './primitives'
 
 const PRODUCT = ['Overview', 'Pipeline', 'Analytics', 'Simulation', 'Audit']
@@ -11,11 +12,14 @@ export default function LandingFooter() {
         <div className="grid gap-10 md:grid-cols-[2fr_1fr_1fr]">
           {/* Col 1 */}
           <div>
-            <img src="/accord_logo.png" alt="Accord" style={{ height: '28px' }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <img src="/accord_logo.png" alt="Accord" style={{ height: '28px' }} />
+              <span style={{ fontSize: '18px', fontWeight: 600, color: BRAND.dark, letterSpacing: '-0.5px' }}>accord</span>
+            </div>
             <p style={{ fontSize: '11px', color: '#6B7280', marginTop: '4px' }}>Decision Intelligence for Lending</p>
             <p className="mt-4 max-w-sm text-sm leading-relaxed text-slate-500">
-              Accord is the Decision Intelligence Platform for lending — where policy, evidence, and human judgment
-              come together to create trusted outcomes.
+              accordlend.com is built by Accord — where policy, evidence, and human judgment come together to create
+              trusted lending decisions. Accord is the holding company behind accordlend.com and accordpreauth.com.
             </p>
           </div>
           {/* Col 2 */}
@@ -44,6 +48,7 @@ export default function LandingFooter() {
 
         <div className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-6 text-xs text-slate-500">
           <span>© 2026 Accord. All rights reserved.</span>
+          <Link to="/" className="hover:text-slate-900">accordlend.com</Link>
           <span className="flex flex-wrap gap-x-5">
             <a href="#faq" className="hover:text-slate-900">Privacy Policy</a>
             <a href="#faq" className="hover:text-slate-900">Terms of Service</a>
