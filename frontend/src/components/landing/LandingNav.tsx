@@ -6,9 +6,9 @@ export default function LandingNav() {
   return (
     <header className="sticky top-0 z-40 bg-white" style={{ borderBottom: '0.5px solid #E5E7EB' }}>
       <div className="mx-auto flex max-w-[1200px] items-center px-6" style={{ paddingTop: '18px', paddingBottom: '18px' }}>
-        <a href="#top" className="flex items-center" style={{ gap: '6px' }}>
-          <img src="/accord_logo.png" alt="Accord" style={{ height: '28px' }} />
-          <span style={{ fontSize: '22px', fontWeight: 700, color: BRAND.nearblack, letterSpacing: '-0.5px', lineHeight: 1 }}>accord</span>
+        <a href="#top" className="flex items-center" style={{ gap: '4px', lineHeight: 1 }}>
+          <img src="/accord_logo.png" alt="Accord" style={{ height: '26px', display: 'block', verticalAlign: 'middle' }} />
+          <span style={{ fontSize: '20px', fontWeight: 700, color: BRAND.nearblack, letterSpacing: '-0.5px', lineHeight: 1, display: 'block' }}>accord</span>
         </a>
         <nav className="ml-10 hidden items-center md:flex" style={{ gap: '32px', fontSize: '16px', fontWeight: 400, color: BRAND.nearblack }}>
           <a href="#products" className="hover:opacity-70">Product</a>
