@@ -306,6 +306,18 @@ export function fetchLoan(appId: string): Promise<LoanDetail> {
   return getJSON<LoanDetail>(`/api/accord/loans/${encodeURIComponent(appId)}`)
 }
 
+export interface ExaminerReportData {
+  generated_at: string
+  generated_by: string
+  application_id: string
+  tenant_id: string
+  loan_type: string | null
+  loan: LoanDetail
+}
+export function fetchExaminerReport(appId: string): Promise<ExaminerReportData> {
+  return getJSON<ExaminerReportData>(`/api/accord/loans/${encodeURIComponent(appId)}/examiner-report`)
+}
+
 // ── Human-review actions ─────────────────────────────────────────────
 
 export function approveLoan(appId: string, decisionId: string, reviewer: string, notes?: string) {

@@ -11,6 +11,7 @@ import Landing from './pages/Landing'
 import Security from './pages/Security'
 import ComplianceDocs from './pages/ComplianceDocs'
 import DemoMode, { DemoRedirect, DemoWatermark } from './pages/DemoMode'
+import ExaminerReport from './pages/ExaminerReport'
 import RulesSettings from './pages/RulesSettings'
 import ComparisonMode from './pages/ComparisonMode'
 import ImportLoans from './pages/ImportLoans'
@@ -47,6 +48,16 @@ function AppShell() {
         <Route path="/pricing" element={<Landing scrollTo="pricing" />} />
         <Route path="/login" element={<Login />} />
         <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    )
+  }
+
+  // Printable examiner report — full page, no app chrome (opens in a new tab).
+  if (location.pathname.startsWith('/loans/') && location.pathname.endsWith('/examiner-report')) {
+    return (
+      <Routes>
+        <Route path="/loans/:id/examiner-report" element={<ExaminerReport />} />
+        <Route path="*" element={<Navigate to="/pipeline" replace />} />
       </Routes>
     )
   }

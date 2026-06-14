@@ -345,7 +345,17 @@ export default function LoanDetail() {
     <div className="mx-auto max-w-5xl px-6 py-6">
       <div className="flex items-center justify-between">
         <Link to="/pipeline" className="text-sm font-medium text-brand hover:underline">← Back to queue</Link>
-        <ExportMenu label="📄 Export this loan" items={exportItems} />
+        <div className="flex items-center gap-2">
+          {['compliance', 'admin', 'super_admin'].includes(role) && (
+            <button
+              onClick={() => window.open(`/loans/${loan.application_id}/examiner-report`, '_blank')}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              📋 Examiner report
+            </button>
+          )}
+          <ExportMenu label="📄 Export this loan" items={exportItems} />
+        </div>
       </div>
 
       <div className="mt-4 space-y-5">
