@@ -49,16 +49,23 @@ def _freshness(category: str, last) -> str:
 
 
 def _scheduled_freshness(ok: bool, last, next_scheduled) -> str:
-    """A tracked feed is stale only when it is OVERDUE against its own published
-    schedule (so an annual source isn't 'stale' five months in)."""
+    """A tracked feed is stale only when it has missed a FULL refresh cycle past
+    its published schedule — so an annual source isn't 'stale' five months in, and
+    a daily source isn't 'stale' the moment it ticks a few hours past 02:00."""
     if not ok:
         return "failing"
     if last is None:
         return "unknown"
-    if next_scheduled is not None:
-        ns = next_scheduled if next_scheduled.tzinfo else next_scheduled.replace(tzinfo=timezone.utc)
-        return "stale" if datetime.now(timezone.utc) > ns else "current"
-    return "current"
+    now = datetime.now(timezone.utc)
+    if next_scheduled is None:
+        return "current"
+    ns = next_scheduled if next_scheduled.tzinfo else next_scheduled.replace(tzinfo=timezone.utc)
+    if now <= ns:
+        return "current"
+    ls = last if last.tzinfo else last.replace(tzinfo=timezone.utc)
+    cycle = (ns - ls).total_seconds()          # the source's own refresh interval
+    overdue = (now - ns).total_seconds()
+    return "stale" if cycle <= 0 or overdue > cycle else "current"
 
 
 @router.get("/data-health")
