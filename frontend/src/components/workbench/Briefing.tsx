@@ -15,9 +15,27 @@ export default function Briefing({ loan, ofac, docs, onOpenDoc }: {
   const cs = loan.conversational_summary
   const summary = cs?.summary
     ?? `${loan.borrower.name} — ${money(m.loan_amount)} loan. ${loan.status}.`
+  const rc = loan.rain_check
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-5">
+      {/* Rain check — loan pinned to a rule version (rate-lock / pipeline protection) */}
+      {rc?.pinned_rule_version && (
+        <div
+          className="mb-3 flex items-start gap-2 rounded-md px-2.5 py-1.5 text-[11px]"
+          style={{ background: '#d1e8d8', border: '0.5px solid #a8d5b5', color: '#0F4D37' }}
+        >
+          <span aria-hidden="true">🔒</span>
+          <span>
+            <strong>Rate lock active</strong> — evaluated under Rule v{rc.pinned_version_number}
+            {rc.pinned_at ? ` (locked ${new Date(rc.pinned_at).toLocaleDateString()})` : ''}.
+            {rc.current_version_number != null && <> Current rule version is v{rc.current_version_number}.</>}
+            {rc.protected && (
+              <span style={{ color: '#854f0b' }}> Rules updated since lock — this loan is protected.</span>
+            )}
+          </span>
+        </div>
+      )}
       {/* Name + compliance badges */}
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-[22px] font-semibold text-slate-900">

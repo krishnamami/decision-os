@@ -10,6 +10,7 @@ import type {
   FunnelStep,
   LoanDetail,
   PipelineResponse,
+  RainCheck,
   ReportRow,
   RiskData,
   SimulationResult,
@@ -319,6 +320,7 @@ export interface ExaminerReportData {
   application_id: string
   tenant_id: string
   loan_type: string | null
+  rain_check?: RainCheck
   rule_versions_applied?: RuleVersionApplied[]
   loan: LoanDetail
 }

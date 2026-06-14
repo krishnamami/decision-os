@@ -1266,6 +1266,114 @@ def compute_examiner_readiness(decisions: list[dict], actions: list) -> dict:
 
 
 @router.get("/loans/{application_id}")
+async def _current_active_version(conn, tenant_id: str):
+    """The tenant's current active rule version row (highest version)."""
+    return await conn.fetchrow(
+        "SELECT rule_version_id, version, effective_from FROM tenant_rules "
+        "WHERE tenant_id=$1 AND status='active' ORDER BY version DESC LIMIT 1",
+        tenant_id,
+    )
+
+
+async def compute_rain_check(conn, tenant_id: str, e: dict) -> dict:
+    """Rain-check / pipeline-protection status for one loan, from its entity row.
+
+    A loan whose ``pinned_rule_version`` differs from the tenant's current active
+    version is *protected*: it was rate-locked under an older rule set and is
+    evaluated under that pinned version, not current rules.
+    """
+    pinned = e.get("pinned_rule_version")  # uuid or None
+    current = await _current_active_version(conn, tenant_id)
+    current_id = current["rule_version_id"] if current else None
+    pinned_num = None
+    if pinned is not None:
+        pv = await conn.fetchrow("SELECT version FROM tenant_rules WHERE rule_version_id=$1", pinned)
+        pinned_num = pv["version"] if pv else None
+    protected = pinned is not None and current_id is not None and pinned != current_id
+    pinned_at = e.get("pinned_at")
+    app_date = e.get("application_date")
+    return {
+        "rate_locked": bool(e.get("rate_locked")),
+        "pinned_rule_version": str(pinned) if pinned else None,
+        "pinned_version_number": pinned_num,
+        "pinned_at": pinned_at.isoformat() if pinned_at else None,
+        "application_date": app_date.isoformat() if app_date else None,
+        "current_rule_version_id": str(current_id) if current_id else None,
+        "current_version_number": current["version"] if current else None,
+        "protected": protected,
+        "protection_reason": (
+            "Loan was rate-locked before a rule update — evaluated under the rules "
+            "active at lock date per pipeline protection policy."
+            if protected
+            else ("Loan evaluated under current rules." if pinned is None
+                  else "Pinned to the current rule version — no version difference.")
+        ),
+    }
+
+
+async def resolve_applicable_rules(conn, tenant_id: str, application_id: str, at=None) -> dict:
+    """Which tenant_rules version governs this loan, and its rule body.
+
+    Priority: (1) pinned_rule_version (rate lock) → (2) pipeline_cutoff_date
+    protection for loans submitted before the cutoff → (3) current active version.
+    This is the canonical resolver future evaluations consult so a locked loan is
+    always scored under the rules in force when it locked.
+    """
+    es = await conn.fetchrow(
+        "SELECT pinned_rule_version, pinned_at, application_date "
+        "FROM entity_states WHERE application_id=$1 AND tenant_id=$2",
+        application_id, tenant_id,
+    )
+    # 1. Explicitly pinned at rate lock.
+    if es and es["pinned_rule_version"]:
+        row = await conn.fetchrow(
+            "SELECT rule_version_id, version, rules FROM tenant_rules WHERE rule_version_id=$1",
+            es["pinned_rule_version"],
+        )
+        if row:
+            return {
+                "rule_version_id": str(row["rule_version_id"]), "version": row["version"],
+                "rules": _J(row["rules"]), "source": "pinned",
+                "reason": f"Rate-locked — pinned to rule v{row['version']}",
+            }
+    # 2. Pipeline-cutoff protection: a newer active version set a cutoff after this
+    #    loan's application_date → grandfather it under the prior version.
+    app_date = es["application_date"] if es else None
+    if app_date:
+        prot = await conn.fetchrow(
+            """
+            SELECT prev.rule_version_id, prev.version, prev.rules, curr.pipeline_cutoff_date
+            FROM tenant_rules curr
+            JOIN tenant_rules prev ON prev.tenant_id = curr.tenant_id
+              AND prev.version = curr.version - 1
+            WHERE curr.tenant_id = $1 AND curr.status = 'active'
+              AND curr.pipeline_cutoff_date IS NOT NULL
+              AND curr.pipeline_cutoff_date > $2
+            ORDER BY curr.version DESC LIMIT 1
+            """,
+            tenant_id, app_date,
+        )
+        if prot:
+            return {
+                "rule_version_id": str(prot["rule_version_id"]), "version": prot["version"],
+                "rules": _J(prot["rules"]), "source": "pipeline_protection",
+                "reason": (f"Submitted before pipeline cutoff {prot['pipeline_cutoff_date']} "
+                           f"— grandfathered under rule v{prot['version']}"),
+            }
+    # 3. Current active version.
+    cur = await conn.fetchrow(
+        "SELECT rule_version_id, version, rules FROM tenant_rules "
+        "WHERE tenant_id=$1 AND status='active' ORDER BY version DESC LIMIT 1",
+        tenant_id,
+    )
+    if cur:
+        return {
+            "rule_version_id": str(cur["rule_version_id"]), "version": cur["version"],
+            "rules": _J(cur["rules"]), "source": "current", "reason": "Current active rule version",
+        }
+    return {"rule_version_id": None, "version": None, "rules": {}, "source": "none", "reason": "No rules configured"}
+
+
 async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_id)) -> dict:
     _require_db()
     pool = await _get_pool()
@@ -1341,6 +1449,7 @@ async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_i
             """,
             application_id,
         )
+        rain_check = await compute_rain_check(conn, tenant_id, dict(entity))
 
     e = dict(entity)
     ap = dict(approw) if approw else {}
@@ -1433,6 +1542,7 @@ async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_i
         "metrics": metrics_out,
         "qm": _qm_status(e, loan_terms),
         "examiner_readiness": compute_examiner_readiness(decisions, action_rows),
+        "rain_check": rain_check,
         "conversational_summary": _conversational_summary(decisions, metrics_out, full_name.split()[0]),
         "status": status,
         "urgency": urgency,

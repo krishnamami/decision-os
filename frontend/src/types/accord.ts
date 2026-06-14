@@ -83,6 +83,18 @@ export interface DecisionDetail {
   rule_version_effective_from?: string | null
 }
 
+export interface RainCheck {
+  rate_locked: boolean
+  pinned_rule_version: string | null
+  pinned_version_number: number | null
+  pinned_at: string | null
+  application_date: string | null
+  current_rule_version_id: string | null
+  current_version_number: number | null
+  protected: boolean
+  protection_reason: string
+}
+
 export interface LoanDetail {
   application_id: string
   borrower: {
@@ -108,6 +120,7 @@ export interface LoanDetail {
     tests: { test: string; value: string; limit: string; pass: boolean | null }[]
   }
   examiner_readiness?: { score: number; missing: string[] }
+  rain_check?: RainCheck
   conversational_summary?: {
     summary: string
     issue: string | null
