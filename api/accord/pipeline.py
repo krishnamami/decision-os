@@ -1247,6 +1247,24 @@ def _qm_status(e: dict, loan_terms: dict) -> dict:
     }
 
 
+def compute_examiner_readiness(decisions: list[dict], actions: list) -> dict:
+    """How examiner-ready this file is: 60% from decisions carrying a rule
+    citation, 40% from human actions carrying a >= 25-char reason."""
+    total = len(decisions)
+    if total == 0:
+        return {"score": 0, "missing": ["No decisions recorded"]}
+    documented = sum(1 for d in decisions if d.get("rule"))
+    human = [a for a in actions if (a["performed_by"] or "") != "system"]
+    explained = sum(1 for a in human if len((a["reason_text"] or "")) >= 25)
+    score = round((documented / total) * 60 + (explained / max(len(human), 1)) * 40)
+    missing: list[str] = []
+    if documented < total:
+        missing.append(f"{total - documented} decisions missing rule citations")
+    if explained < len(human):
+        missing.append(f"{len(human) - explained} actions missing explanation")
+    return {"score": score, "missing": missing}
+
+
 @router.get("/loans/{application_id}")
 async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_id)) -> dict:
     _require_db()
@@ -1306,6 +1324,10 @@ async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_i
             ORDER BY created_at DESC
             """,
             application_id,
+        )
+        action_rows = await conn.fetch(
+            "SELECT performed_by, reason_text FROM loan_actions WHERE application_id = $1 AND tenant_id = $2",
+            application_id, tenant_id,
         )
         act_rows = await conn.fetch(
             """
@@ -1400,6 +1422,7 @@ async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_i
         "borrower": _borrower_block(ap, borrower, e, loan_terms),
         "metrics": metrics_out,
         "qm": _qm_status(e, loan_terms),
+        "examiner_readiness": compute_examiner_readiness(decisions, action_rows),
         "conversational_summary": _conversational_summary(decisions, metrics_out, full_name.split()[0]),
         "status": status,
         "urgency": urgency,
