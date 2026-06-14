@@ -23,18 +23,22 @@ const TABS = [
   { to: '/analytics', product: 'analytics', label: 'Analytics' },
   { to: '/simulation', product: 'simulation', label: 'Simulation' },
   { to: '/audit', product: 'audit', label: 'Audit' },
+  { to: '/data-health', product: 'data_health', label: 'Data Health' },
 ]
 
-// Which products each role may open at all.
-const ROLE_PRODUCTS: Record<string, string[]> = {
-  admin: ['pipeline', 'analytics', 'simulation', 'audit'],
-  manager: ['pipeline', 'analytics', 'simulation', 'audit'],
-  senior_uw: ['pipeline', 'analytics', 'simulation', 'audit'],
-  underwriter: ['pipeline', 'simulation'],
-  processor: ['pipeline'],
-  closer: ['pipeline'],
-  compliance: ['pipeline', 'audit'],
-  viewer: ['pipeline'],
+// Which nav tabs each role sees (by label). Roles not listed fall back to
+// Pipeline only. Tabs are also plan-gated below (pipeline + data_health are
+// always plan-available).
+const ROLE_NAV: Record<string, string[]> = {
+  underwriter: ['Pipeline'],
+  processor: ['Pipeline'],
+  closer: ['Pipeline'],
+  viewer: ['Pipeline'],
+  senior_uw: ['Pipeline', 'Analytics'],
+  manager: ['Pipeline', 'Analytics', 'Simulation'],
+  compliance: ['Pipeline', 'Audit', 'Data Health'],
+  admin: ['Pipeline', 'Analytics', 'Simulation', 'Audit', 'Data Health'],
+  super_admin: ['Pipeline', 'Analytics', 'Simulation', 'Audit', 'Data Health'],
 }
 // Upgrade prompt when the tenant's plan lacks a product.
 const UPGRADE: Record<string, string> = {
@@ -76,8 +80,8 @@ export default function Header() {
   const isActiveProduct = (to: string) => location.pathname === to || location.pathname.startsWith(to + '/')
   const role = user?.role ?? 'viewer' // identity (avatar/menu) = real user
   const effRole = effectiveUser?.role ?? 'viewer' // tabs follow the impersonated role
-  const roleAllows = (product: string) => (ROLE_PRODUCTS[effRole] ?? ['pipeline']).includes(product)
-  const planAllows = (product: string) => product === 'pipeline' || hasProduct(product)
+  const roleAllows = (label: string) => (ROLE_NAV[effRole] ?? ['Pipeline']).includes(label)
+  const planAllows = (product: string) => product === 'pipeline' || product === 'data_health' || hasProduct(product)
   const initials = (user?.name || '?').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()
   const canCompare = role === 'admin' || role === 'manager'
 
@@ -182,7 +186,7 @@ export default function Header() {
       <div className="border-b border-[#E5E7EB] bg-white">
         <nav className="mx-auto flex max-w-7xl items-center gap-6 px-6">
           {TABS.map((t) => {
-            if (!roleAllows(t.product)) return null // role can't access — hide
+            if (!roleAllows(t.label)) return null // role can't access — hide
             if (!planAllows(t.product)) {
               return (
                 <span
@@ -215,12 +219,6 @@ export default function Header() {
               🔄 Comparison
             </NavLink>
           )}
-          <NavLink
-            to="/data-health"
-            className={({ isActive }) => `-mb-px border-b-2 py-3 text-sm font-medium transition ${isActive ? 'border-brand text-brand' : 'border-transparent text-[#6B7280] hover:text-slate-800'}`}
-          >
-            Data health
-          </NavLink>
         </nav>
       </div>
     </header>
