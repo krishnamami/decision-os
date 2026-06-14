@@ -40,6 +40,23 @@ async def examiner_report(application_id: str, user: dict = Depends(get_current_
             "WHERE application_id=$1 AND tenant_id=$2",
             application_id, tenant_id,
         )
+        # Distinct rule versions that governed this loan's decisions, so an
+        # examiner can see exactly which policy was in force for each.
+        rv_rows = await conn.fetch(
+            """
+            SELECT tr.version,
+                   tr.effective_from,
+                   tr.effective_to,
+                   tr.changes_summary,
+                   COUNT(*) AS decision_count
+            FROM decision_outputs dout
+            JOIN tenant_rules tr ON tr.rule_version_id = dout.rule_version_id
+            WHERE dout.application_id = $1 AND dout.tenant_id = $2
+            GROUP BY tr.version, tr.effective_from, tr.effective_to, tr.changes_summary
+            ORDER BY tr.version
+            """,
+            application_id, tenant_id,
+        )
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -47,5 +64,15 @@ async def examiner_report(application_id: str, user: dict = Depends(get_current_
         "application_id": application_id,
         "tenant_id": tenant_id,
         "loan_type": row["loan_type"] if row else None,
+        "rule_versions_applied": [
+            {
+                "version": r["version"],
+                "effective_from": r["effective_from"].isoformat() if r["effective_from"] else None,
+                "effective_to": r["effective_to"].isoformat() if r["effective_to"] else None,
+                "decision_count": r["decision_count"],
+                "changes_summary": r["changes_summary"],
+            }
+            for r in rv_rows
+        ],
         "loan": loan,
     }

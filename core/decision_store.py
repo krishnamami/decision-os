@@ -37,6 +37,42 @@ ALL_DECISIONS: tuple[str, ...] = (
 _TOTAL_DECISIONS = len(ALL_DECISIONS)
 
 
+async def _get_active_rule_version_id(
+    conn: Any,
+    tenant_id: str,
+    at_time: Optional[datetime] = None,
+) -> Optional[UUID]:
+    """rule_version_id of the active tenant_rules record for this tenant at
+    ``at_time`` (defaults to now). Returns None when no active version exists
+    (e.g. a tenant with no rules configured). Never raises — a failed lookup
+    must never block a decision from being written.
+
+    ``tenant_rules.effective_from``/``effective_to`` are naive UTC timestamps,
+    so the comparison instant is normalised to naive UTC.
+    """
+    try:
+        at = at_time or datetime.now(timezone.utc)
+        if at.tzinfo is not None:
+            at = at.astimezone(timezone.utc).replace(tzinfo=None)
+        row = await conn.fetchrow(
+            """
+            SELECT rule_version_id
+            FROM tenant_rules
+            WHERE tenant_id = $1
+              AND status = 'active'
+              AND effective_from <= $2
+              AND (effective_to IS NULL OR effective_to > $2)
+            ORDER BY version DESC
+            LIMIT 1
+            """,
+            tenant_id,
+            at,
+        )
+        return row["rule_version_id"] if row else None
+    except Exception:
+        return None  # never block a decision because of this lookup
+
+
 class DecisionStore:
     """Append-only decision writer + reader, EDMS PG-backed."""
 
@@ -122,6 +158,10 @@ class DecisionStore:
                 )
                 new_version = (current_version or 0) + 1
 
+                # Which tenant_rules version governed this decision, as of the
+                # moment it was decided. NULL when the tenant has no rules.
+                rule_version_id = await _get_active_rule_version_id(conn, tenant_id, now)
+
                 await conn.execute(
                     """
                     INSERT INTO decision_outputs (
@@ -130,10 +170,12 @@ class DecisionStore:
                         context_snapshot, reasoning, confidence,
                         upstream_decisions, sla_seconds, actual_seconds,
                         version, tenant_id, decided_at, created_at,
-                        human_action, human_reviewer, acted_at
+                        human_action, human_reviewer, acted_at,
+                        rule_version_id
                     )
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-                            $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+                            $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
+                            $23)
                     """,
                     decision_uuid,
                     application_id,
@@ -157,6 +199,7 @@ class DecisionStore:
                     human_action,
                     human_reviewer,
                     acted_at,
+                    rule_version_id,
                 )
 
                 prev = await conn.fetchrow(

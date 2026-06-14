@@ -306,12 +306,20 @@ export function fetchLoan(appId: string): Promise<LoanDetail> {
   return getJSON<LoanDetail>(`/api/accord/loans/${encodeURIComponent(appId)}`)
 }
 
+export interface RuleVersionApplied {
+  version: number
+  effective_from: string | null
+  effective_to: string | null
+  decision_count: number
+  changes_summary: string | null
+}
 export interface ExaminerReportData {
   generated_at: string
   generated_by: string
   application_id: string
   tenant_id: string
   loan_type: string | null
+  rule_versions_applied?: RuleVersionApplied[]
   loan: LoanDetail
 }
 export function fetchExaminerReport(appId: string): Promise<ExaminerReportData> {

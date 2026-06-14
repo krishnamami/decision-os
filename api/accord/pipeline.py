@@ -1288,13 +1288,17 @@ async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_i
         )
         decision_rows = await conn.fetch(
             """
-            SELECT DISTINCT ON (decision_id)
-                   decision_id, outcome, confidence, mode, wave,
-                   human_action, human_reviewer, acted_at, human_override_reason,
-                   boundary_matched, boundary_rule, context_snapshot, reasoning, stale
-            FROM decision_outputs
-            WHERE application_id = $1 AND tenant_id = $2
-            ORDER BY decision_id, version DESC
+            SELECT DISTINCT ON (dout.decision_id)
+                   dout.decision_id, dout.outcome, dout.confidence, dout.mode, dout.wave,
+                   dout.human_action, dout.human_reviewer, dout.acted_at, dout.human_override_reason,
+                   dout.boundary_matched, dout.boundary_rule, dout.context_snapshot, dout.reasoning, dout.stale,
+                   dout.rule_version_id,
+                   tr.version AS rule_version_number,
+                   tr.effective_from AS rule_version_effective_from
+            FROM decision_outputs dout
+            LEFT JOIN tenant_rules tr ON tr.rule_version_id = dout.rule_version_id
+            WHERE dout.application_id = $1 AND dout.tenant_id = $2
+            ORDER BY dout.decision_id, dout.version DESC
             """,
             application_id, tenant_id,
         )
@@ -1398,6 +1402,12 @@ async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_i
             "signals": [_signal_view(s) for s in signals],
             "evidence": _evidence_for(did, doc_rows),
             "rule": boundary_rule,
+            "rule_version_id": str(r["rule_version_id"]) if r["rule_version_id"] else None,
+            "rule_version_short": str(r["rule_version_id"])[:8] if r["rule_version_id"] else None,
+            "rule_version_number": r["rule_version_number"],
+            "rule_version_effective_from": (
+                r["rule_version_effective_from"].isoformat() if r["rule_version_effective_from"] else None
+            ),
         })
 
     lock_days = _lock_days(loan_terms)
@@ -1708,12 +1718,12 @@ async def revert_decision(
                     boundary_matched, boundary_rule, context_snapshot, reasoning,
                     confidence, upstream_decisions, human_action, human_override_reason,
                     human_reviewer, decided_at, acted_at, sla_seconds, actual_seconds,
-                    version, tenant_id, stale)
+                    version, tenant_id, stale, rule_version_id)
                 SELECT application_id, decision_id, wave, $1::varchar, mode, risk_level,
                     boundary_matched, boundary_rule, context_snapshot, reasoning,
                     confidence, upstream_decisions, NULL::varchar, NULL::text,
                     NULL::varchar, decided_at, NULL::timestamptz, sla_seconds,
-                    actual_seconds, $2::integer, tenant_id, false
+                    actual_seconds, $2::integer, tenant_id, false, rule_version_id
                 FROM decision_outputs WHERE id=$3
                 """,
                 ai_outcome, new_version, cur["id"],

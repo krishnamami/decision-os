@@ -2667,14 +2667,14 @@ async def _record_revert(
                     context_snapshot, reasoning, confidence,
                     upstream_decisions, human_action, human_override_reason,
                     human_reviewer, decided_at, acted_at, sla_seconds,
-                    actual_seconds, version, tenant_id, stale
+                    actual_seconds, version, tenant_id, stale, rule_version_id
                 )
                 SELECT application_id, decision_id, wave, $1::varchar, mode,
                        risk_level, boundary_matched, boundary_rule,
                        context_snapshot, reasoning, confidence,
                        upstream_decisions, NULL::varchar, NULL::text,
                        NULL::varchar, decided_at, NULL::timestamptz, sla_seconds,
-                       actual_seconds, $2::integer, tenant_id, false
+                       actual_seconds, $2::integer, tenant_id, false, rule_version_id
                 FROM decision_outputs WHERE id = $3
                 """,
                 ai_outcome,

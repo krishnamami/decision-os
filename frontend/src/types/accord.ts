@@ -77,6 +77,10 @@ export interface DecisionDetail {
   signals: Signal[]
   evidence: Evidence[]
   rule: string | null
+  rule_version_id?: string | null
+  rule_version_short?: string | null
+  rule_version_number?: number | null
+  rule_version_effective_from?: string | null
 }
 
 export interface LoanDetail {

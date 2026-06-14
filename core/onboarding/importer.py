@@ -381,6 +381,18 @@ async def evaluate_imported(conn, tenant_id: str, app_ids: list[str], rules: dic
     from core.compliance.rule_validator import resolve, evaluate
     R = resolve(rules, programs)
     counts = {"allow": 0, "review": 0, "block": 0, "escalate": 0}
+    # Active rule version for this tenant right now — stamped on every decision
+    # written here. NULL when the tenant has no rules. Never blocks the import.
+    try:
+        rule_version_id = await conn.fetchval(
+            "SELECT rule_version_id FROM tenant_rules "
+            "WHERE tenant_id=$1 AND status='active' "
+            "AND effective_from <= NOW() AND (effective_to IS NULL OR effective_to > NOW()) "
+            "ORDER BY version DESC LIMIT 1",
+            tenant_id,
+        )
+    except Exception:
+        rule_version_id = None
     for app in app_ids:
         es = await conn.fetchrow(
             "SELECT mid_credit_score, dti_back, ltv, loan_terms FROM entity_states WHERE application_id=$1", app)
@@ -406,9 +418,9 @@ async def evaluate_imported(conn, tenant_id: str, app_ids: list[str], rules: dic
             outcome, mode = "allow", "auto_execute"
         counts["allow" if outcome == "allow" else "review" if outcome == "recommend" else "block"] += 1
         await conn.execute(
-            "INSERT INTO decision_outputs (application_id, decision_id, wave, outcome, mode, confidence, tenant_id, decided_at) "
-            "VALUES ($1,'underwriting_decision',4,$2,$3,$4,$5,NOW())",
-            app, outcome, mode, 0.9, tenant_id)
+            "INSERT INTO decision_outputs (application_id, decision_id, wave, outcome, mode, confidence, tenant_id, decided_at, rule_version_id) "
+            "VALUES ($1,'underwriting_decision',4,$2,$3,$4,$5,NOW(),$6)",
+            app, outcome, mode, 0.9, tenant_id, rule_version_id)
     return counts
 
 

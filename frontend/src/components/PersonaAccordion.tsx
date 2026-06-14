@@ -200,6 +200,15 @@ function DecisionRow({ d, docs, notes = [], open, onToggle }: { d: DecisionDetai
                         <div>
                           <p className="text-[15px] font-medium text-[#374151]">{def.label}</p>
                           {def.citation && <p className="mt-0.5 text-xs text-slate-500">Citation: {def.citation}</p>}
+                          {(d.rule_version_number != null || d.rule_version_id) && (
+                            <p className="mt-1 flex items-center gap-1 text-[11px] text-slate-400">
+                              <span aria-hidden="true">⎇</span>
+                              Rule {d.rule_version_number != null ? `v${d.rule_version_number}` : (d.rule_version_short || d.rule_version_id!.slice(0, 8))}
+                              {d.rule_version_effective_from && (
+                                <span>· active from {new Date(d.rule_version_effective_from).toLocaleDateString()}</span>
+                              )}
+                            </p>
+                          )}
                         </div>
                       </div>
                       <button onClick={() => setShowRule((v) => !v)} className="mt-2 text-xs font-medium text-slate-500 hover:text-slate-800">
