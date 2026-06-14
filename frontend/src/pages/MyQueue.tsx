@@ -18,6 +18,10 @@ const firstName = (n: string) => n.split(' ')[0]
 const prettyType = (t: string | null) =>
   t ? t.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : '—'
 
+const FILTER_LABEL: Record<'active' | 'pending' | 'decided', string> = {
+  active: 'Need my action', pending: 'Pending response', decided: 'Decided this week',
+}
+
 // queue_type/urgency → dot + tag shown on each action card.
 function cardTag(c: QueueCard): { dot: string; tag: string; tagCls: string } {
   if (c.queue_type === 'internal_request') return { dot: '🔵', tag: 'INTERNAL REQUEST', tagCls: 'text-blue-700' }
@@ -46,6 +50,7 @@ export default function MyQueue({
   const [toast, setToast] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
   const [simCard, setSimCard] = useState<QueueCard | null>(null)
+  const [activeFilter, setActiveFilter] = useState<'active' | 'pending' | 'decided' | null>(null)
 
   const act = (msg: string) => {
     setToast(msg)
@@ -92,66 +97,101 @@ export default function MyQueue({
           <p className="text-sm capitalize text-slate-500">{data.user.role.replace(/_/g, ' ')}</p>
         </div>
         <div className="flex items-center gap-1 text-sm text-slate-500">
-          🔔 <span>{data.counts.active} need action</span>
+          🔔 <span>{data.active.length} need action</span>
         </div>
       </div>
 
-      {/* Count cards */}
+      {/* Count cards — click to filter the queue to that bucket */}
       <div className="mb-6 grid grid-cols-3 gap-3">
-        {[
-          { label: 'Need my action', n: data.counts.active, accent: 'text-red-600' },
-          { label: 'Pending response', n: data.counts.pending, accent: 'text-amber-600' },
-          { label: 'Decided this week', n: data.counts.decided, accent: 'text-green-600' },
-        ].map((c) => (
-          <div key={c.label} className="rounded-xl border border-slate-200 bg-white p-4">
+        {([
+          { key: 'active', label: 'Need my action', n: data.active.length, accent: 'text-red-600', ring: 'ring-red-500' },
+          { key: 'pending', label: 'Pending response', n: data.pending.length, accent: 'text-amber-600', ring: 'ring-amber-500' },
+          { key: 'decided', label: 'Decided this week', n: data.decided.length, accent: 'text-green-600', ring: 'ring-green-500' },
+        ] as const).map((c) => (
+          <button
+            key={c.key}
+            onClick={() => setActiveFilter((f) => (f === c.key ? null : c.key))}
+            title="Click to filter the queue"
+            className={`rounded-xl border bg-white p-4 text-left transition hover:border-brand/40 hover:bg-slate-50 ${activeFilter === c.key ? `border-transparent ring-2 ${c.ring}` : 'border-slate-200'}`}
+          >
             <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{c.label}</div>
             <div className={`mt-1 text-3xl font-semibold ${c.accent}`}>{c.n}</div>
-          </div>
+          </button>
         ))}
       </div>
 
-      {/* NEED MY ACTION */}
-      <SectionHeader label="Need my action" n={data.active.length} />
-      {data.active.length === 0 ? (
-        <p className="mb-6 text-sm text-slate-400">Nothing needs your action right now. 🎉</p>
+      {/* Active-filter banner */}
+      {activeFilter && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-sm">
+          <span className="font-medium text-slate-700">
+            Filtered: {FILTER_LABEL[activeFilter]} ({data[activeFilter].length})
+          </span>
+          <button onClick={() => setActiveFilter(null)} className="ml-auto rounded px-1.5 font-medium text-slate-500 hover:text-slate-800" title="Clear filter">✕ Clear</button>
+        </div>
+      )}
+
+      {/* When a filter is active, show ONLY that bucket; else the full layout. */}
+      {activeFilter ? (
+        data[activeFilter].length === 0 ? (
+          <div className="rounded-xl border border-dashed border-slate-200 bg-white p-8 text-center">
+            <p className="text-sm text-slate-500">No loans in this category right now.</p>
+            <button onClick={() => setActiveFilter(null)} className="mt-3 rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-dark">Show all loans</button>
+          </div>
+        ) : activeFilter === 'active' ? (
+          <div className="space-y-3">
+            {data.active.map((c) => (
+              <ActionCard key={c.application_id} c={c} canAct={canAct} onReview={() => navigate(`/pipeline/${c.application_id}`)} onAct={act} />
+            ))}
+          </div>
+        ) : activeFilter === 'pending' ? (
+          <div className="space-y-2">
+            {data.pending.map((c) => (
+              <PendingCard key={c.application_id} c={c} canAct={canAct} onAct={act} onSimulate={() => setSimCard(c)} />
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {data.decided.map((c) => (
+              <DecidedRow key={c.application_id} c={c} onClick={() => navigate(`/pipeline/${c.application_id}`)} />
+            ))}
+          </div>
+        )
       ) : (
-        <div className="mb-8 space-y-3">
-          {data.active.map((c) => (
-            <ActionCard key={c.application_id} c={c} canAct={canAct} onReview={() => navigate(`/pipeline/${c.application_id}`)} onAct={act} />
-          ))}
-        </div>
-      )}
+        <>
+          {/* NEED MY ACTION */}
+          <SectionHeader label="Need my action" n={data.active.length} />
+          {data.active.length === 0 ? (
+            <p className="mb-6 text-sm text-slate-400">Nothing needs your action right now. 🎉</p>
+          ) : (
+            <div className="mb-8 space-y-3">
+              {data.active.map((c) => (
+                <ActionCard key={c.application_id} c={c} canAct={canAct} onReview={() => navigate(`/pipeline/${c.application_id}`)} onAct={act} />
+              ))}
+            </div>
+          )}
 
-      {/* PENDING RESPONSE (collapsible) */}
-      <CollapsibleHeader label="Pending response" n={data.pending.length} open={openPending} onToggle={() => setOpenPending((v) => !v)} />
-      {openPending && (
-        <div className="mb-8 mt-3 space-y-2">
-          {data.pending.map((c) => (
-            <PendingCard key={c.application_id} c={c} canAct={canAct} onAct={act} onSimulate={() => setSimCard(c)} />
-          ))}
-          {data.pending.length === 0 && <p className="text-sm text-slate-400">No pending borrower requests.</p>}
-        </div>
-      )}
+          {/* PENDING RESPONSE (collapsible) */}
+          <CollapsibleHeader label="Pending response" n={data.pending.length} open={openPending} onToggle={() => setOpenPending((v) => !v)} />
+          {openPending && (
+            <div className="mb-8 mt-3 space-y-2">
+              {data.pending.map((c) => (
+                <PendingCard key={c.application_id} c={c} canAct={canAct} onAct={act} onSimulate={() => setSimCard(c)} />
+              ))}
+              {data.pending.length === 0 && <p className="text-sm text-slate-400">No pending borrower requests.</p>}
+            </div>
+          )}
 
-      {/* DECIDED THIS WEEK (collapsible) */}
-      <CollapsibleHeader label="Decided this week" n={data.decided.length} open={openDecided} onToggle={() => setOpenDecided((v) => !v)} />
-      {openDecided && (
-        <div className="mt-3 space-y-1.5">
-          {data.decided.map((c) => (
-            <button
-              key={c.application_id}
-              onClick={() => navigate(`/pipeline/${c.application_id}`)}
-              className="flex w-full items-center gap-3 rounded-lg border border-slate-100 bg-white px-4 py-2 text-left text-sm hover:bg-slate-50"
-            >
-              <span>{c.status === 'funded' ? '✅' : '✅'}</span>
-              <span className="font-medium text-slate-800">{c.borrower_name}</span>
-              <span className="text-slate-400">·</span>
-              <span className="text-slate-600">{money(c.loan_amount)}</span>
-              <span className="ml-auto capitalize text-slate-400">{c.status}</span>
-            </button>
-          ))}
-          {data.decided.length === 0 && <p className="text-sm text-slate-400">Nothing decided this week.</p>}
-        </div>
+          {/* DECIDED THIS WEEK (collapsible) */}
+          <CollapsibleHeader label="Decided this week" n={data.decided.length} open={openDecided} onToggle={() => setOpenDecided((v) => !v)} />
+          {openDecided && (
+            <div className="mt-3 space-y-1.5">
+              {data.decided.map((c) => (
+                <DecidedRow key={c.application_id} c={c} onClick={() => navigate(`/pipeline/${c.application_id}`)} />
+              ))}
+              {data.decided.length === 0 && <p className="text-sm text-slate-400">Nothing decided this week.</p>}
+            </div>
+          )}
+        </>
       )}
 
       {toast && (
@@ -313,6 +353,21 @@ function ActionCard({
         </div>
       )}
     </div>
+  )
+}
+
+function DecidedRow({ c, onClick }: { c: QueueCard; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex w-full items-center gap-3 rounded-lg border border-slate-100 bg-white px-4 py-2 text-left text-sm hover:bg-slate-50"
+    >
+      <span>✅</span>
+      <span className="font-medium text-slate-800">{c.borrower_name}</span>
+      <span className="text-slate-400">·</span>
+      <span className="text-slate-600">{money(c.loan_amount)}</span>
+      <span className="ml-auto capitalize text-slate-400">{c.status}</span>
+    </button>
   )
 }
 
