@@ -442,6 +442,15 @@ export function fetchComplianceHealth(period?: string): Promise<ComplianceHealth
   return getJSON<ComplianceHealth>(withPeriod(`/api/accord/audit/compliance-health`, period))
 }
 
+export interface HmdaIncompleteLoan { application_id: string; borrower_name: string; missing_fields: string[]; missing_count: number }
+export interface HmdaIncompleteResponse {
+  filing_deadline: string; total: number; complete: number; incomplete: number; pct: number; note: string
+  loans: HmdaIncompleteLoan[]
+}
+export function fetchHmdaIncomplete(): Promise<HmdaIncompleteResponse> {
+  return getJSON<HmdaIncompleteResponse>('/api/accord/audit/hmda-incomplete')
+}
+
 export function fetchAdverseAction(period?: string): Promise<{ total: number; adverse_actions: AdverseAction[] }> {
   return getJSON(withPeriod(`/api/accord/audit/adverse-action?limit=50`, period))
 }

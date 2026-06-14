@@ -13,6 +13,7 @@ import type {
   ReportRow,
 } from '../types/accord'
 import PeriodFilter, { type Period, periodParam } from '../components/PeriodFilter'
+import HmdaDrilldown from '../components/HmdaDrilldown'
 import { CardSkeleton, ErrorState } from '../components/states'
 import { downloadCsv, downloadJson } from '../utils/export'
 
@@ -56,6 +57,7 @@ function kpiColor(value: number, good: number, warn: number, invert = false): st
 
 export default function Audit() {
   const [health, setHealth] = useState<ComplianceHealth | null>(null)
+  const [showHmda, setShowHmda] = useState(false)
   const [adverse, setAdverse] = useState<AdverseAction[]>([])
   const [adverseTotal, setAdverseTotal] = useState(0)
   const [reports, setReports] = useState<ReportRow[]>([])
@@ -159,7 +161,8 @@ export default function Audit() {
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <KpiCard label="HMDA Completeness" value={`${health.hmda_pct}%`} color={kpiColor(health.hmda_pct, 95, 80)} />
+          <KpiCard label="HMDA Completeness" value={`${health.hmda_pct}%`} color={kpiColor(health.hmda_pct, 95, 80)}
+            onClick={() => setShowHmda((v) => !v)} active={showHmda} />
           <KpiCard label="Adverse Action Pending" value={health.adverse_pending.toLocaleString()}
             color={health.adverse_pending > 0 ? 'text-amber-600' : 'text-slate-900'} />
           <KpiCard label="Overrides This Month" value={health.overrides.toLocaleString()}
@@ -167,6 +170,8 @@ export default function Audit() {
           <KpiCard label="SLA Compliance" value={`${health.sla_pct}%`} color={kpiColor(health.sla_pct, 90, 75)} />
         </div>
       )}
+
+      {showHmda && <HmdaDrilldown />}
 
       {/* 3. Audit trail search */}
       <section className="space-y-3">
@@ -421,9 +426,18 @@ export default function Audit() {
   )
 }
 
-function KpiCard({ label, value, color }: { label: string; value: string; color: string }) {
+function KpiCard({ label, value, color, onClick, active }: { label: string; value: string; color: string; onClick?: () => void; active?: boolean }) {
+  const base = `rounded-lg border bg-white p-5 shadow-sm ${active ? 'border-brand ring-1 ring-brand/30' : 'border-gray-200'}`
+  if (onClick) {
+    return (
+      <button onClick={onClick} className={`${base} text-left transition hover:border-brand/50 hover:bg-slate-50`}>
+        <div className="flex items-center justify-between text-xs uppercase tracking-wide text-gray-500">{label}<span className="text-brand">{active ? '▲' : '▼'}</span></div>
+        <div className={`mt-1 text-2xl font-bold ${color}`}>{value}</div>
+      </button>
+    )
+  }
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+    <div className={base}>
       <div className="text-xs uppercase tracking-wide text-gray-500">{label}</div>
       <div className={`mt-1 text-2xl font-bold ${color}`}>{value}</div>
     </div>

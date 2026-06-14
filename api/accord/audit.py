@@ -242,6 +242,81 @@ async def _compliance_health(tenant_id: str) -> dict:
     }
 
 
+# HMDA LAR fields the platform does not capture per loan (demographics +
+# geocoding) — genuinely absent from the record, not fabricated.
+_HMDA_NOT_CAPTURED = ["hmda_ethnicity", "hmda_race", "hmda_sex",
+                      "hmda_tract_number", "hmda_county_code", "hmda_msa_md"]
+
+
+@router.get("/hmda-incomplete")
+async def hmda_incomplete(user: dict = Depends(get_current_user)) -> dict:
+    """Drill-down behind the HMDA Completeness KPI (12 CFR §1003). Completeness is
+    the seeded all_hmda_fields_complete flag (no per-field LAR values are stored).
+    For each flagged loan, missing fields are derived from the REAL record where
+    evaluable (income / loan amount / purpose / occupancy / rate) plus the LAR
+    fields the platform doesn't capture — all true absences, never fabricated."""
+    _require_db()
+    tenant_id = user["tenant_id"]
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT es.application_id, es.borrower, es.loan_amount, es.interest_rate,
+                   a.loan_purpose, a.occupancy, ap.full_name,
+                   v.all_hmda_fields_complete AS hmda_complete
+            FROM entity_states es
+            LEFT JOIN vw_compliance_check_context v
+                   ON v.application_id = es.application_id AND v.tenant_id = es.tenant_id
+            LEFT JOIN applications a ON a.application_id = es.application_id
+            LEFT JOIN applicants ap ON ap.applicant_id = es.borrower->>'applicant_id'
+            WHERE es.tenant_id = $1
+            ORDER BY es.application_id
+            """,
+            tenant_id,
+        )
+
+    total = len(rows)
+    complete = 0
+    loans: list[dict] = []
+    for r in rows:
+        if r["hmda_complete"]:
+            complete += 1
+            continue
+        b = _J(r["borrower"]) or {}
+        inc = b.get("income") or {}
+        missing: list[str] = []
+        if not (inc.get("verified_income_annual") or inc.get("stated_income_annual")):
+            missing.append("hmda_income")
+        if r["loan_amount"] is None:
+            missing.append("hmda_loan_amount")
+        if not r["loan_purpose"]:
+            missing.append("hmda_loan_purpose")
+        if not r["occupancy"]:
+            missing.append("hmda_occupancy_type")
+        if r["interest_rate"] is None:
+            missing.append("hmda_rate_spread")
+        missing += _HMDA_NOT_CAPTURED
+        loans.append({
+            "application_id": r["application_id"],
+            "borrower_name": r["full_name"] or b.get("applicant_id") or r["application_id"],
+            "missing_fields": missing,
+            "missing_count": len(missing),
+        })
+
+    loans.sort(key=lambda x: x["missing_count"], reverse=True)
+    return {
+        "filing_deadline": "February 28, 2027",
+        "total": total,
+        "complete": complete,
+        "incomplete": len(loans),
+        "pct": round(complete * 100 / total) if total else 0,
+        "note": ("Borrower demographic (ethnicity / race / sex) and HMDA geocoding "
+                 "(census tract, county, MSA/MD) fields are collected at application "
+                 "and are not captured in these records."),
+        "loans": loans,
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Per-loan audit trail  (declared LAST so it doesn't shadow the literals)
 # ─────────────────────────────────────────────────────────────────────
