@@ -64,6 +64,28 @@ function fmtDate(iso: string | null) {
   return iso ? new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'
 }
 
+// Per-row editability by layer. Federal & agency are regulatory and maintained by
+// Accord (read-only); only the tenant "Your Policy" overlay is editable.
+function RuleRowStatus({ layer, editable }: { layer: 'federal' | 'agency' | 'lender' | 'system'; editable?: boolean }) {
+  if (layer === 'lender') {
+    return editable ? (
+      <span className="inline-flex items-center gap-1 text-xs font-medium text-brand" title="Your Policy — editable">✏️ Editable</span>
+    ) : (
+      <span className="inline-flex items-center gap-1 text-xs text-slate-400" title="Your Policy — locked (plan, role, or active examination)">🔒 Locked</span>
+    )
+  }
+  const meta = {
+    federal: { icon: '🔒', label: 'Read-only', title: 'Federal — read-only, maintained by Accord' },
+    agency: { icon: '🔒', label: 'Read-only', title: 'Agency — read-only, maintained by Accord' },
+    system: { icon: '⚙️', label: 'System', title: 'System — read-only' },
+  }[layer]
+  return (
+    <span className="inline-flex items-center gap-1 text-xs text-slate-400" title={meta.title}>
+      {meta.icon} {meta.label}
+    </span>
+  )
+}
+
 function exportPdf(data: RulesResponse, tenantName: string) {
   const w = window.open('', '_blank')
   if (!w || !data.tenant) return
@@ -292,6 +314,15 @@ export default function RulesSettings() {
       {/* Examination mode toggle (Enterprise admin) */}
       {isAdmin && planAllows(plan, 'enterprise') && <ExaminationToggle exam={data.examination || { active: false }} onChange={load} />}
 
+      {/* Layer-lock explainer — why some rules can't be edited */}
+      <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+        <span aria-hidden="true">ℹ️</span>
+        <span>
+          🔒 <strong>Federal</strong> and <strong>Agency</strong> rules are read-only and maintained by Accord.
+          Only 🔧 <strong>Your Policy</strong> rules can be edited. Contact Accord support to request a regulatory update.
+        </span>
+      </div>
+
       {/* Category tables */}
       {CATEGORIES.map((cat) => {
         const reg = data.regulatory.filter((r) => r.category === cat.key)
@@ -302,7 +333,7 @@ export default function RulesSettings() {
             <div className="overflow-hidden rounded-lg border border-slate-200">
               <table className="min-w-full text-sm">
                 <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                  <tr><th className="w-16 px-3 py-2 text-left">Layer</th><th className="px-3 py-2 text-left">Rule</th><th className="w-40 px-3 py-2 text-left">Value</th><th className="px-3 py-2 text-left">Source</th></tr>
+                  <tr><th className="w-16 px-3 py-2 text-left">Layer</th><th className="px-3 py-2 text-left">Rule</th><th className="w-40 px-3 py-2 text-left">Value</th><th className="px-3 py-2 text-left">Source</th><th className="w-28 px-3 py-2 text-left">Status</th></tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {reg.map((r: RegulatoryRule) => (
@@ -311,6 +342,7 @@ export default function RulesSettings() {
                       <td className="px-3 py-2 text-slate-700">{r.rule_name}{r.state_code ? <span className="ml-1 text-xs text-slate-400">({r.state_code})</span> : ''}</td>
                       <td className="px-3 py-2 font-semibold text-slate-800">{r.display_value}</td>
                       <td className="px-3 py-2 text-xs text-slate-500">{r.citation}</td>
+                      <td className="px-3 py-2"><RuleRowStatus layer="federal" /></td>
                     </tr>
                   ))}
                   {agc.map((a: AgencyGuideline) => (
@@ -319,6 +351,7 @@ export default function RulesSettings() {
                       <td className="px-3 py-2 text-slate-700">{a.guideline_name}<span className="ml-1 text-xs uppercase text-slate-400">{a.agency}</span></td>
                       <td className="px-3 py-2 font-semibold text-slate-800">{a.display_value}</td>
                       <td className="px-3 py-2 text-xs text-slate-500">{a.citation}</td>
+                      <td className="px-3 py-2"><RuleRowStatus layer="agency" /></td>
                     </tr>
                   ))}
                   {cat.fields.map((f) => {
@@ -341,6 +374,7 @@ export default function RulesSettings() {
                           {iss && <span className={`ml-2 text-xs ${iss.level === 'error' ? 'text-red-600' : 'text-amber-600'}`}>✏️ {iss.msg}</span>}
                         </td>
                         <td className="px-3 py-2 text-xs text-slate-500">You (v{data.tenant?.version})</td>
+                        <td className="px-3 py-2"><RuleRowStatus layer="lender" editable={canEdit} /></td>
                       </tr>
                     )
                   })}
