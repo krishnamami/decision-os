@@ -318,6 +318,31 @@ export function fetchExaminerReport(appId: string): Promise<ExaminerReportData> 
   return getJSON<ExaminerReportData>(`/api/accord/loans/${encodeURIComponent(appId)}/examiner-report`)
 }
 
+// ── Workbench: documented human actions + similar cases ──
+export interface LoanAction {
+  id: string; application_id: string; action_type: string; reason_category: string | null
+  reason_text: string; performed_by: string; performed_at: string | null
+  related_decision_id: string | null; visible_to: string[]
+}
+export interface LoanActionInput {
+  action_type: string; reason_category?: string | null; reason_text: string
+  related_decision_id?: string | null; visible_to?: string[]
+}
+export interface SimilarCase {
+  application_id: string; loan_amount: number | null; fraud_score: number | null; loan_type: string | null
+  outcome: string; action_type: string; reason_text: string; reason_category: string | null
+  related_decision_id: string | null; resolved_days: number | null
+}
+export function fetchLoanActions(appId: string): Promise<{ actions: LoanAction[] }> {
+  return getJSON(`/api/accord/loans/${encodeURIComponent(appId)}/actions`)
+}
+export function createLoanAction(appId: string, body: LoanActionInput): Promise<LoanAction> {
+  return postJSON(`/api/accord/loans/${encodeURIComponent(appId)}/actions`, body)
+}
+export function fetchSimilarCases(appId: string): Promise<{ cases: SimilarCase[]; based_on: { fraud_score: number | null; loan_type: string | null } }> {
+  return getJSON(`/api/accord/loans/${encodeURIComponent(appId)}/similar-cases`)
+}
+
 export interface DataSourceHealth {
   source: string
   category: 'federal' | 'agency' | 'system' | 'external'

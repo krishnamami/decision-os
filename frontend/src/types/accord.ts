@@ -103,6 +103,7 @@ export interface LoanDetail {
     citation: string
     tests: { test: string; value: string; limit: string; pass: boolean | null }[]
   }
+  examiner_readiness?: { score: number; missing: string[] }
   conversational_summary?: {
     summary: string
     issue: string | null

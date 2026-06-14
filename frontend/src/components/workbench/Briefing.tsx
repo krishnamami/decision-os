@@ -1,0 +1,54 @@
+import type { LoanDetail } from '../../types/accord'
+import type { DocItem } from '../../api/client'
+import { OFACBadge, deriveOFACStatus } from '../OFACBadge'
+import { QMBadge } from '../QMBadge'
+import { MetricChip, findDocForMetric } from './metricChips'
+import { money, pct } from './util'
+
+export default function Briefing({ loan, ofac, docs, onOpenDoc }: {
+  loan: LoanDetail
+  ofac: { checkedAt?: string; listDate?: string }
+  docs: DocItem[]
+  onOpenDoc: (d: DocItem) => void
+}) {
+  const m = loan.metrics
+  const cs = loan.conversational_summary
+  const summary = cs?.summary
+    ?? `${loan.borrower.name} — ${money(m.loan_amount)} loan. ${loan.status}.`
+
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-5">
+      {/* Name + compliance badges */}
+      <div className="flex flex-wrap items-center gap-3">
+        <h1 className="text-[22px] font-semibold text-slate-900">
+          {loan.borrower.name}
+          {loan.borrower.age ? <span className="text-slate-400"> · {loan.borrower.age}</span> : null}
+          {loan.borrower.employer ? <span className="text-slate-400"> · {loan.borrower.employer}</span> : null}
+        </h1>
+        <OFACBadge status={deriveOFACStatus(loan.decisions ?? [])} checkedAt={ofac.checkedAt} listDate={ofac.listDate} />
+        {loan.qm && <QMBadge qm={loan.qm} />}
+      </div>
+
+      {/* Slim info bar */}
+      <p className="mt-1 text-sm text-slate-500">{money(m.loan_amount)} · {loan.application_id}</p>
+
+      {/* Plain-English briefing */}
+      <p className="mt-3 text-[15px] leading-relaxed text-slate-700">{summary}</p>
+      {cs && (
+        <div className="mt-3 space-y-1 text-sm">
+          {cs.issue && <div><span className="font-semibold text-red-700">⚠ The issue:</span> {cs.issue}</div>}
+          <div><span className="font-semibold text-green-700">✅ What&apos;s good:</span> {cs.whats_good}</div>
+          <div><span className="font-semibold text-slate-700">👉 Next step:</span> {cs.next_step}</div>
+        </div>
+      )}
+
+      {/* Clickable metric chips — every number sourced */}
+      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <MetricChip label="Credit Score" value={m.credit_score != null ? String(m.credit_score) : '—'} doc={findDocForMetric('credit_score', loan.decisions, docs)} onOpen={onOpenDoc} />
+        <MetricChip label="DTI" value={pct(m.dti)} doc={findDocForMetric('dti', loan.decisions, docs)} onOpen={onOpenDoc} />
+        <MetricChip label="LTV" value={pct(m.ltv)} doc={findDocForMetric('ltv', loan.decisions, docs)} onOpen={onOpenDoc} />
+        <MetricChip label="Income (verified)" value={money(m.income_verified)} doc={findDocForMetric('income', loan.decisions, docs)} onOpen={onOpenDoc} />
+      </div>
+    </section>
+  )
+}

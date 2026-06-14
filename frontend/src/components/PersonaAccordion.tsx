@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { DecisionDetail, Evidence } from '../types/accord'
-import { fetchDocuments, type DocItem } from '../api/client'
+import { fetchDocuments, type DocItem, type LoanAction } from '../api/client'
 import { resolveRule } from '../config/ruleLabels'
 import { RuleLayerBadge } from './RuleLayerBadge'
 import DecisionPill, { outcomeMeta } from './DecisionPill'
@@ -50,7 +50,7 @@ function overall(ds: DecisionDetail[]): { label: string; cls: string } {
   return { label: 'Pending', cls: 'bg-gray-100 text-gray-400' }
 }
 
-export default function PersonaAccordion({ decisions, applicationId }: { decisions: DecisionDetail[]; applicationId?: string }) {
+export default function PersonaAccordion({ decisions, applicationId, actions = [] }: { decisions: DecisionDetail[]; applicationId?: string; actions?: LoanAction[] }) {
   // One open decision per stage. Default: open the first blocking/escalating one.
   const [openByWave, setOpenByWave] = useState<Record<number, string | null>>(() => {
     const blocker = decisions.find((d) => d.outcome === 'block' || d.outcome === 'escalate')
@@ -96,6 +96,7 @@ export default function PersonaAccordion({ decisions, applicationId }: { decisio
                       key={d.decision_id}
                       d={d}
                       docs={docs}
+                      notes={actions.filter((a) => a.related_decision_id === d.decision_id)}
                       open={openByWave[stage.wave] === d.decision_id}
                       onToggle={() =>
                         setOpenByWave((s) => ({
@@ -115,9 +116,10 @@ export default function PersonaAccordion({ decisions, applicationId }: { decisio
   )
 }
 
-function DecisionRow({ d, docs, open, onToggle }: { d: DecisionDetail; docs: DocItem[]; open: boolean; onToggle: () => void }) {
+function DecisionRow({ d, docs, notes = [], open, onToggle }: { d: DecisionDetail; docs: DocItem[]; notes?: LoanAction[]; open: boolean; onToggle: () => void }) {
   const m = outcomeMeta(d.outcome)
   const [openEv, setOpenEv] = useState<Omit<EvidenceDocumentPanelProps, 'onClose'> | null>(null)
+  const [showRule, setShowRule] = useState(false)
   const ruleStr = (d.rule || '').trim()
   const defaultEscalate = isDefaultEscalate(ruleStr)
 
@@ -200,9 +202,14 @@ function DecisionRow({ d, docs, open, onToggle }: { d: DecisionDetail; docs: Doc
                           {def.citation && <p className="mt-0.5 text-xs text-slate-500">Citation: {def.citation}</p>}
                         </div>
                       </div>
-                      <pre className="mt-3 overflow-x-auto rounded-lg bg-slate-900 px-3 py-2 font-mono text-[12px] leading-relaxed text-slate-100">
-                        {codeLine}
-                      </pre>
+                      <button onClick={() => setShowRule((v) => !v)} className="mt-2 text-xs font-medium text-slate-500 hover:text-slate-800">
+                        {showRule ? '▲ Hide technical rule' : '▾ Show technical rule'}
+                      </button>
+                      {showRule && (
+                        <pre className="mt-2 overflow-x-auto rounded-lg bg-slate-900 px-3 py-2 font-mono text-[12px] leading-relaxed text-slate-100">
+                          {codeLine}
+                        </pre>
+                      )}
                     </div>
                   )
                 })()
@@ -233,6 +240,22 @@ function DecisionRow({ d, docs, open, onToggle }: { d: DecisionDetail; docs: Doc
                   )
                 })}
               </ul>
+            </div>
+          )}
+
+          {/* Human notes — what the team said about this check */}
+          {notes.length > 0 && (
+            <div>
+              <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Team notes</div>
+              <div className="space-y-1.5">
+                {notes.map((a) => (
+                  <div key={a.id} className="rounded-lg border-l-2 border-brand/40 bg-white px-3 py-1.5 text-sm">
+                    <span className="font-medium text-slate-700">{a.performed_by}</span>
+                    <span className="ml-1 text-xs text-slate-400">· {a.action_type}</span>
+                    <p className="text-slate-600">{a.reason_text}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
