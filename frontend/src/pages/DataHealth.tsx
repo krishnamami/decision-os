@@ -85,7 +85,7 @@ export default function DataHealth() {
                 <tr key={i}>
                   <td className="px-4 py-2.5">
                     <div className="font-medium text-slate-800">{s.source}</div>
-                    {s.regulation && <div className="text-xs text-slate-400">{s.regulation}</div>}
+                    {s.regulation && s.regulation !== s.source && <div className="text-xs text-slate-400">{s.regulation}</div>}
                   </td>
                   <td className="px-4 py-2.5 whitespace-nowrap text-slate-600">{cat.icon} {cat.label}</td>
                   <td className="px-4 py-2.5 whitespace-nowrap">
