@@ -1265,7 +1265,6 @@ def compute_examiner_readiness(decisions: list[dict], actions: list) -> dict:
     return {"score": score, "missing": missing}
 
 
-@router.get("/loans/{application_id}")
 async def _current_active_version(conn, tenant_id: str):
     """The tenant's current active rule version row (highest version)."""
     return await conn.fetchrow(
@@ -1374,6 +1373,7 @@ async def resolve_applicable_rules(conn, tenant_id: str, application_id: str, at
     return {"rule_version_id": None, "version": None, "rules": {}, "source": "none", "reason": "No rules configured"}
 
 
+@router.get("/loans/{application_id}")
 async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_id)) -> dict:
     _require_db()
     pool = await _get_pool()
