@@ -325,7 +325,7 @@ function ActionCard({
 
       <div className="mt-2 flex flex-wrap items-center gap-x-3 text-xs text-slate-500">
         <span className={overSla ? 'font-medium text-amber-600' : ''}>
-          In queue: {days} of {sla} days{overSla ? ' ⚠ over SLA' : ''}
+          In queue: {days} of {sla} days{overSla ? ` ⚠ ${days - sla} ${days - sla === 1 ? 'day' : 'days'} over SLA` : ''}
         </span>
         {c.rate_lock_days != null && (
           <span className={c.rate_lock_days <= 5 ? 'font-medium text-amber-600' : ''}>
