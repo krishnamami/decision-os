@@ -103,6 +103,20 @@ def _action_view(r) -> dict:
     }
 
 
+@router.get("/loans/{application_id}/senior-uw")
+async def get_senior_uw(application_id: str, user: dict = Depends(get_current_user)) -> dict:
+    """The tenant's senior underwriter — shown in the escalate / senior-review
+    modal so the underwriter sees who the file will be assigned to."""
+    _require_db()
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT name, email FROM users "
+            "WHERE tenant_id=$1 AND role='senior_uw' AND is_active=true ORDER BY name LIMIT 1",
+            user["tenant_id"])
+    return {"name": row["name"] if row else None, "email": row["email"] if row else None}
+
+
 @router.get("/loans/{application_id}/actions")
 async def list_actions(application_id: str, user: dict = Depends(get_current_user)) -> dict:
     _require_db()

@@ -1,31 +1,52 @@
 import { useState } from 'react'
 import Modal from '../Modal'
+import { createLoanAction, type LoanAction } from '../../api/client'
 
 export default function EmailComposerModal({
+  appId,
   to,
   subject,
   body,
-  onContinue, // called after the underwriter is done — opens the ActionModal
+  onDone, // called after the action is logged — parent refreshes the action list
   onClose,
 }: {
+  appId: string
   to: string
   subject: string
   body: string
-  onContinue: () => void
+  onDone: (a: LoanAction) => void
   onClose: () => void
 }) {
-  const [copied, setCopied] = useState(false)
   const [editableBody, setEditableBody] = useState(body)
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
 
-  async function handleCopy() {
+  // One action: copy the email to the clipboard AND log the request_documents
+  // action (the document list is the reasoning). Then auto-close.
+  async function copyAndLog() {
+    if (busy || done) return
+    setBusy(true)
+    setErr(null)
     const full = `To: ${to}\nSubject: ${subject}\n\n${editableBody}`
     try {
       await navigator.clipboard.writeText(full)
     } catch {
-      /* clipboard blocked — still mark as "copied" so the flow can continue */
+      /* clipboard blocked — still log the action */
     }
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    try {
+      const a = await createLoanAction(appId, {
+        action_type: 'request_documents',
+        reason_category: 'documentation_gap',
+        reason_text: editableBody.slice(0, 200),
+        visible_to: ['senior_uw', 'compliance'],
+      })
+      setDone(true)
+      setTimeout(() => onDone(a), 1500)
+    } catch {
+      setErr('Could not log the action — please try again.')
+      setBusy(false)
+    }
   }
 
   return (
@@ -51,18 +72,15 @@ export default function EmailComposerModal({
           />
         </div>
 
-        <div className="flex gap-2 pt-1">
+        {err && <p className="text-sm font-medium text-red-600">{err}</p>}
+
+        <div className="pt-1">
           <button
-            onClick={handleCopy}
-            className="flex-1 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            onClick={copyAndLog}
+            disabled={busy || done}
+            className="w-full rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-60"
           >
-            {copied ? '✓ Copied!' : 'Copy to clipboard'}
-          </button>
-          <button
-            onClick={onContinue}
-            className="flex-1 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark"
-          >
-            Continue to log action →
+            {done ? '✓ Email copied · Action logged' : busy ? 'Logging…' : 'Copy email + Log action'}
           </button>
         </div>
 

@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Modal from '../Modal'
-import { createLoanAction, type LoanAction } from '../../api/client'
+import { createLoanAction, getToken, type LoanAction } from '../../api/client'
 
 const CATEGORIES = [
   ['policy_requirement', 'Policy Requirement'],
@@ -32,8 +32,22 @@ export default function ActionModal({ appId, actionType, relatedDecisionId, onCl
   const [visible, setVisible] = useState<Set<string>>(new Set(DEFAULT_VISIBLE[actionType] ?? ['senior_uw', 'compliance']))
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const [seniorUWName, setSeniorUWName] = useState<string | null>(null)
   const len = text.trim().length
   const ready = len >= 25 && !busy
+
+  // Escalate / senior review get assigned to the senior UW — show who.
+  useEffect(() => {
+    if (actionType !== 'escalate' && actionType !== 'senior_review') return
+    let alive = true
+    fetch(`/api/accord/loans/${encodeURIComponent(appId)}/senior-uw`, {
+      headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (alive && d?.name) setSeniorUWName(d.name) })
+      .catch(() => undefined)
+    return () => { alive = false }
+  }, [actionType, appId])
 
   function toggleAud(a: string) {
     setVisible((prev) => { const next = new Set(prev); next.has(a) ? next.delete(a) : next.add(a); return next })
@@ -56,21 +70,26 @@ export default function ActionModal({ appId, actionType, relatedDecisionId, onCl
   return (
     <Modal title={`You are ${ACTION_PHRASE[actionType] ?? 'acting on this file'}`} onClose={onClose}>
       <div className="space-y-4 text-sm">
-        <div>
-          <div className="mb-1 font-medium text-slate-700">Reason category</div>
-          <div className="grid grid-cols-2 gap-1.5">
-            {CATEGORIES.map(([k, label]) => (
-              <label key={k} className={`flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5 ${category === k ? 'border-brand bg-brand-light/30' : 'border-slate-200'}`}>
-                <input type="radio" name="cat" checked={category === k} onChange={() => setCategory(k)} className="accent-brand" />
-                {label}
-              </label>
-            ))}
+        {(actionType === 'escalate' || actionType === 'senior_review') && seniorUWName && (
+          <p className="-mt-2 mb-2 text-xs text-slate-400">→ Will be assigned to: {seniorUWName}</p>
+        )}
+        {actionType !== 'add_note' && (
+          <div>
+            <div className="mb-1 font-medium text-slate-700">Reason category</div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {CATEGORIES.map(([k, label]) => (
+                <label key={k} className={`flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5 ${category === k ? 'border-brand bg-brand-light/30' : 'border-slate-200'}`}>
+                  <input type="radio" name="cat" checked={category === k} onChange={() => setCategory(k)} className="accent-brand" />
+                  {label}
+                </label>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         <div>
           <div className="mb-1 flex items-center justify-between">
-            <span className="font-medium text-slate-700">Your reasoning <span className="text-red-500">*</span></span>
+            <span className="font-medium text-slate-700">{actionType === 'add_note' ? 'Note' : 'Your reasoning'} <span className="text-red-500">*</span></span>
             <span className={`text-xs ${len < 25 ? 'text-slate-400' : 'text-green-600'}`}>{len}/25 min</span>
           </div>
           <textarea
@@ -99,7 +118,7 @@ export default function ActionModal({ appId, actionType, relatedDecisionId, onCl
         <div className="flex justify-end gap-2 pt-1">
           <button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
           <button onClick={confirm} disabled={!ready} title={len < 25 ? 'Add at least 25 characters of reasoning' : undefined} className="rounded-lg bg-brand px-4 py-1.5 font-semibold text-white hover:bg-brand-dark disabled:opacity-40">
-            {busy ? 'Recording…' : 'Confirm'}
+            {busy ? 'Recording…' : actionType === 'add_note' ? 'Add note' : 'Confirm'}
           </button>
         </div>
       </div>

@@ -141,6 +141,7 @@ export default function ActionPanel({ loan, role, similar, similarLoading, onAct
 
       {showEmailComposer && (
         <EmailComposerModal
+          appId={loan.application_id}
           to={loan.borrower_email ?? ''}
           subject={buildEmailSubject(loan.loan_number ?? loan.application_id)}
           body={buildEmailBody(
@@ -149,7 +150,7 @@ export default function ActionPanel({ loan, role, similar, similarLoading, onAct
             userName || 'Underwriter',
             'Summit Credit Union',
           )}
-          onContinue={() => { setShowEmailComposer(false); setModalAction('request_documents') }}
+          onDone={(a) => { setShowEmailComposer(false); onActionDone(a) }}
           onClose={() => setShowEmailComposer(false)}
         />
       )}
