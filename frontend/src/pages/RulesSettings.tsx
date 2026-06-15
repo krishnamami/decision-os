@@ -53,7 +53,9 @@ function setIn(obj: any, path: [string, string], value: number): any {
 
 // Client mirror of the server's overlay validation (the PUT is authoritative).
 function fieldIssue(key: string, path: [string, string], value: number, programs: string[]): { level: 'error' | 'warn'; msg: string } | null {
-  if (Number.isNaN(value)) return { level: 'error', msg: 'Enter a number' }
+  // Fix 2: a field the overlay doesn't define (missing/unset → NaN) is not an
+  // error — only validate fields that actually carry a value.
+  if (Number.isNaN(value)) return null
   if (key === 'credit' && path[1] === 'min_score') {
     if (programs.includes('fha') && value < 580) return { level: 'error', msg: 'Cannot go below FHA minimum of 580' }
     if (value < 500) return { level: 'error', msg: 'Cannot go below FHA absolute minimum of 500' }
@@ -336,7 +338,7 @@ export default function RulesSettings() {
           <p className="mt-1 text-sm text-slate-600">
             You've tightened {tightened} agency standard{tightened === 1 ? '' : 's'}.
             {cv != null && <> Credit floor raised to {cv} (Fannie min: 620).</>}
-            {dv != null && <> DTI capped at {dv}%.</>}
+            {dv != null && <> DTI capped at {dv}% (QM safe harbor).</>}
           </p>
           {active && (
             <div className="mt-3">
