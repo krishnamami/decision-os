@@ -103,14 +103,14 @@ export default function Header() {
         </div>
       )}
 
-      <div ref={navRef} className="relative border-b border-white/10 bg-[#0B1220]">
+      <div ref={navRef} className="relative border-b border-white/[0.08] bg-[#0B1220]">
         <div className="mx-auto flex max-w-7xl items-center px-6" style={{ height: 52 }}>
           <button onClick={() => go('/pipeline')} className="flex items-center gap-2">
             <span className="flex h-7 w-7 items-center justify-center rounded-md bg-brand text-sm font-bold text-white">A</span>
             <span className="text-lg font-bold tracking-tight text-white">accord</span>
           </button>
 
-          <nav className="ml-8 flex items-center gap-6 text-sm font-medium text-white/70">
+          <nav className="ml-8 flex items-center gap-6 text-sm font-medium text-white">
             <button onClick={() => setProductsOpen((v) => !v)} className={`flex items-center gap-1 hover:text-white ${productsOpen ? 'text-white' : ''}`}>
               Products <span className="text-[10px]">▾</span>
             </button>
@@ -184,7 +184,7 @@ export default function Header() {
       </div>
 
       {/* Active product bar — role-hidden / plan-locked */}
-      <div className="border-b border-white/10 bg-[#0B1220]">
+      <div className="border-b border-white/[0.08] bg-[#0B1220]">
         <nav className="mx-auto flex max-w-7xl items-center gap-6 px-6">
           {TABS.map((t) => {
             if (!roleAllows(t.label)) return null // role can't access — hide
