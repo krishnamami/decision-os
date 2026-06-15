@@ -27,8 +27,8 @@ export default function Briefing({ loan, ofac, docs, onOpenDoc }: {
         >
           <span aria-hidden="true">🔒</span>
           <span>
-            <strong>Rate lock active</strong> — evaluated under Rule v{rc.pinned_version_number}
-            {rc.pinned_at ? ` (locked ${new Date(rc.pinned_at).toLocaleDateString()})` : ''}.
+            <strong>{rc.rate_locked ? 'Rate lock active' : 'Pipeline protection'}</strong> — evaluated under Rule v{rc.pinned_version_number}
+            {rc.pinned_at ? ` (pinned ${new Date(rc.pinned_at).toLocaleDateString()})` : ''}.
             {rc.current_version_number != null && <> Current rule version is v{rc.current_version_number}.</>}
             {rc.protected && (
               <span style={{ color: '#854f0b' }}> Rules updated since lock — this loan is protected.</span>
