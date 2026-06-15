@@ -59,6 +59,17 @@ export function Container({ children, className = '' }: { children: ReactNode; c
   return <div className={`mx-auto max-w-[1200px] px-6 ${className}`}>{children}</div>
 }
 
+// Accord logo — copied verbatim from the app nav (Header.tsx) so the landing
+// matches the product exactly: bg-brand square + white "A" + "accord" wordmark.
+export function AccordLogo() {
+  return (
+    <span className="flex items-center gap-2">
+      <span className="flex h-7 w-7 items-center justify-center rounded-md bg-brand text-sm font-bold text-white">A</span>
+      <span className="text-lg font-bold tracking-tight text-slate-900">accord</span>
+    </span>
+  )
+}
+
 // Brand mark — solid green rounded square with a white "A". Rendered in code
 // (not the logo image) so it stays crisp at any size.
 export function BrandMark({ size = 28 }: { size?: number }) {

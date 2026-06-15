@@ -1,6 +1,5 @@
 import { Link } from 'react-router-dom'
-import { BRAND } from './brand'
-import { BrandMark, Container } from './primitives'
+import { AccordLogo, Container } from './primitives'
 
 const PRODUCT = ['Overview', 'Pipeline', 'Analytics', 'Simulation', 'Audit']
 const COMPANY = ['Docs', 'Pricing', 'Security', 'Contact us']
@@ -12,10 +11,7 @@ export default function LandingFooter() {
         <div className="grid gap-10 md:grid-cols-[2fr_1fr_1fr]">
           {/* Col 1 */}
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <BrandMark size={28} />
-              <span style={{ fontSize: '20px', fontWeight: 700, color: BRAND.nearblack, letterSpacing: '-0.5px', lineHeight: 1, display: 'block' }}>accord</span>
-            </div>
+            <AccordLogo />
             <p style={{ fontSize: '11px', color: '#6B7280', marginTop: '4px' }}>Decision Intelligence for Lending</p>
             <p className="mt-4 max-w-sm text-sm leading-relaxed text-slate-500">
               accordlend.com is built by Accord — where policy, evidence, and human judgment come together to create
