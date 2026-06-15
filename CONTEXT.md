@@ -2980,6 +2980,72 @@ domain + SSL; per-tenant decision-rule editing; Override still a demo toast.
 
 ---
 
+### Session 24 — June 13–15 2026 — Underwriter workbench, marketing landing, governance/audit stack (Prompts A–F)
+
+Two themes: a **customer-facing rebuild** (underwriter workbench + marketing
+landing) and the **governance/audit "claims stack"** (every decision tied to the
+rule version + regulation that governed it, with rate-lock protection and a
+dynamic policy studio). All deployed to the `accord` ECS cluster (frontend +
+api task-def revs climbed `:49 → :58`); each slice was headless-verified against
+the live ALB before moving on.
+
+**Customer-facing**
+- **Underwriter workbench** — rebuilt `pages/LoanDetail.tsx` as a two-column
+  decision cockpit (Briefing → Decision Snapshot → Attention Items → tabs
+  [Checks/Evidence/Notes/Audit] → sticky ActionPanel + AuditStrip), ~13 new
+  `components/workbench/*`. New `loan_actions` table + `api/accord/workbench.py`
+  (documented actions w/ ≥25-char reason, similar-cases). Carried OFAC/QM badges,
+  EvidenceDocumentPanel, metric chips, RuleLayerBadge unchanged. Hid
+  "View in EDMS" in the workbench via `showEdms` prop.
+- **Marketing landing** — full rebuild under `components/landing/*` (15 sections:
+  hero w/ in-code product mockup, integrations, video, persona strip, how-it-works
+  flow [Row 2 ← arrows], features/compliance/products grids, **animated**
+  Simulation [auto-cycle + typewriter], dark-green impact, pricing, FAQ, CTA,
+  footer). Brand greens `#0F4D37`, Plus Jakarta Sans, hero mockup animates on a
+  loop. Logo iterated to **match the app nav exactly** (`Header.tsx` `bg-brand`
+  "A" square + "accord" via shared `AccordLogo`). Routing unchanged (unauth `/`
+  → Landing, auth `/` → `/pipeline`).
+
+**Governance / audit stack (the claims)**
+- **A — rule_version_id on every decision.** `decision_store.write_decision` +
+  importer + revert paths stamp the active `tenant_rules` version at decision
+  time; loan-detail + examiner expose it; backfilled 2,482 rows (demo tenant has
+  no rules → NULL by design). `_get_active_rule_version_id` never blocks a write.
+- **B — rain check (rate-lock pinning).** `entity_states.pinned_rule_version` +
+  `application_date`; `resolve_applicable_rules` (pin → pipeline_cutoff → current);
+  `compute_rain_check` on loan-detail + examiner; workbench "Rate lock active"
+  badge. Backfilled application_date on all 8,896 loans + pinned 25 locked loans.
+- **C — state rules + regulation transparency.** `vw_compliance_check_context`
+  now evaluates `state_rules_passed` from `regulatory_rules` by property_state
+  (URLA_1003); 313 loans now fail state rules (TX cash-out LTV>80, home-equity
+  cooling). New `vw_regulation_transparency` + `/regulation-transparency` admin
+  page (federal 8 / agency 15 / state 11 + lender overlays + pipeline-protection),
+  gated admin/compliance ("Policy Rules" nav tab).
+- **D — decisions.yaml citations + dynamic thresholds.** Every threshold boundary
+  in `decisions.yaml` tagged with `governed_by` (regulation + citation);
+  evaluator parses string|dict clauses; new `ThresholdResolver`
+  (tenant_rules → agency_guidelines → yaml default, with agency floor
+  enforcement). `governed_by` column + backfilled 27,295 decisions; Decision
+  Journey + examiner show the citation per decision. 61 policy_engine tests pass.
+- **E — Policy Studio backend.** Hardened `validate_overlay` (DTI>57, LTV>97 hard);
+  `PUT /rules/overlay` (422 on floors, force/warnings); `POST
+  /rules/overlay/preview-impact` (proposed rules vs active decisions) + "Preview
+  Impact" button; `POST /rate-sheet/upload` (CSV → new `rate_sheet_entry` table,
+  the existing `rate_schedule_period` is an incompatible ARM table) + Rate Sheet
+  panel.
+
+**Architecture notes worth remembering:** the live 119k decisions are **seeded**,
+not produced by the PolicyEvaluator at runtime — the cron writer uses
+`agent._compute_offline(bundle, None)`. So D's governed_by + resolver are wired as
+mechanisms (verified directly) and the seeded rows are backfilled from the
+decisions.yaml governance map. `entity_states.ltv` is a **percent**, `dti_back` a
+**fraction**; `tenant_rules`/`agency_guidelines` thresholds are **percents** — the
+resolver scales YAML fractions accordingly. Still open: custom domain + SSL
+(accordlend.com cert pending); demo video re-record (workbench changed the loan
+page); `BrandMark` now unused in landing.
+
+---
+
 ## How to resume next session
 
 Open Claude Code:
@@ -3351,4 +3417,4 @@ How to run smoke tests:
 
 ---
 
-*Decision OS · CONTEXT.md · Updated June 12 2026 (Session 23 — full multi-tenant workbench live: 5 tenants / 33 users / 200 curated loans + 8,696 bulk; role-based My Queue + Team Overview, AI-recommends/user-decides loan detail w/ real approve/deny/escalate, comms + notifications, manager governance reports, Super-Admin settings + impersonation, compliance read-only; verified across 5 roles + Pacific isolation; deployed to ECS rev :3 on the accord ALB. Domain + SSL still pending.)*
+*Decision OS · CONTEXT.md · Updated June 15 2026 (Session 24 — underwriter workbench redesign + full marketing landing rebuild (logo matches app nav), and the governance/audit claims stack [Prompts A–F]: rule_version_id on every decision, rain-check rate-lock pinning, state rules per property_state + /regulation-transparency, decisions.yaml governed_by citations + ThresholdResolver (tenant→agency→default w/ floor enforcement), and Policy Studio backend (floor-enforced overlay, preview-impact, rate-sheet upload). Backfilled 2,482 rule versions / 27,295 governed_by / 8,896 application_dates. Deployed to the accord ALB at frontend+api task-def rev :58. Domain + SSL still pending.)*
