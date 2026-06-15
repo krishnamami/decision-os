@@ -43,6 +43,9 @@ export default function LoanDetail() {
   const [tab, setTab] = useState<Tab>('checks')
   const [openDoc, setOpenDoc] = useState<DocItem | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  // Staged reveal: left zone (Briefing/Attention) first, then the right
+  // ActionPanel slides in ~350ms later — the AI presents findings, then the call.
+  const [stage, setStage] = useState<1 | 2>(1)
 
   useEffect(() => {
     let alive = true
@@ -61,6 +64,14 @@ export default function LoanDetail() {
     fetchSimilarCases(appId).then((d) => alive && setSimilar(d.cases)).catch(() => undefined).finally(() => alive && setSimilarLoading(false))
     return () => { alive = false }
   }, [appId])
+
+  // Trigger stage 2 once the loan has loaded, after a short pause.
+  useEffect(() => {
+    if (loan) {
+      const t = setTimeout(() => setStage(2), 350)
+      return () => clearTimeout(t)
+    }
+  }, [loan])
 
   function onActionDone(a: LoanAction) {
     setActions((prev) => [a, ...prev])
@@ -94,7 +105,7 @@ export default function LoanDetail() {
       <div className="mt-4 grid grid-cols-1 gap-5 lg:grid-cols-3">
         {/* Left column — 2/3 */}
         <div className="space-y-5 lg:col-span-2">
-          <Briefing loan={loan} ofac={ofac} docs={docs} onOpenDoc={setOpenDoc} />
+          <Briefing loan={loan} ofac={ofac} docs={docs} onOpenDoc={setOpenDoc} actions={actions} />
           <DecisionSnapshot loan={loan} />
           <AttentionItems loan={loan} />
 
@@ -121,10 +132,17 @@ export default function LoanDetail() {
           <AdvancedSection loan={loan} />
         </div>
 
-        {/* Right column — sticky action panel */}
+        {/* Right column — sticky action panel (staged: slides in after stage 1) */}
         <div className="lg:col-span-1">
-          <div className="lg:sticky lg:top-4">
-            <ActionPanel loan={loan} role={role} similar={similar} similarLoading={similarLoading} onActionDone={onActionDone} />
+          <div
+            className="lg:sticky lg:top-4"
+            style={{
+              opacity: stage === 2 ? 1 : 0,
+              transform: stage === 2 ? 'translateX(0)' : 'translateX(16px)',
+              transition: 'opacity 0.4s ease, transform 0.4s ease',
+            }}
+          >
+            <ActionPanel loan={loan} role={role} similar={similar} similarLoading={similarLoading} onActionDone={onActionDone} userName={effectiveUser?.name} />
           </div>
         </div>
       </div>

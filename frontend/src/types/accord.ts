@@ -112,6 +112,8 @@ export interface RainCheck {
 
 export interface LoanDetail {
   application_id: string
+  borrower_email?: string | null
+  loan_number?: string | null
   borrower: {
     name: string
     employer: string | null

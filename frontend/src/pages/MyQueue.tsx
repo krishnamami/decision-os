@@ -302,6 +302,11 @@ function ActionCard({
         <span className="text-slate-400">·</span>
         <span className="capitalize text-slate-500">{prettyType(c.loan_type)}</span>
         <span className={`ml-1 text-xs font-bold ${tagCls}`}>{tag}</span>
+        {c.senior_review && (
+          <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ background: '#faeeda', color: '#633806' }}>
+            ⚑ Senior review
+          </span>
+        )}
       </div>
 
       {internal ? (

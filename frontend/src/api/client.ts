@@ -135,6 +135,7 @@ export interface QueueCard {
   ai_finding: string
   ai_data_sources: string
   ai_recommendation: string
+  senior_review?: boolean
   attention_request: { from: string; message: string; priority: string } | null
   requesting?: string[]
   sent?: string | null

@@ -576,6 +576,13 @@ async def my_queue(
         )
         comms = {r["application_id"]: dict(r) for r in comm_rows}
         responded_apps = {app for app, c in comms.items() if c.get("responded_at")}
+        # Loans with a senior-review request (for the ⚑ queue flag).
+        sr_rows = await conn.fetch(
+            "SELECT DISTINCT application_id FROM loan_actions "
+            "WHERE tenant_id = $1 AND action_type = 'senior_review' AND application_id = ANY($2)",
+            tenant_id, app_ids,
+        )
+        sr_apps = {r["application_id"] for r in sr_rows}
 
         # Internal-review requests TO this user on loans they aren't assigned —
         # surface them so the target still sees the 🔵 in their queue.
@@ -632,6 +639,7 @@ async def my_queue(
             "ai_data_sources": ai["ai_data_sources"],
             "ai_recommendation": ai["ai_recommendation"],
             "attention_request": ({"from": a["from_name"], "message": a["message"], "priority": a["priority"]} if a else None),
+            "senior_review": app in sr_apps,
         }
         if st == "pending_borrower":
             c = comms.get(app)
@@ -1387,9 +1395,11 @@ async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_i
         approw = await conn.fetchrow(
             """
             SELECT a.loan_type, a.loan_purpose, a.occupancy, a.stated_employer,
-                   a.verified_employer, ap.full_name, ap.first_name, ap.dob
+                   a.verified_employer, ap.full_name, ap.first_name, ap.dob, ap.email,
+                   l.loan_number
             FROM applications a
             LEFT JOIN applicants ap ON ap.applicant_id = a.applicant_id
+            LEFT JOIN loan l ON l.application_id = a.application_id
             WHERE a.application_id = $1 LIMIT 1
             """,
             application_id,
@@ -1540,6 +1550,8 @@ async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_i
     return {
         "application_id": application_id,
         "borrower": _borrower_block(ap, borrower, e, loan_terms),
+        "borrower_email": ap.get("email"),
+        "loan_number": ap.get("loan_number"),
         "metrics": metrics_out,
         "qm": _qm_status(e, loan_terms),
         "examiner_readiness": compute_examiner_readiness(decisions, action_rows),

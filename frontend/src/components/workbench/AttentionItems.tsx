@@ -36,11 +36,18 @@ export default function AttentionItems({ loan }: { loan: LoanDetail }) {
 
   return (
     <section>
+      <style>{`@keyframes fadeSlideIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}`}</style>
       <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Needs your attention</h2>
       {items.length === 0 ? (
         <div className="rounded-xl border border-green-200 bg-green-50 p-4 text-sm font-medium text-green-800">✅ Nothing is blocking this file — every check passed.</div>
       ) : (
-        <div className="space-y-3">{items.map((d) => <Item key={d.decision_id} d={d} />)}</div>
+        <div className="space-y-3">
+          {items.map((d, i) => (
+            <div key={d.decision_id} style={{ opacity: 0, animation: 'fadeSlideIn 0.35s ease forwards', animationDelay: `${i * 80}ms` }}>
+              <Item d={d} />
+            </div>
+          ))}
+        </div>
       )}
 
       {passed.length > 0 && (

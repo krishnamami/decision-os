@@ -45,6 +45,50 @@ class LoanActionCreate(BaseModel):
     visible_to: Optional[list[str]] = None
 
 
+def _uid(v):
+    from uuid import UUID
+    try:
+        return UUID(str(v)) if v else None
+    except (ValueError, TypeError):
+        return None
+
+
+async def _route_senior_review(conn, application_id: str, user: dict) -> None:
+    """On a senior_review action: hand the loan off to the tenant's senior UW
+    (reassign the active loan_assignment, else create one) and notify them.
+    Best-effort — a routing hiccup never blocks the action from being recorded."""
+    try:
+        tenant_id = user["tenant_id"]
+        senior = await conn.fetchrow(
+            "SELECT user_id, email, name FROM users "
+            "WHERE tenant_id=$1 AND role='senior_uw' AND is_active=true ORDER BY name LIMIT 1",
+            tenant_id)
+        if senior is None:
+            return
+        actor = user.get("name") or user.get("email") or "an underwriter"
+        note = f"Senior review requested by {actor}"
+        by = _uid(user.get("user_id"))
+        # Reassign the active assignment to the senior UW; if there isn't one, create it.
+        res = await conn.execute(
+            "UPDATE loan_assignments SET previous_assignee = assigned_to, assigned_to = $1, "
+            "assigned_by = $2, handoff_notes = $3, assigned_at = NOW() "
+            "WHERE application_id = $4 AND tenant_id = $5 AND status = 'active'",
+            senior["user_id"], by, note, application_id, tenant_id)
+        if res.strip().endswith(" 0"):
+            await conn.execute(
+                "INSERT INTO loan_assignments "
+                "(application_id, tenant_id, assigned_to, assigned_by, stage, status, handoff_notes, assigned_at) "
+                "VALUES ($1,$2,$3,$4,'underwriting','active',$5,NOW())",
+                application_id, tenant_id, senior["user_id"], by, note)
+        # Notify the senior UW.
+        await conn.execute(
+            "INSERT INTO notifications (user_id, tenant_id, type, title, body, application_id, created_at) "
+            "VALUES ($1,$2,'senior_review_requested','Senior review requested',$3,$4,NOW())",
+            senior["user_id"], tenant_id, f"{note} — {application_id}", application_id)
+    except Exception:
+        pass
+
+
 def _action_view(r) -> dict:
     return {
         "id": str(r["id"]),
@@ -91,6 +135,9 @@ async def create_action(application_id: str, body: LoanActionCreate, user: dict 
             application_id, user["tenant_id"], body.action_type, body.reason_category,
             body.reason_text.strip(), user.get("email") or user.get("user_id"),
             body.related_decision_id, visible)
+        # Senior-review hands the loan off to the tenant's senior UW + notifies them.
+        if body.action_type == "senior_review":
+            await _route_senior_review(conn, application_id, user)
     return _action_view(r)
 
 

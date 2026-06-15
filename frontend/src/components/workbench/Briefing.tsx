@@ -1,24 +1,40 @@
 import type { LoanDetail } from '../../types/accord'
-import type { DocItem } from '../../api/client'
+import type { DocItem, LoanAction } from '../../api/client'
 import { OFACBadge, deriveOFACStatus } from '../OFACBadge'
 import { QMBadge } from '../QMBadge'
 import { MetricChip, findDocForMetric } from './metricChips'
 import { money, pct } from './util'
 
-export default function Briefing({ loan, ofac, docs, onOpenDoc }: {
+export default function Briefing({ loan, ofac, docs, onOpenDoc, actions = [] }: {
   loan: LoanDetail
   ofac: { checkedAt?: string; listDate?: string }
   docs: DocItem[]
   onOpenDoc: (d: DocItem) => void
+  actions?: LoanAction[]
 }) {
   const m = loan.metrics
   const cs = loan.conversational_summary
   const summary = cs?.summary
     ?? `${loan.borrower.name} — ${money(m.loan_amount)} loan. ${loan.status}.`
   const rc = loan.rain_check
+  const seniorReview = actions.find((a) => a.action_type === 'senior_review')
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-5">
+      {/* Senior review requested — loan handed off to a senior underwriter */}
+      {seniorReview && (
+        <div
+          className="mb-3 flex items-start gap-2 rounded-md px-2.5 py-1.5 text-[11px]"
+          style={{ background: '#faeeda', border: '0.5px solid #ef9f27', color: '#633806' }}
+        >
+          <span aria-hidden="true">👤</span>
+          <span>
+            <strong>Senior review requested</strong>
+            {seniorReview.performed_by && <> by {seniorReview.performed_by}</>}
+            {seniorReview.performed_at && <> · {new Date(seniorReview.performed_at).toLocaleDateString()}</>}
+          </span>
+        </div>
+      )}
       {/* Rain check — loan pinned to a rule version (rate-lock / pipeline protection) */}
       {rc?.pinned_rule_version && (
         <div

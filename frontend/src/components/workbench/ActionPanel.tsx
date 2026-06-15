@@ -3,7 +3,53 @@ import type { DecisionDetail, LoanDetail } from '../../types/accord'
 import type { LoanAction, SimilarCase } from '../../api/client'
 import { primaryDecision, friendly } from './util'
 import ActionModal from './ActionModal'
+import EmailComposerModal from './EmailComposerModal'
 import SimilarCases from './SimilarCases'
+
+// Documents to request, derived from which checks are flagging.
+function getRequestedDocs(decisions: DecisionDetail[]): string[] {
+  const docs: string[] = []
+  const blocked = decisions.filter((d) => d.outcome === 'block' || d.outcome === 'escalate')
+  for (const d of blocked) {
+    if (d.decision_id === 'fraud_screening' || d.decision_id === 'identity_verification') {
+      docs.push('Government-issued photo ID (front and back)')
+      docs.push('Proof of current address (utility bill dated within 60 days)')
+    }
+    if (d.decision_id === 'employment_reconciliation') {
+      docs.push('Verification of Employment (VOE) letter on employer letterhead')
+      docs.push('Most recent 30 days of pay stubs')
+    }
+    if (d.decision_id === 'income_verification') {
+      docs.push('Most recent 2 years W-2s')
+      docs.push('Most recent 2 years federal tax returns (all pages)')
+    }
+    if (d.decision_id === 'credit_assessment') {
+      docs.push('Written explanation for any derogatory marks in the last 24 months')
+    }
+    if (d.decision_id === 'ltv_assessment') {
+      docs.push("Homeowner's insurance binder")
+      docs.push('Property appraisal (if not yet ordered)')
+    }
+  }
+  return [...new Set(docs)]
+}
+function buildEmailSubject(loanNumber: string): string {
+  return `Your loan application ${loanNumber} — Additional documents needed`
+}
+function buildEmailBody(firstName: string, docs: string[], underwriterName: string, tenantName = 'Summit Credit Union'): string {
+  const docList = docs.length ? docs.map((d) => `• ${d}`).join('\n') : '• [specify the documents you need]'
+  return `Dear ${firstName},
+
+Thank you for your mortgage application. To continue processing your file, we need the following documents:
+
+${docList}
+
+Please provide these at your earliest convenience. If you have questions, don't hesitate to reach out.
+
+Best regards,
+${underwriterName}
+${tenantName}`
+}
 
 const ACTION_LABEL: Record<string, string> = {
   refer_bsa: '⚠ Refer to BSA/AML', request_documents: '📧 Request documents', escalate: '⬆ Escalate',
@@ -29,11 +75,15 @@ function recommendedAction(primary: DecisionDetail | null): { action: string; wh
   return { action: 'request_documents', why: `${friendly(primary.decision_id)} needs attention before this advances.` }
 }
 
-export default function ActionPanel({ loan, role, similar, similarLoading, onActionDone }: {
-  loan: LoanDetail; role: string; similar: SimilarCase[]; similarLoading: boolean; onActionDone: (a: LoanAction) => void
+export default function ActionPanel({ loan, role, similar, similarLoading, onActionDone, userName }: {
+  loan: LoanDetail; role: string; similar: SimilarCase[]; similarLoading: boolean; onActionDone: (a: LoanAction) => void; userName?: string
 }) {
   const [modalAction, setModalAction] = useState<string | null>(null)
+  const [showEmailComposer, setShowEmailComposer] = useState(false)
   const decisions = loan.decisions ?? []
+  // "Request documents" opens the email composer first; everything else goes
+  // straight to the ActionModal (existing flow unchanged).
+  const pickAction = (a: string) => (a === 'request_documents' ? setShowEmailComposer(true) : setModalAction(a))
   const primary = primaryDecision(decisions)
   const rec = recommendedAction(primary)
   const allowed = ROLE_ACTIONS[role] ?? []
@@ -68,12 +118,12 @@ export default function ActionPanel({ loan, role, similar, similarLoading, onAct
 
         <div className="mt-3 space-y-2">
           {primaryBtn && (
-            <button onClick={() => setModalAction(primaryBtn)} className={`w-full rounded-lg px-4 py-2.5 text-sm font-semibold text-white ${primaryTone}`}>
+            <button onClick={() => pickAction(primaryBtn)} className={`w-full rounded-lg px-4 py-2.5 text-sm font-semibold text-white ${primaryTone}`}>
               {ACTION_LABEL[primaryBtn] ?? primaryBtn}
             </button>
           )}
           {secondary.map((a) => (
-            <button key={a} onClick={() => setModalAction(a)} className={`w-full rounded-lg border px-4 py-2 text-sm font-medium hover:bg-slate-50 ${a === 'deny' ? 'border-red-200 text-red-600' : 'border-slate-200 text-slate-700'}`}>
+            <button key={a} onClick={() => pickAction(a)} className={`w-full rounded-lg border px-4 py-2 text-sm font-medium hover:bg-slate-50 ${a === 'deny' ? 'border-red-200 text-red-600' : 'border-slate-200 text-slate-700'}`}>
               {ACTION_LABEL[a] ?? a}
             </button>
           ))}
@@ -88,6 +138,21 @@ export default function ActionPanel({ loan, role, similar, similarLoading, onAct
       <div className="rounded-xl border border-slate-200 bg-white p-4">
         <SimilarCases cases={similar} loading={similarLoading} />
       </div>
+
+      {showEmailComposer && (
+        <EmailComposerModal
+          to={loan.borrower_email ?? ''}
+          subject={buildEmailSubject(loan.loan_number ?? loan.application_id)}
+          body={buildEmailBody(
+            (loan.borrower?.name ?? '').split(' ')[0] || 'Borrower',
+            getRequestedDocs(decisions),
+            userName || 'Underwriter',
+            'Summit Credit Union',
+          )}
+          onContinue={() => { setShowEmailComposer(false); setModalAction('request_documents') }}
+          onClose={() => setShowEmailComposer(false)}
+        />
+      )}
 
       {modalAction && (
         <ActionModal
