@@ -6,14 +6,18 @@ const VIDEO_SRC = '/accord_demo.mp4'
 const POSTER = '/accord_demo_poster.jpg'
 
 export default function VideoSection() {
-  // Render the real <video> only if the file is actually deployed — a HEAD probe
-  // avoids ever mounting a 404'ing player. Until then, show the placeholder.
-  // (Drop the recorded MP4 at frontend/public/accord_demo.mp4 and it lights up.)
+  // Render the real <video> only if the file is actually deployed — show the
+  // placeholder otherwise. The SPA server returns index.html (200, text/html)
+  // for unknown paths, so we must confirm the response is really a video, not
+  // just that the request succeeded. (Drop the MP4 at public/accord_demo.mp4.)
   const [hasVideo, setHasVideo] = useState(false)
   useEffect(() => {
     let alive = true
     fetch(VIDEO_SRC, { method: 'HEAD' })
-      .then((r) => { if (alive && r.ok) setHasVideo(true) })
+      .then((r) => {
+        const ct = r.headers.get('content-type') || ''
+        if (alive && r.ok && ct.startsWith('video')) setHasVideo(true)
+      })
       .catch(() => undefined)
     return () => { alive = false }
   }, [])
