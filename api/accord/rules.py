@@ -1331,3 +1331,54 @@ async def field_impacts(tenant_id: str = Depends(get_tenant_id)) -> dict:
         out.setdefault(key, {"count": total_active, "label": f"{total_active} active loans run under this rule."})
 
     return {"impacts": out, "active_loans": total_active}
+
+
+# ── PROMPT L — policy proposals (AI learns from underwriter overrides) ──
+@router.get("/policy-proposals")
+async def get_policy_proposals(user: dict = Depends(get_current_user)) -> dict:
+    """Pending policy proposals the pattern detector raised from repeated
+    underwriter overrides. Admin-only — these gate real rule changes."""
+    _require(user, "admin", "super_admin")
+    _require_db()
+    tenant_id = user["tenant_id"]
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT proposal_id, decision_id, boundary_rule, override_count,
+                      pattern_summary, proposed_change, status, created_at
+               FROM policy_proposals
+               WHERE tenant_id=$1 AND status='pending'
+               ORDER BY override_count DESC, created_at DESC""",
+            tenant_id)
+    return {
+        "proposals": [{
+            "proposal_id": str(r["proposal_id"]), "decision_id": r["decision_id"],
+            "boundary_rule": r["boundary_rule"], "override_count": r["override_count"],
+            "pattern_summary": r["pattern_summary"], "proposed_change": r["proposed_change"],
+            "status": r["status"], "created_at": _iso(r["created_at"]),
+        } for r in rows],
+        "count": len(rows),
+    }
+
+
+@router.post("/policy-proposals/{proposal_id}/action")
+async def act_on_proposal(
+    proposal_id: str, payload: dict = Body(...), user: dict = Depends(get_current_user)
+) -> dict:
+    """Accept or dismiss a proposal. Accept marks it accepted (the admin then
+    edits the overlay in Policy Studio); dismiss removes it from the queue."""
+    _require(user, "admin", "super_admin")
+    _require_db()
+    action = (payload or {}).get("action")
+    if action not in ("accept", "dismiss"):
+        raise HTTPException(422, "action must be accept or dismiss")
+    tenant_id = user["tenant_id"]
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """UPDATE policy_proposals
+               SET status=$1, reviewed_by=$2, reviewed_at=NOW()
+               WHERE proposal_id=$3::uuid AND tenant_id=$4""",
+            "accepted" if action == "accept" else "dismissed",
+            user.get("email"), proposal_id, tenant_id)
+    return {"status": "ok", "action": action}

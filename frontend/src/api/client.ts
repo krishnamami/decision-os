@@ -578,6 +578,17 @@ export interface FieldImpact { count: number; label: string }
 export function fetchFieldImpacts(): Promise<{ impacts: Record<string, FieldImpact>; active_loans: number }> {
   return getJSON('/api/accord/rules/overlay/field-impacts')
 }
+export interface PolicyProposal {
+  proposal_id: string; decision_id: string; boundary_rule: string
+  override_count: number; pattern_summary: string; proposed_change: string
+  status: string; created_at: string | null
+}
+export function fetchPolicyProposals(): Promise<{ proposals: PolicyProposal[]; count: number }> {
+  return getJSON('/api/accord/rules/policy-proposals')
+}
+export function actOnProposal(proposalId: string, action: 'accept' | 'dismiss'): Promise<{ status: string; action: string }> {
+  return postJSON(`/api/accord/rules/policy-proposals/${proposalId}/action`, { action })
+}
 
 // ── Rules versioning (advanced) ───────────────────────────────────
 export interface ScheduledVersion extends TenantVersion {}

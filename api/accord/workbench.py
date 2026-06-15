@@ -36,6 +36,86 @@ _OUTCOME = {
     "escalate": "Escalated", "add_note": "Note",
 }
 
+# action_type -> the DecisionOutcome the human chose (for learning capture).
+# Only override-type actions map; add_note / request_documents are not overrides.
+_HUMAN_OUTCOME = {
+    "approve": "allow", "deny": "block", "refer_bsa": "block",
+    "escalate": "escalate", "senior_review": "escalate",
+}
+
+
+async def _capture_override(conn, pool, application_id: str, body, user: dict) -> None:
+    """PROMPT L — write the reviewer's reason onto the decision audit trail and,
+    when the action overrides Accord, store an AgentLearning lesson so the agent
+    learns from this reviewer. Best-effort: a learning hiccup never blocks the
+    action from being recorded."""
+    action_type = body.action_type
+    reason_text = (body.reason_text or "").strip()
+    reason_category = body.reason_category
+    if action_type not in _HUMAN_OUTCOME or len(reason_text) < 25:
+        return
+    tenant_id = user["tenant_id"]
+
+    # 3a — stamp the override reason on the live (non-superseded) decision rows.
+    try:
+        await conn.execute(
+            """UPDATE decision_outputs
+               SET human_override_reason=$1, human_reviewer=$2, acted_at=NOW()
+               WHERE application_id=$3 AND tenant_id=$4
+                 AND superseded_by IS NULL AND human_override_reason IS NULL""",
+            reason_text, user.get("email"), application_id, tenant_id)
+    except Exception:
+        pass
+
+    # 3b — capture the lesson keyed to the overridden Accord decision.
+    try:
+        from datetime import datetime, timezone, timedelta
+        from core.normalizer.models import DecisionOutcome
+        from core.trace.postgres_learning_store import PostgresLearningStore
+        from core.trace.reflection import AgentLearning
+
+        accord_row = await conn.fetchrow(
+            """SELECT decision_id, outcome, boundary_rule, confidence
+               FROM decision_outputs
+               WHERE application_id=$1 AND tenant_id=$2 AND superseded_by IS NULL
+               ORDER BY created_at DESC LIMIT 1""",
+            application_id, tenant_id)
+        if not accord_row:
+            return
+        ai_outcome = accord_row["outcome"]
+        human_outcome = _HUMAN_OUTCOME[action_type]
+        tags = [accord_row["decision_id"], f"outcome:{ai_outcome}", f"human_action:{human_outcome}"]
+        if reason_category:
+            tags.append(f"reason:{reason_category}")
+        conf = accord_row["confidence"]
+        conf_str = f", confidence: {conf:.2f}" if conf is not None else ""
+        lesson = (
+            f"On {accord_row['decision_id']}, Accord proposed '{ai_outcome}' "
+            f"(boundary: {accord_row['boundary_rule']}{conf_str}). "
+            f"Reviewer overrode to '{human_outcome}'. "
+            f"Reason ({reason_category}): {reason_text}"
+        )
+        now = datetime.now(timezone.utc)
+        learning = AgentLearning(
+            agent_id=accord_row["decision_id"],
+            persona=accord_row["decision_id"],
+            decision_id=accord_row["decision_id"],
+            application_id=application_id,
+            original_ai_decision=DecisionOutcome(ai_outcome),
+            human_decision=DecisionOutcome(human_outcome),
+            override_reason=reason_text,
+            override_reason_code=reason_category,
+            reviewer_role=user.get("role", "underwriter"),
+            reviewer_id=user.get("email"),
+            lesson=lesson,
+            similarity_tags=tags,
+            captured_at=now,
+            expires_at=now + timedelta(days=365),
+        )
+        await PostgresLearningStore(pool, tenant_id).write(learning)
+    except Exception as e:  # noqa: BLE001 — never block the action on capture
+        print(f"WARNING: learning capture failed: {e}")
+
 
 class LoanActionCreate(BaseModel):
     action_type: str
@@ -152,6 +232,8 @@ async def create_action(application_id: str, body: LoanActionCreate, user: dict 
         # Senior-review hands the loan off to the tenant's senior UW + notifies them.
         if body.action_type == "senior_review":
             await _route_senior_review(conn, application_id, user)
+        # Stamp the audit trail + capture an AgentLearning when this overrides Accord.
+        await _capture_override(conn, pool, application_id, body, user)
     return _action_view(r)
 
 

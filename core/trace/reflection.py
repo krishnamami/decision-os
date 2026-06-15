@@ -63,7 +63,11 @@ class AgentLearning(BaseModel):
     agent_id: str
     persona: str
     decision_id: str
-    trace_id: UUID
+    # Optional: trace-linked captures (the platform path) carry a trace_id;
+    # Accord-workbench captures (PROMPT L) record a human override without a
+    # DecisionTrace, so trace_id may be absent.
+    trace_id: Optional[UUID] = None
+    application_id: Optional[str] = None
 
     original_ai_decision: DecisionOutcome
     human_decision: DecisionOutcome
@@ -81,7 +85,10 @@ class AgentLearning(BaseModel):
 
     @property
     def is_active(self) -> bool:
-        return datetime.utcnow() <= self.expires_at
+        # expires_at is naive for the in-memory store but tz-aware when loaded
+        # from Postgres (timestamptz). Compare in whichever frame it carries.
+        now = datetime.now(self.expires_at.tzinfo) if self.expires_at.tzinfo else datetime.utcnow()
+        return now <= self.expires_at
 
 
 # ─────────────────────────────────────────────────────────────────────

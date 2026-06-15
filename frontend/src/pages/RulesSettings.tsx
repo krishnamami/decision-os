@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
-  approveRules, fetchFieldImpacts, fetchPipelineProtection, fetchProducts, fetchRuleAlerts, fetchRules,
-  fetchRulesHistory, fetchValidationReport, previewOverlayImpact, ratifyEmergency,
-  type FieldImpact, type PipelineProtection, type PreviewImpactResult, type Product,
-  type RuleAlert, type RulesResponse, type TenantVersion,
+  actOnProposal, approveRules, fetchFieldImpacts, fetchPipelineProtection, fetchPolicyProposals,
+  fetchProducts, fetchRuleAlerts, fetchRules, fetchRulesHistory, fetchValidationReport,
+  previewOverlayImpact, ratifyEmergency,
+  type FieldImpact, type PipelineProtection, type PolicyProposal, type PreviewImpactResult,
+  type Product, type RuleAlert, type RulesResponse, type TenantVersion,
 } from '../api/client'
 import RateSheetPanel from '../components/RateSheetPanel'
 import RuleValidation from '../components/RuleValidation'
@@ -161,6 +162,7 @@ export default function RulesSettings() {
   const [productCount, setProductCount] = useState(0)
   const [protection, setProtection] = useState<PipelineProtection | null>(null)
   const [fieldImpacts, setFieldImpacts] = useState<Record<string, FieldImpact>>({})
+  const [proposals, setProposals] = useState<PolicyProposal[]>([])
 
   const plan = tenant?.plan
   const examFrozen = data?.examination?.active === true
@@ -180,8 +182,23 @@ export default function RulesSettings() {
     fetchProducts().then((r) => { setProducts(r.products); setProductCount(r.active_count) }).catch(() => undefined)
     fetchPipelineProtection().then(setProtection).catch(() => undefined)
     fetchFieldImpacts().then((r) => setFieldImpacts(r.impacts)).catch(() => undefined)
+    fetchPolicyProposals().then((r) => setProposals(r.proposals)).catch(() => undefined) // admin-only; 403 for others
   }
   useEffect(load, [])
+
+  async function handleProposalAction(proposalId: string, action: 'accept' | 'dismiss') {
+    setProposals((prev) => prev.filter((p) => p.proposal_id !== proposalId))
+    try {
+      await actOnProposal(proposalId, action)
+      if (action === 'accept') {
+        setMsg({ kind: 'ok', text: 'Proposal accepted — edit the affected rule below to apply the change, then submit for approval.' })
+        document.getElementById('your-policy')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+    } catch (e: any) {
+      setMsg({ kind: 'err', text: e?.message || 'Action failed' })
+      load()
+    }
+  }
 
   async function ratify(ok: boolean) {
     if (!emergencyPending) return
@@ -434,6 +451,47 @@ export default function RulesSettings() {
       {showReconstruct && (planAllows(plan, 'enterprise')
         ? <ReconstructPanel />
         : <LockedBadge feature="Audit reconstruction" min="enterprise" />)}
+
+      {/* ════ Learning insights — proposals from underwriter overrides ════ */}
+      {proposals.length > 0 && (
+        <div>
+          <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            Learning insights · {proposals.length} pattern{proposals.length !== 1 ? 's' : ''} detected
+          </div>
+          <div className="mb-2.5 rounded-lg px-3.5 py-2.5 text-xs leading-relaxed" style={{ background: '#d1e8d8', border: '0.5px solid #a8d5b5', color: '#0F4D37' }}>
+            🧠 Accord detected patterns in your team's override decisions. These suggested policy changes are based on what your
+            underwriters are consistently approving with compensating factors.
+          </div>
+          <div className="space-y-2">
+            {proposals.map((p) => (
+              <div key={p.proposal_id} className="rounded-lg bg-white p-4" style={{ border: '0.5px solid #E5E7EB', borderLeft: '3px solid #0F4D37' }}>
+                <div className="mb-2 flex items-start justify-between gap-3">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                    {p.decision_id.replace(/_/g, ' ')} · {p.override_count} overrides in 30 days
+                  </span>
+                  <div className="flex shrink-0 gap-1.5">
+                    <button
+                      onClick={() => handleProposalAction(p.proposal_id, 'dismiss')}
+                      className="rounded-md border border-slate-300 px-2.5 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      Dismiss
+                    </button>
+                    <button
+                      onClick={() => handleProposalAction(p.proposal_id, 'accept')}
+                      className="rounded-md px-2.5 py-1 text-[11px] font-semibold text-white hover:brightness-110"
+                      style={{ background: '#0F4D37' }}
+                    >
+                      Review change →
+                    </button>
+                  </div>
+                </div>
+                <div className="mb-2 text-xs leading-relaxed text-slate-600">{p.pattern_summary}</div>
+                <div className="text-xs font-medium leading-relaxed" style={{ color: '#0F4D37' }}>Suggested: {p.proposed_change}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ════ SECTION 2 — Your Policy (editable, expandable rows) ════ */}
       <div id="your-policy" className="scroll-mt-20 rounded-xl border border-slate-200 bg-white p-5">

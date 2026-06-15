@@ -161,6 +161,7 @@ class PersonaRunner:
         self.decision_store = DecisionStore(database_url)
         self._agents: dict[str, Any] = {}
         self._evaluator: Any = None  # lazy PolicyEvaluator (decisions.yaml)
+        self._learnings_present: dict[str, bool] = {}  # tenant → has active lessons
 
     async def close(self) -> None:
         await self.edms_store.close()
@@ -348,6 +349,11 @@ class PersonaRunner:
             if upstream else {}
         )
 
+        # 0. PROMPT L — recall relevant past human-override lessons for this
+        #    decision before evaluation. Best-effort and forward-looking
+        #    (personas don't consume it yet); never affects outcome or raises.
+        await self._recall_lessons(decision_id, tenant_id)
+
         # 1. Domain values. Personas compute dti/ltv/credit from the bundle;
         #    they do NOT pick thresholds from `policy` — the policy engine does
         #    that next. (Pass None here; this is value extraction only.)
@@ -513,6 +519,37 @@ class PersonaRunner:
             )
             return None
 
+    # ── PROMPT L — recall past override lessons before evaluation ──────
+
+    async def _recall_lessons(self, decision_id: str, tenant_id: str) -> str:
+        """Pull relevant past human-override lessons for this decision (PROMPT L).
+        Gated by a per-tenant 'has any lessons' check so tenants without overrides
+        cost no extra query. Best-effort: never raises, never affects outcome."""
+        try:
+            if self._learnings_present.get(tenant_id) is False:
+                return ""
+            pool = await self.decision_store._get_pool()
+            if tenant_id not in self._learnings_present:
+                async with pool.acquire() as conn:
+                    has = await conn.fetchval(
+                        "SELECT 1 FROM agent_learnings "
+                        "WHERE tenant_id=$1 AND expires_at > NOW() LIMIT 1",
+                        tenant_id)
+                self._learnings_present[tenant_id] = bool(has)
+                if not has:
+                    return ""
+            from core.trace.postgres_learning_store import PostgresLearningStore
+            from core.trace.reflection import ReflectionService
+            store = PostgresLearningStore(pool, tenant_id)
+            lessons = await ReflectionService(store).recall(
+                agent_id=decision_id, decision_id=decision_id, limit=3)
+            if not lessons:
+                return ""
+            return "\n".join(f"{i + 1}. {l.lesson}" for i, l in enumerate(lessons))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("lesson recall failed for %s: %s", decision_id, exc)
+            return ""
+
     # ── All waves ────────────────────────────────────────────────────
 
     async def run_all_waves(
@@ -527,7 +564,22 @@ class PersonaRunner:
                 results[decision_id] = await self.run_persona(
                     decision_id, batch_size, tenant_id
                 )
+        # PROMPT L — after a full sweep, refresh policy proposals from any new
+        # override patterns. Best-effort; never fails the run.
+        await run_pattern_detection(await self.decision_store._get_pool(), tenant_id)
         return results
+
+
+async def run_pattern_detection(pool: Any, tenant_id: str) -> None:
+    """Detect recurring override patterns and raise policy proposals (PROMPT L)."""
+    try:
+        from core.cron.pattern_detector import detect_patterns
+        async with pool.acquire() as conn:
+            n = await detect_patterns(conn, tenant_id)
+            if n > 0:
+                logger.info("Pattern detector: %d proposals created for %s", n, tenant_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Pattern detector error for %s: %s", tenant_id, exc)
 
 
 # ─────────────────────────────────────────────────────────────────────
