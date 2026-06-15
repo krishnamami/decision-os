@@ -92,7 +92,7 @@ export default function Header() {
 
   return (
     <header className="sticky top-0 z-30">
-      {bannerOpen && (
+      {!user && bannerOpen && (
         <div
           className="relative flex items-center justify-center gap-2 px-4 text-sm text-white"
           style={{ height: 36, background: 'linear-gradient(90deg, #0F6E56, #1D9E75, #5DCAA5)' }}
@@ -110,14 +110,16 @@ export default function Header() {
             <span className="text-lg font-bold tracking-tight text-white">accord</span>
           </button>
 
-          <nav className="ml-8 flex items-center gap-6 text-sm font-medium text-white">
-            <button onClick={() => setProductsOpen((v) => !v)} className={`flex items-center gap-1 hover:text-white ${productsOpen ? 'text-white' : ''}`}>
-              Products <span className="text-[10px]">▾</span>
-            </button>
-            <a href="#" className="hover:text-white">Pricing</a>
-            <a href="#" className="hover:text-white">Docs</a>
-            <a href="#" className="hover:text-white">Blog</a>
-          </nav>
+          {!user && (
+            <nav className="ml-8 flex items-center gap-6 text-sm font-medium text-white">
+              <button onClick={() => setProductsOpen((v) => !v)} className={`flex items-center gap-1 hover:text-white ${productsOpen ? 'text-white' : ''}`}>
+                Products <span className="text-[10px]">▾</span>
+              </button>
+              <a href="#" className="hover:text-white">Pricing</a>
+              <a href="#" className="hover:text-white">Docs</a>
+              <a href="#" className="hover:text-white">Blog</a>
+            </nav>
+          )}
 
           {/* Notifications + user menu */}
           <div className="ml-auto flex items-center gap-2">
@@ -150,7 +152,7 @@ export default function Header() {
           </div>
         </div>
 
-        {productsOpen && (
+        {!user && productsOpen && (
           <div className="absolute left-0 right-0 top-full border-b border-[#E5E7EB] bg-white shadow-lg">
             <div className="mx-auto grid max-w-7xl grid-cols-1 gap-10 px-6 py-7 md:grid-cols-2">
               <div>
