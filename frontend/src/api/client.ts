@@ -703,3 +703,52 @@ export const IMPORT_FIELDS = [
   'loan_term_months', 'amortization_type', 'ltv', 'dti_front', 'dti_back', 'coborrower_first_name', 'coborrower_last_name',
   'coborrower_income', 'coborrower_credit_score', 'loan_status', 'assigned_to_email',
 ]
+
+// ── Regulation transparency (admin/compliance) ──────────────────────────────
+export interface RegulationRule {
+  layer: 'federal' | 'agency' | 'state'
+  state_code: string | null
+  source: string
+  rule_name: string
+  display_value: string | null
+  description: string | null
+  citation: string | null
+  effective_date: string | null
+  last_refreshed: string | null
+  verified_by: string | null
+  is_active: boolean
+  category: string | null
+  regulation_id: string
+}
+export interface LenderRuleVersion {
+  rule_version_id: string
+  version: number
+  status: string
+  rules: Record<string, unknown>
+  changes_summary: string | null
+  change_reason: string | null
+  effective_from: string | null
+  approved_at: string | null
+  pipeline_cutoff_date: string | null
+  change_type: string | null
+  scheduled_for: string | null
+}
+export interface RegulationTransparency {
+  layers: { federal: RegulationRule[]; agency: RegulationRule[]; state: RegulationRule[]; lender: LenderRuleVersion[] }
+  summary: {
+    federal_count: number; agency_count: number; state_count: number; lender_versions: number
+    states_covered: string[]; last_federal_refresh: string | null; last_agency_refresh: string | null
+  }
+  pipeline_protection: {
+    total_locked: number; pinned: number; unpinned: number
+    current_version: number | null; current_effective: string | null; note: string
+  }
+}
+export function fetchRegulationTransparency(params?: { layer?: string; state_code?: string; category?: string }): Promise<RegulationTransparency> {
+  const q = new URLSearchParams()
+  if (params?.layer) q.set('layer', params.layer)
+  if (params?.state_code) q.set('state_code', params.state_code)
+  if (params?.category) q.set('category', params.category)
+  const qs = q.toString()
+  return getJSON<RegulationTransparency>(`/api/accord/rules/regulations/transparency${qs ? `?${qs}` : ''}`)
+}

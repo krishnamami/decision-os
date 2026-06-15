@@ -24,6 +24,7 @@ const TABS = [
   { to: '/simulation', product: 'simulation', label: 'Simulation' },
   { to: '/audit', product: 'audit', label: 'Audit' },
   { to: '/data-health', product: 'data_health', label: 'Data Health' },
+  { to: '/regulation-transparency', product: 'data_health', label: 'Policy Rules' },
 ]
 
 // Which nav tabs each role sees (by label). Roles not listed fall back to
@@ -36,9 +37,9 @@ const ROLE_NAV: Record<string, string[]> = {
   viewer: ['Pipeline'],
   senior_uw: ['Pipeline', 'Analytics'],
   manager: ['Pipeline', 'Analytics', 'Simulation'],
-  compliance: ['Pipeline', 'Audit', 'Data Health'],
-  admin: ['Pipeline', 'Analytics', 'Simulation', 'Audit', 'Data Health'],
-  super_admin: ['Pipeline', 'Analytics', 'Simulation', 'Audit', 'Data Health'],
+  compliance: ['Pipeline', 'Audit', 'Data Health', 'Policy Rules'],
+  admin: ['Pipeline', 'Analytics', 'Simulation', 'Audit', 'Data Health', 'Policy Rules'],
+  super_admin: ['Pipeline', 'Analytics', 'Simulation', 'Audit', 'Data Health', 'Policy Rules'],
 }
 // Upgrade prompt when the tenant's plan lacks a product.
 const UPGRADE: Record<string, string> = {

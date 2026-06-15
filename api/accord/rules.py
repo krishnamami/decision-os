@@ -869,3 +869,121 @@ async def pipeline_policy(payload: dict = Body(...), user: dict = Depends(get_cu
             "UPDATE tenant_rules SET pipeline_policy=$1, pipeline_cutoff_date=$2 WHERE rule_version_id=$3",
             policy, date.fromisoformat(cutoff) if (policy == "cutoff_date" and cutoff) else None, active["rule_version_id"])
     return {"ok": True, "policy": policy, "cutoff_date": cutoff if policy == "cutoff_date" else None}
+
+
+# ── Regulation transparency — all 4 layers visible to admin/compliance ──
+@router.get("/regulations/transparency")
+async def regulation_transparency(
+    layer: Optional[str] = None,
+    state_code: Optional[str] = None,
+    category: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Federal + agency + state + lender rules in one payload, each with a
+    last_refreshed timestamp, plus the pipeline-protection summary (PROMPT B).
+    Restricted to admin / compliance."""
+    _require(user, "admin", "compliance", "super_admin")
+    _require_db()
+    tenant_id = user.get("tenant_id", "default")
+
+    def _row(r) -> dict:
+        return {
+            "layer": r["layer"], "state_code": r["state_code"], "source": r["source"],
+            "rule_name": r["rule_name"], "display_value": r["display_value"],
+            "description": r["description"], "citation": r["citation"],
+            "effective_date": _iso(r["effective_date"]), "last_refreshed": _iso(r["last_refreshed"]),
+            "verified_by": r["verified_by"], "is_active": r["is_active"],
+            "category": r["category"], "regulation_id": r["regulation_id"],
+        }
+
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        where = ["1=1"]
+        params: list = []
+        if layer and layer != "lender":
+            params.append(layer)
+            where.append(f"layer = ${len(params)}")
+        if state_code:
+            params.append(state_code.upper())
+            where.append(f"state_code = ${len(params)}")
+        if category:
+            params.append(category)
+            where.append(f"category = ${len(params)}")
+        rows = await conn.fetch(
+            f"""
+            SELECT layer, state_code, source, rule_name, display_value, description,
+                   citation, effective_date, last_refreshed, verified_by, is_active,
+                   category, regulation_id
+            FROM vw_regulation_transparency
+            WHERE {' AND '.join(where)}
+            ORDER BY layer, source, rule_name
+            """,
+            *params,
+        )
+
+        lender_rows = []
+        if not layer or layer == "lender":
+            lender_rows = await conn.fetch(
+                """
+                SELECT rule_version_id::text AS rule_version_id, version, status, rules,
+                       changes_summary, change_reason, effective_from, approved_at,
+                       pipeline_cutoff_date, change_type, scheduled_for
+                FROM tenant_rules WHERE tenant_id = $1 ORDER BY version DESC
+                """,
+                tenant_id,
+            )
+
+        protection = await conn.fetchrow(
+            """
+            SELECT COUNT(*) FILTER (WHERE rate_locked) AS total_locked,
+                   COUNT(*) FILTER (WHERE rate_locked AND pinned_rule_version IS NOT NULL) AS pinned,
+                   COUNT(*) FILTER (WHERE rate_locked AND pinned_rule_version IS NULL) AS unpinned
+            FROM entity_states WHERE tenant_id = $1
+            """,
+            tenant_id,
+        )
+        current = await _active_version(conn, tenant_id)
+
+    federal = [_row(r) for r in rows if r["layer"] == "federal"]
+    agency = [_row(r) for r in rows if r["layer"] == "agency"]
+    state = [_row(r) for r in rows if r["layer"] == "state"]
+    lender = [
+        {
+            "rule_version_id": r["rule_version_id"], "version": r["version"], "status": r["status"],
+            "rules": _jsonb(r["rules"]), "changes_summary": r["changes_summary"],
+            "change_reason": r["change_reason"], "effective_from": _iso(r["effective_from"]),
+            "approved_at": _iso(r["approved_at"]), "pipeline_cutoff_date": _iso(r["pipeline_cutoff_date"]),
+            "change_type": r["change_type"], "scheduled_for": _iso(r["scheduled_for"]),
+        }
+        for r in lender_rows
+    ]
+
+    def _maxref(layer_name: str):
+        vals = [r["last_refreshed"] for r in rows if r["layer"] == layer_name and r["last_refreshed"]]
+        return _iso(max(vals)) if vals else None
+
+    unpinned = protection["unpinned"] if protection else 0
+    return {
+        "layers": {"federal": federal, "agency": agency, "state": state, "lender": lender},
+        "summary": {
+            "federal_count": len(federal),
+            "agency_count": len(agency),
+            "state_count": len(state),
+            "lender_versions": len(lender),
+            "states_covered": sorted({r["state_code"] for r in rows if r["layer"] == "state" and r["state_code"]}),
+            "last_federal_refresh": _maxref("federal"),
+            "last_agency_refresh": _maxref("agency"),
+        },
+        "pipeline_protection": {
+            "total_locked": protection["total_locked"] if protection else 0,
+            "pinned": protection["pinned"] if protection else 0,
+            "unpinned": unpinned,
+            "current_version": current["version"] if current else None,
+            "current_effective": _iso(current["effective_from"]) if current else None,
+            "note": (
+                "All locked loans are pinned to their rule version at lock date."
+                if unpinned == 0
+                else f"{unpinned} locked loans have no pin (tenant may have no rule history)."
+            ),
+        },
+    }

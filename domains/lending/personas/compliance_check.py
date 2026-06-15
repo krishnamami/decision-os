@@ -42,6 +42,10 @@ class ComplianceAgent(LendingPersona):
         cd_timing_compliant = bool(compliance.get("cd_timing_compliant") or False)
         regulatory_ambiguity = bool(compliance.get("regulatory_ambiguity") or False)
         mixed_jurisdiction = bool(compliance.get("mixed_jurisdiction") or False)
+        # State rules applied per property location (PROMPT C).
+        applicable_state_rules = compliance.get("applicable_state_rules") or []
+        property_state = compliance.get("property_state") or ""
+        state_rule_count = len(applicable_state_rules)
 
         signals = [
             make_signal(
@@ -87,6 +91,9 @@ class ComplianceAgent(LendingPersona):
                 "missing_required_disclosures": missing_disclosures,
                 "regulatory_ambiguity": regulatory_ambiguity,
                 "mixed_jurisdiction": mixed_jurisdiction,
+                "applicable_state_rules": applicable_state_rules,
+                "property_state": property_state,
+                "state_rule_count": state_rule_count,
             },
             proposed_outcome=outcome,
             confidence=confidence,
@@ -99,7 +106,9 @@ class ComplianceAgent(LendingPersona):
             conclusion=(
                 f"hmda_complete={hmda_complete}, fair_lending_violation="
                 f"{fair_lending_violation}, missing_disclosures="
-                f"{missing_disclosures} → {outcome.value}"
+                f"{missing_disclosures}, state_rules_passed={state_rules_passed} "
+                f"({property_state or 'n/a'}: {state_rule_count} rules evaluated) "
+                f"→ {outcome.value}"
             ),
             confidence_basis=(
                 "Hard rules drive blocks deterministically; soft ESCALATE "
@@ -109,7 +118,8 @@ class ComplianceAgent(LendingPersona):
             summary=(
                 f"Compliance posture: {outcome.value} "
                 f"(hmda_complete={hmda_complete}, "
-                f"fair_lending_violation={fair_lending_violation})."
+                f"fair_lending_violation={fair_lending_violation}, "
+                f"state={property_state or 'n/a'}, state_rules_passed={state_rules_passed})."
             ),
         )
 
