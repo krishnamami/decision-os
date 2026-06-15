@@ -42,6 +42,18 @@ def _governed_by_for(decision_id: str, outcome: str):
     except Exception:
         return None
 
+
+def _is_policy_safe_default(policy: Any) -> bool:
+    """True when the policy engine matched no boundary clause and fell back to
+    its safe-default escalate (no hard block / contamination). In that case the
+    persona's own proposed outcome is preferred so we never regress a decision
+    whose output_payload fields predate the YAML boundary."""
+    return (
+        getattr(policy, "matched_clause", None) is None
+        and str(getattr(getattr(policy, "outcome", None), "value", "")) == "escalate"
+        and not getattr(policy, "contamination", False)
+    )
+
 logger = logging.getLogger(__name__)
 
 
@@ -148,6 +160,7 @@ class PersonaRunner:
         self.edms_store = EdmsContextStore(database_url)
         self.decision_store = DecisionStore(database_url)
         self._agents: dict[str, Any] = {}
+        self._evaluator: Any = None  # lazy PolicyEvaluator (decisions.yaml)
 
     async def close(self) -> None:
         await self.edms_store.close()
@@ -327,14 +340,46 @@ class PersonaRunner:
             upstream_outputs=snapshot.upstream_outputs,
             upstream_decision_ids=upstream,
         )
-        reasoning = agent._compute_offline(bundle, None)
-        outcome = reasoning.proposed_outcome.value
-        actual = time.time() - start
 
+        # Upstream outcomes — needed both for the legacy write below and for
+        # the policy engine's hard-rule / contamination checks.
         upstream_data = (
             await self.decision_store.get_upstream(app_id, upstream, tenant_id)
             if upstream else {}
         )
+
+        # 1. Domain values. Personas compute dti/ltv/credit from the bundle;
+        #    they do NOT pick thresholds from `policy` — the policy engine does
+        #    that next. (Pass None here; this is value extraction only.)
+        prelim = agent._compute_offline(bundle, None)
+
+        # 2. Wire ThresholdResolver into the cron path. Resolve which
+        #    tenant_rules version governs THIS loan (pinned at rate lock →
+        #    pipeline-cutoff protection → current active), then let the policy
+        #    engine evaluate the boundary with tenant/agency-resolved
+        #    thresholds. This is what makes a Summit loan at DTI 44% block
+        #    (their cap) while a demo-tenant loan recommends (agency cap 50) —
+        #    decisions.yaml thresholds become dynamic per tenant, and a
+        #    rate-locked loan stays scored under its pinned version.
+        policy = await self._evaluate_with_resolver(
+            decision_id, prelim.output_payload, upstream_data, tenant_id, app_id,
+        )
+
+        # 3. Re-run with the resolved policy in hand (no longer None) so any
+        #    persona that consumes it gets it. Values are unchanged.
+        reasoning = agent._compute_offline(bundle, policy)
+
+        # 4. The policy engine has the last word on outcome
+        #    (no_action_without_policy). Fall back to the persona's proposal
+        #    only when the engine matched no boundary clause (its safe-default
+        #    escalate) — this avoids regressing personas whose output_payload
+        #    field names predate the YAML boundary.
+        if policy is not None and not _is_policy_safe_default(policy):
+            outcome = policy.outcome.value
+        else:
+            outcome = reasoning.proposed_outcome.value
+        actual = time.time() - start
+
         await self.decision_store.write_decision(
             application_id=app_id,
             decision_id=decision_id,
@@ -362,6 +407,111 @@ class PersonaRunner:
             tenant_id=tenant_id,
             governed_by=_governed_by_for(decision_id, outcome),
         )
+
+    # ── Policy engine wiring (ThresholdResolver + PolicyEvaluator) ────
+
+    def _get_evaluator(self) -> Any:
+        """Lazily load the decisions.yaml-backed PolicyEvaluator once."""
+        if self._evaluator is None:
+            from pathlib import Path
+            from core.policy_engine.evaluator import PolicyEvaluator
+            path = (
+                Path(__file__).resolve().parents[2]
+                / "domains" / "lending" / "decisions.yaml"
+            )
+            self._evaluator = PolicyEvaluator.from_path(path)
+        return self._evaluator
+
+    async def _resolve_rule_version(
+        self, conn: Any, tenant_id: str, application_id: str
+    ) -> Any:
+        """Which tenant_rules version governs this loan, by priority:
+          1. pinned_rule_version (set at rate lock — the rain check)
+          2. pipeline-cutoff protection (submitted before a newer version's
+             cutoff → grandfathered under the prior version)
+          3. current active version
+
+        Mirrors api/accord/pipeline.resolve_applicable_rules but returns just
+        the version id and stays in core/ so the cron path takes no api/
+        (FastAPI) import. Returns the rule_version_id (uuid) or None."""
+        es = await conn.fetchrow(
+            "SELECT pinned_rule_version, application_date FROM entity_states "
+            "WHERE application_id=$1 AND tenant_id=$2",
+            application_id, tenant_id,
+        )
+        # 1. Explicit pin at rate lock.
+        if es and es["pinned_rule_version"]:
+            return es["pinned_rule_version"]
+        # 2. Pipeline-cutoff protection.
+        app_date = es["application_date"] if es else None
+        if app_date:
+            prot = await conn.fetchrow(
+                """
+                SELECT prev.rule_version_id
+                FROM tenant_rules curr
+                JOIN tenant_rules prev ON prev.tenant_id = curr.tenant_id
+                  AND prev.version = curr.version - 1
+                WHERE curr.tenant_id = $1 AND curr.status = 'active'
+                  AND curr.pipeline_cutoff_date IS NOT NULL
+                  AND curr.pipeline_cutoff_date > $2
+                ORDER BY curr.version DESC LIMIT 1
+                """,
+                tenant_id, app_date,
+            )
+            if prot:
+                return prot["rule_version_id"]
+        # 3. Current active version.
+        cur = await conn.fetchrow(
+            "SELECT rule_version_id FROM tenant_rules "
+            "WHERE tenant_id=$1 AND status='active' ORDER BY version DESC LIMIT 1",
+            tenant_id,
+        )
+        return cur["rule_version_id"] if cur else None
+
+    async def _evaluate_with_resolver(
+        self,
+        decision_id: str,
+        context: dict[str, Any],
+        upstream_data: dict[str, Any],
+        tenant_id: str,
+        application_id: str,
+    ) -> Any:
+        """Evaluate the decision boundary with a tenant/agency ThresholdResolver
+        wired to the loan's applicable rule version. Returns a PolicyDecision,
+        or None if evaluation fails (caller falls back to the persona)."""
+        from core.policy_engine.evaluator import PolicyOutcome, UpstreamSummary
+        from core.policy_engine.threshold_resolver import ThresholdResolver
+
+        try:
+            pool = await self.decision_store._get_pool()
+            async with pool.acquire() as conn:
+                rule_version_id = await self._resolve_rule_version(
+                    conn, tenant_id, application_id
+                )
+                resolver = ThresholdResolver(
+                    conn, tenant_id=tenant_id, rule_version_id=rule_version_id
+                )
+                summaries: list[Any] = []
+                for did, val in (upstream_data or {}).items():
+                    try:
+                        summaries.append(
+                            UpstreamSummary(
+                                decision_id=did,
+                                outcome=PolicyOutcome(val.get("outcome")),
+                                confidence=float(val.get("confidence") or 1.0),
+                            )
+                        )
+                    except Exception:  # noqa: BLE001 — skip unmappable upstream
+                        continue
+                return await self._get_evaluator().evaluate(
+                    decision_id, context, upstream=summaries, resolver=resolver
+                )
+        except Exception as exc:  # noqa: BLE001 — never let policy eval crash cron
+            logger.warning(
+                "%s: policy evaluation failed for %s — using persona outcome: %s",
+                decision_id, application_id, exc,
+            )
+            return None
 
     # ── All waves ────────────────────────────────────────────────────
 

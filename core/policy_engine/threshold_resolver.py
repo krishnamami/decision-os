@@ -54,10 +54,22 @@ FHA_FLOORS = {"credit.min_score": 580}  # FHA minimum with 3.5% down
 
 
 class ThresholdResolver:
-    def __init__(self, conn, tenant_id: str, programs: Optional[list[str]] = None):
+    def __init__(
+        self,
+        conn,
+        tenant_id: str,
+        programs: Optional[list[str]] = None,
+        rule_version_id: Optional[Any] = None,
+    ):
         self._conn = conn
         self._tenant_id = tenant_id
         self._programs = [p.lower() for p in (programs or ["conventional"])]
+        # When set, resolve() reads tenant overlay rules from THIS version
+        # rather than the tenant's current active version. The cron path
+        # passes the loan's applicable version (pinned at rate lock →
+        # pipeline-cutoff protection → current) so a rate-locked loan is
+        # always scored under the rules in force when it locked.
+        self._rule_version_id = rule_version_id
         self._tenant_rules_cache: Optional[dict] = None
         self._agency_cache: Optional[dict] = None
 
@@ -65,14 +77,15 @@ class ThresholdResolver:
         self,
         threshold_field: str,
         default_value: Any,
-        rule_version_id: Optional[str] = None,
+        rule_version_id: Optional[Any] = None,
     ) -> ThresholdResolution:
         parts = threshold_field.split(".")
         if len(parts) != 2:
             return ThresholdResolution(value=default_value, source="system_default",
                                        note=f"Unparseable field path: {threshold_field}")
         category, field = parts
-        tenant_rules = await self._get_tenant_rules(rule_version_id)
+        rid = rule_version_id if rule_version_id is not None else self._rule_version_id
+        tenant_rules = await self._get_tenant_rules(rid)
         agency = await self._get_agency_guidelines()
 
         # Layer 1 — tenant overlay
@@ -88,7 +101,7 @@ class ThresholdResolver:
                     note=f"Tenant value {tenant_value} below agency floor {floor} for {threshold_field}",
                 )
             return ThresholdResolution(value=tenant_value, source="tenant_rules",
-                                       rule_version_id=rule_version_id, governed_by="tenant_rules")
+                                       rule_version_id=rid, governed_by="tenant_rules")
 
         # Layer 2 — agency guideline
         ag_key = FIELD_TO_AGENCY_GUIDELINE.get(threshold_field)
