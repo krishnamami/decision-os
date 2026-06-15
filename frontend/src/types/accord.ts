@@ -81,6 +81,21 @@ export interface DecisionDetail {
   rule_version_short?: string | null
   rule_version_number?: number | null
   rule_version_effective_from?: string | null
+  governed_by?: GovernedBy[]
+}
+
+export interface GovernedBy {
+  type?: string
+  citation?: string | null
+  rule_name?: string
+  agency?: string
+  authority?: string
+  threshold_field?: string
+  effective_value?: number | string
+  source?: string
+  floor_enforced?: boolean
+  note?: string
+  expression?: string
 }
 
 export interface RainCheck {

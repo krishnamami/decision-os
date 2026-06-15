@@ -123,6 +123,7 @@ class DecisionStore:
         sla_seconds: int,
         actual_seconds: float,
         tenant_id: str = "default",
+        governed_by: Optional[Any] = None,
     ) -> UUID:
         """Insert decision_outputs + decision_timeline rows atomically."""
         pool = await self._get_pool()
@@ -171,11 +172,11 @@ class DecisionStore:
                         upstream_decisions, sla_seconds, actual_seconds,
                         version, tenant_id, decided_at, created_at,
                         human_action, human_reviewer, acted_at,
-                        rule_version_id
+                        rule_version_id, governed_by
                     )
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
                             $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
-                            $23)
+                            $23, $24)
                     """,
                     decision_uuid,
                     application_id,
@@ -200,6 +201,7 @@ class DecisionStore:
                     human_reviewer,
                     acted_at,
                     rule_version_id,
+                    json.dumps(governed_by, default=str) if governed_by else None,
                 )
 
                 prev = await conn.fetchrow(

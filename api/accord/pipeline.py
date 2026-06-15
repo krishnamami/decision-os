@@ -1400,7 +1400,7 @@ async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_i
                    dout.decision_id, dout.outcome, dout.confidence, dout.mode, dout.wave,
                    dout.human_action, dout.human_reviewer, dout.acted_at, dout.human_override_reason,
                    dout.boundary_matched, dout.boundary_rule, dout.context_snapshot, dout.reasoning, dout.stale,
-                   dout.rule_version_id,
+                   dout.rule_version_id, dout.governed_by,
                    tr.version AS rule_version_number,
                    tr.effective_from AS rule_version_effective_from
             FROM decision_outputs dout
@@ -1517,6 +1517,7 @@ async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_i
             "rule_version_effective_from": (
                 r["rule_version_effective_from"].isoformat() if r["rule_version_effective_from"] else None
             ),
+            "governed_by": _J(r["governed_by"]) if r["governed_by"] else [],
         })
 
     lock_days = _lock_days(loan_terms)

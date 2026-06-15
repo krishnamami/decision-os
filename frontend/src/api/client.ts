@@ -8,6 +8,7 @@ import type {
   ComplianceHealth,
   DebateResult,
   FunnelStep,
+  GovernedBy,
   LoanDetail,
   PipelineResponse,
   RainCheck,
@@ -321,6 +322,7 @@ export interface ExaminerReportData {
   tenant_id: string
   loan_type: string | null
   rain_check?: RainCheck
+  governing_regulations?: Array<{ decision_id: string; outcome: string; governed_by: GovernedBy[] }>
   rule_versions_applied?: RuleVersionApplied[]
   loan: LoanDetail
 }

@@ -65,6 +65,10 @@ async def examiner_report(application_id: str, user: dict = Depends(get_current_
         "tenant_id": tenant_id,
         "loan_type": row["loan_type"] if row else None,
         "rain_check": loan.get("rain_check"),
+        "governing_regulations": [
+            {"decision_id": d["decision_id"], "outcome": d["outcome"], "governed_by": d.get("governed_by") or []}
+            for d in (loan.get("decisions") or []) if d.get("governed_by")
+        ],
         "rule_versions_applied": [
             {
                 "version": r["version"],

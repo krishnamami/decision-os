@@ -1,0 +1,158 @@
+"""ThresholdResolver — resolve the effective value for a governed boundary
+threshold from three layers, highest priority first:
+
+  1. tenant_rules (active lender overlay) — what the lender set in Policy Studio
+  2. agency_guidelines — the agency standard (Fannie / FHA / …)
+  3. decisions.yaml default — the value baked into the boundary expression
+
+So when a lender changes their DTI cap from 43% to 40%, the next evaluation
+uses 40% — decisions.yaml thresholds become dynamic.
+
+Floor enforcement: a tenant value below the agency/regulatory floor is rejected
+and the floor is used instead (e.g. credit floor can't drop below 620 Fannie /
+580 FHA).
+
+Values in tenant_rules and agency_guidelines are stored as PERCENTS (dti 43,
+credit 620, ltv 97); the evaluator scales them to the boundary's units.
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from typing import Any, Optional
+
+
+@dataclass
+class ThresholdResolution:
+    value: Any
+    source: str  # tenant_rules | agency_guidelines | agency_floor_enforced | system_default
+    citation: Optional[str] = None
+    rule_version_id: Optional[str] = None
+    governed_by: Optional[str] = None
+    floor_enforced: bool = False
+    floor_value: Any = None
+    note: Optional[str] = None
+
+
+# governed_by.threshold_field → (agency, category, guideline_name)
+FIELD_TO_AGENCY_GUIDELINE = {
+    "dti.back_max": ("fannie", "dti", "DU Maximum DTI"),
+    "dti.front_max": ("fannie", "dti", "Manual UW Maximum DTI"),
+    "credit.min_score": ("fannie", "credit", "Minimum Credit Score"),
+    "ltv.max": ("fannie", "ltv", "Primary Residence 1-Unit Max LTV"),
+    "ltv.no_mi_threshold": ("fannie", "ltv", "Primary Residence 1-Unit Max LTV"),
+    "reserves.investment": ("fannie", "reserves", "Investment Property Reserves"),
+}
+
+# Hard floors a tenant overlay may not go below.
+AGENCY_FLOORS = {
+    "credit.min_score": 620,   # Fannie minimum
+    "reserves.primary": 2,     # Fannie minimum reserves
+    "reserves.investment": 6,
+}
+FHA_FLOORS = {"credit.min_score": 580}  # FHA minimum with 3.5% down
+
+
+class ThresholdResolver:
+    def __init__(self, conn, tenant_id: str, programs: Optional[list[str]] = None):
+        self._conn = conn
+        self._tenant_id = tenant_id
+        self._programs = [p.lower() for p in (programs or ["conventional"])]
+        self._tenant_rules_cache: Optional[dict] = None
+        self._agency_cache: Optional[dict] = None
+
+    async def resolve(
+        self,
+        threshold_field: str,
+        default_value: Any,
+        rule_version_id: Optional[str] = None,
+    ) -> ThresholdResolution:
+        parts = threshold_field.split(".")
+        if len(parts) != 2:
+            return ThresholdResolution(value=default_value, source="system_default",
+                                       note=f"Unparseable field path: {threshold_field}")
+        category, field = parts
+        tenant_rules = await self._get_tenant_rules(rule_version_id)
+        agency = await self._get_agency_guidelines()
+
+        # Layer 1 — tenant overlay
+        tenant_value = None
+        if tenant_rules and isinstance(tenant_rules.get(category), dict):
+            tenant_value = tenant_rules[category].get(field)
+        if tenant_value is not None:
+            floor = self._floor(threshold_field)
+            if floor is not None and _num(tenant_value) is not None and _num(tenant_value) < floor:
+                return ThresholdResolution(
+                    value=floor, source="agency_floor_enforced", floor_enforced=True,
+                    floor_value=floor,
+                    note=f"Tenant value {tenant_value} below agency floor {floor} for {threshold_field}",
+                )
+            return ThresholdResolution(value=tenant_value, source="tenant_rules",
+                                       rule_version_id=rule_version_id, governed_by="tenant_rules")
+
+        # Layer 2 — agency guideline
+        ag_key = FIELD_TO_AGENCY_GUIDELINE.get(threshold_field)
+        if ag_key and agency:
+            a, ck, name = ag_key
+            key = f"{a}:{ck}:{name}"
+            if key in agency:
+                return ThresholdResolution(value=agency[key], source="agency_guidelines",
+                                           citation=agency.get(f"{key}:meta", {}).get("citation"),
+                                           governed_by="agency_guidelines")
+
+        # Layer 3 — decisions.yaml default
+        return ThresholdResolution(value=default_value, source="system_default",
+                                   governed_by="decisions_yaml")
+
+    async def _get_tenant_rules(self, rule_version_id: Optional[str] = None) -> dict:
+        if self._tenant_rules_cache is not None:
+            return self._tenant_rules_cache
+        try:
+            if rule_version_id:
+                row = await self._conn.fetchrow(
+                    "SELECT rules FROM tenant_rules WHERE rule_version_id = $1", rule_version_id)
+            else:
+                row = await self._conn.fetchrow(
+                    "SELECT rules FROM tenant_rules WHERE tenant_id = $1 AND status = 'active' "
+                    "ORDER BY version DESC LIMIT 1", self._tenant_id)
+            rules = row["rules"] if row else None
+            self._tenant_rules_cache = (json.loads(rules) if isinstance(rules, str) else rules) or {}
+        except Exception:
+            self._tenant_rules_cache = {}
+        return self._tenant_rules_cache
+
+    async def _get_agency_guidelines(self) -> dict:
+        if self._agency_cache is not None:
+            return self._agency_cache
+        try:
+            rows = await self._conn.fetch(
+                "SELECT agency, category, guideline_name, guideline_value, citation "
+                "FROM agency_guidelines WHERE is_active = true")
+            cache: dict = {}
+            for r in rows:
+                gv = r["guideline_value"]
+                if isinstance(gv, str):
+                    gv = json.loads(gv)
+                value = gv.get("value") if isinstance(gv, dict) else None
+                key = f"{r['agency']}:{r['category']}:{r['guideline_name']}"
+                cache[key] = value
+                cache[f"{key}:meta"] = {"citation": r["citation"]}
+            self._agency_cache = cache
+        except Exception:
+            self._agency_cache = {}
+        return self._agency_cache
+
+    def _floor(self, threshold_field: str) -> Any:
+        if "fha" in self._programs and threshold_field in FHA_FLOORS:
+            return FHA_FLOORS[threshold_field]
+        return AGENCY_FLOORS.get(threshold_field)
+
+
+def _num(v: Any) -> Optional[float]:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+__all__ = ["ThresholdResolver", "ThresholdResolution"]

@@ -66,6 +66,10 @@ class PolicyDecision(BaseModel):
     # Both default to None / [] so legacy YAML-only paths keep working.
     policy_version_id: Optional[str] = None
     policy_chain: list[str] = Field(default_factory=list)
+    # Regulation citations for the boundary expressions that fired, from their
+    # decisions.yaml ``governed_by`` (enriched with the resolved threshold when a
+    # ThresholdResolver is supplied). Empty for legacy / string-only clauses.
+    governed_by: list[dict] = Field(default_factory=list)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -85,6 +89,41 @@ class PolicyDecision(BaseModel):
 _RE_IS_NULL = re.compile(r"^(.+?)\s+is\s+(not\s+null|null)\s*$")
 _RE_IN = re.compile(r"^(.+?)\s+in\s+(.+)\s*$")
 _RE_CMP = re.compile(r"^(.+?)\s*(>=|<=|==|!=|>|<)\s*(.+)\s*$")
+
+# A boundary clause item is either a plain expression string (legacy) or a
+# dict {expression, governed_by} (new, PROMPT D). Both forms evaluate identically.
+_RHS_RE = re.compile(r"([><=!]+\s*)([\d.]+)")
+
+
+def _parse_clause_item(item: Any) -> tuple[str, Optional[dict]]:
+    """(expression_str, governed_by_dict | None) for a clause item."""
+    if isinstance(item, str):
+        return item, None
+    if isinstance(item, dict):
+        return (item.get("expression") or item.get("expr") or ""), item.get("governed_by")
+    return str(item), None
+
+
+def _extract_rhs(expr: str) -> Optional[float]:
+    m = _RHS_RE.search(expr)
+    return float(m.group(2)) if m else None
+
+
+def _replace_rhs(expr: str, new_value: Any) -> str:
+    """Replace the numeric RHS of a comparison with ``new_value``. If the YAML
+    threshold is a fraction (≤1.5, e.g. dti 0.43) but the resolved value is a
+    percent (>1.5, e.g. 43), scale it down to keep the comparison in the same
+    units as the evaluation context."""
+    orig = _extract_rhs(expr)
+    try:
+        v: Any = float(new_value)
+    except (TypeError, ValueError):
+        return expr
+    if orig is not None and orig <= 1.5 and v > 1.5:
+        v = v / 100.0
+    # render ints without a trailing .0
+    out = int(v) if float(v).is_integer() else v
+    return _RHS_RE.sub(lambda m: f"{m.group(1)}{out}", expr, count=1)
 
 
 _MISSING = object()
@@ -280,6 +319,7 @@ class PolicyEvaluator:
         agency_chain: Optional[list[str]] = None,
         product: Optional[str] = None,
         state: Optional[str] = None,
+        resolver: Optional[Any] = None,
     ) -> PolicyDecision:
         """Evaluate a decision's boundary against context.
 
@@ -340,10 +380,36 @@ class PolicyEvaluator:
         merged_context = self._merge_upstream_into_context(context, upstream)
 
         for clause_name, outcome in _CLAUSE_PRIORITY:
-            rules = boundary.get(clause_name) or []
-            if not rules:
+            raw_items = boundary.get(clause_name) or []
+            if not raw_items:
                 continue
-            matched, unmatched, all_ok = self._evaluate_clause(rules, merged_context)
+            # Parse each item (string or {expression, governed_by}); when an item
+            # is governed by a resolvable threshold and a resolver is supplied,
+            # swap the hardcoded RHS for the tenant/agency-resolved value.
+            eff_exprs: list[str] = []
+            gov_records: list[dict] = []
+            for item in raw_items:
+                expr, gov = _parse_clause_item(item)
+                eff = expr
+                if gov:
+                    rec = dict(gov)
+                    tf = gov.get("threshold_field")
+                    if tf and resolver is not None:
+                        try:
+                            resolution = await resolver.resolve(tf, _extract_rhs(expr))
+                            eff = _replace_rhs(expr, resolution.value)
+                            rec.update({
+                                "effective_value": resolution.value,
+                                "source": resolution.source,
+                                "citation": resolution.citation or gov.get("citation"),
+                                "floor_enforced": getattr(resolution, "floor_enforced", False),
+                            })
+                        except Exception:
+                            pass
+                    rec.setdefault("expression", expr)
+                    gov_records.append(rec)
+                eff_exprs.append(eff)
+            matched, unmatched, all_ok = self._evaluate_clause(eff_exprs, merged_context)
             if all_ok:
                 return PolicyDecision(
                     decision_id=decision_id,
@@ -352,6 +418,7 @@ class PolicyEvaluator:
                     matched_rules=matched,
                     unmatched_rules=unmatched,
                     reasons=[f"clause {clause_name} matched"],
+                    governed_by=gov_records,
                     **version_stamp,
                 )
 

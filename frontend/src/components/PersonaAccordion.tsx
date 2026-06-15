@@ -209,6 +209,26 @@ function DecisionRow({ d, docs, notes = [], open, onToggle }: { d: DecisionDetai
                               )}
                             </p>
                           )}
+                          {d.governed_by && d.governed_by.length > 0 && (
+                            <div className="mt-1.5 space-y-0.5">
+                              {d.governed_by.map((g, i) => {
+                                const src = g.source || g.type
+                                const label = src === 'tenant_rules' ? 'Your policy'
+                                  : src === 'agency_guidelines' ? 'Agency guideline'
+                                  : src === 'system_default' ? 'System default'
+                                  : src === 'regulatory_rules' ? (g.authority ? g.authority.toUpperCase() : 'Federal/State law')
+                                  : 'Regulation'
+                                return (
+                                  <p key={i} className="flex flex-wrap items-center gap-1 text-[11px] text-slate-400">
+                                    <span aria-hidden="true" style={{ color: '#0F4D37' }}>📖</span>
+                                    {g.citation && <strong className="text-slate-500">{g.citation}</strong>}
+                                    <span>· {label}{g.effective_value != null ? ` · ${g.effective_value}` : ''}</span>
+                                    {g.floor_enforced && <span style={{ color: '#854f0b' }}>· floor enforced</span>}
+                                  </p>
+                                )
+                              })}
+                            </div>
+                          )}
                         </div>
                       </div>
                       <button onClick={() => setShowRule((v) => !v)} className="mt-2 text-xs font-medium text-slate-500 hover:text-slate-800">

@@ -28,6 +28,7 @@ from .store import (
     PolicyStore,
     PolicyVersionRecord,
 )
+from .threshold_resolver import ThresholdResolution, ThresholdResolver
 
 __all__ = [
     "BoundaryRule",
@@ -45,6 +46,8 @@ __all__ = [
     "SEED_AGENCY",
     "SEED_INGESTED_BY",
     "SEED_VALID_FROM",
+    "ThresholdResolution",
+    "ThresholdResolver",
     "UpstreamSummary",
     "load_spec",
     "policy_id_for",

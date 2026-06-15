@@ -189,10 +189,21 @@ decisions:
     owner_team: credit_risk
     boundary:
       automate_if:
-        - credit_score >= 680
+        - expression: credit_score >= 680
+          governed_by:
+            type: tenant_rules
+            field: credit.min_score
+            threshold_field: credit.min_score
+            note: Tenant overlay — agency floor is 620 (Fannie) or 580 (FHA)
         - no_derogatory_last_24_months == true
       recommend_if:
-        - credit_score >= 600
+        - expression: credit_score >= 600
+          governed_by:
+            type: agency_guidelines
+            agency: fannie
+            guideline_name: Minimum Credit Score
+            citation: Selling Guide B3-5.1-01
+            threshold_field: credit.min_score
         - credit_score < 680
       block_if:
         - active_bankruptcy == true
@@ -233,9 +244,24 @@ decisions:
         - fraud_score >= 0.2
         - fraud_score < 0.5
       block_if:
-        - fraud_score >= 0.5
-        - watchlist_match == true
-        - synthetic_identity_flag == true
+        - expression: fraud_score >= 0.5
+          governed_by:
+            type: tenant_rules
+            field: fraud.watchlist_threshold
+            threshold_field: fraud.watchlist_threshold
+            note: Tenant overlay — federal minimum is OFAC mandatory (31 CFR Part 501)
+        - expression: watchlist_match == true
+          governed_by:
+            type: regulatory_rules
+            authority: ofac
+            rule_name: OFAC SDN Screening
+            citation: 31 CFR Part 501
+        - expression: synthetic_identity_flag == true
+          governed_by:
+            type: regulatory_rules
+            authority: bsa
+            rule_name: SAR Filing Requirement
+            citation: 31 CFR 1020.320
       escalate_if:
         - document_authenticity_score < 0.8
     sla_seconds: 8
@@ -270,8 +296,18 @@ decisions:
       recommend_if:
         - minor_data_gap == true
       block_if:
-        - fair_lending_violation == true
-        - missing_required_disclosures == true
+        - expression: fair_lending_violation == true
+          governed_by:
+            type: regulatory_rules
+            authority: federal
+            rule_name: Adverse Action Specific Reasons
+            citation: Regulation B §1002.9(a)(2)
+        - expression: missing_required_disclosures == true
+          governed_by:
+            type: regulatory_rules
+            authority: federal
+            rule_name: Loan Estimate Delivery
+            citation: Regulation Z §1026.19(e)
       escalate_if:
         - regulatory_ambiguity == true
         - mixed_jurisdiction == true
@@ -306,10 +342,28 @@ decisions:
       automate_if:
         - dti <= 0.36
       recommend_if:
-        - dti > 0.36
-        - dti <= 0.43
+        - expression: dti > 0.36
+          governed_by:
+            type: agency_guidelines
+            agency: fannie
+            guideline_name: Manual UW Maximum DTI
+            citation: Selling Guide B3-6-02
+            threshold_field: dti.front_max
+        - expression: dti <= 0.43
+          governed_by:
+            type: regulatory_rules
+            authority: qm
+            rule_name: QM Safe Harbor DTI Maximum
+            citation: 12 CFR 1026.43(e)(2)
+            threshold_field: dti.back_max
       block_if:
-        - dti > 0.50
+        - expression: dti > 0.50
+          governed_by:
+            type: agency_guidelines
+            agency: fannie
+            guideline_name: DU Maximum DTI
+            citation: Selling Guide B3-6-02
+            threshold_field: dti.back_max
       escalate_if:
         - income_verification.confidence < 0.85
     sla_seconds: 5
@@ -341,12 +395,30 @@ decisions:
     owner_team: underwriting
     boundary:
       automate_if:
-        - ltv <= 0.80
+        - expression: ltv <= 0.80
+          governed_by:
+            type: agency_guidelines
+            agency: fannie
+            guideline_name: Primary Residence 1-Unit Max LTV
+            citation: Selling Guide B2-1.2-01
+            threshold_field: ltv.no_mi_threshold
       recommend_if:
-        - ltv > 0.80
+        - expression: ltv > 0.80
+          governed_by:
+            type: agency_guidelines
+            agency: fannie
+            guideline_name: Primary Residence 1-Unit Max LTV
+            citation: Selling Guide B2-1.2-01
+            threshold_field: ltv.max
         - ltv <= 0.95
       block_if:
-        - ltv > 0.97
+        - expression: ltv > 0.97
+          governed_by:
+            type: agency_guidelines
+            agency: fannie
+            guideline_name: Primary Residence 1-Unit Max LTV
+            citation: Selling Guide B2-1.2-01
+            threshold_field: ltv.max
       escalate_if:
         - appraisal_disputed == true
     sla_seconds: 5
@@ -425,7 +497,13 @@ decisions:
       recommend_if:
         - pricing_exception_possible == true
       block_if:
-        - rate_exceeds_usury_limit == true
+        - expression: rate_exceeds_usury_limit == true
+          governed_by:
+            type: regulatory_rules
+            authority: state
+            rule_name: Varies by property state
+            citation: NY Banking Law §14-a (NY) · varies by state
+            threshold_field: rate.usury_cap
       escalate_if:
         - concurrent_rate_lock_conflict == true
     sla_seconds: 8
@@ -561,7 +639,12 @@ decisions:
       block_if:
         - title_defect == true
         - compliance_check.decision == block
-        - cd_timing_violation == true
+        - expression: cd_timing_violation == true
+          governed_by:
+            type: regulatory_rules
+            authority: federal
+            rule_name: Closing Disclosure Delivery
+            citation: Regulation Z §1026.19(f)
       escalate_if:
         - lien_dispute == true
         - insurance_gap == true

@@ -32,6 +32,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def _governed_by_for(decision_id: str, outcome: str):
+    """Regulation citations governing this decision+outcome (from decisions.yaml).
+    Best-effort — never blocks a write."""
+    try:
+        from domains.lending.governance import governed_by_for
+        return governed_by_for(decision_id, outcome)
+    except Exception:
+        return None
+
 logger = logging.getLogger(__name__)
 
 
@@ -350,6 +360,7 @@ class PersonaRunner:
             sla_seconds=sla,
             actual_seconds=actual,
             tenant_id=tenant_id,
+            governed_by=_governed_by_for(decision_id, outcome),
         )
 
     # ── All waves ────────────────────────────────────────────────────
