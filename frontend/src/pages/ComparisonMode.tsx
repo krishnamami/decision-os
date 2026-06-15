@@ -15,6 +15,15 @@ const MATCH: Record<string, { label: string; cls: string }> = {
   disagree: { label: '❌ disagree', cls: 'text-red-600' },
 }
 
+// Plain-English labels for Accord's raw outcome (manual stays as approved/denied).
+const ACCORD_LABEL: Record<string, string> = {
+  escalate: 'Flagged for review',
+  block: 'Would have blocked',
+  allow: 'Would have approved',
+  recommend: 'Recommended review',
+}
+const accordLabel = (v?: string) => ACCORD_LABEL[String(v ?? '').toLowerCase()] ?? (v ?? '—')
+
 function printReport(r: ComparisonReport, tenantName: string) {
   const w = window.open('', '_blank')
   if (!w || !r.summary || !r.period) return
@@ -56,7 +65,7 @@ function DetailCard({ d, kind }: { d: ComparisonDetail; kind: 'caught' | 'disagr
     <div className={`rounded-xl border border-l-4 border-slate-200 p-4 ${accent}`}>
       <div className="font-semibold text-slate-900">{kind === 'caught' ? '🔍' : '⚠'} {d.application_id} · {d.borrower}</div>
       <div className="mt-1.5 text-sm text-slate-700">{d.description}</div>
-      <div className="mt-1 text-sm"><span className="font-medium text-slate-600">Accord:</span> {String(d.accord_decision).toUpperCase()} · <span className="font-medium text-slate-600">Manual:</span> {String(d.manual_decision).toUpperCase()}</div>
+      <div className="mt-1 text-sm"><span className="font-medium text-slate-600">Accord:</span> {accordLabel(d.accord_decision)} · <span className="font-medium text-slate-600">Manual:</span> {String(d.manual_decision).toUpperCase()}</div>
       {d.resolution && <div className="mt-2 text-sm italic text-slate-600">Resolution: {d.resolution}</div>}
     </div>
   )
@@ -243,7 +252,7 @@ export default function ComparisonMode() {
                 <tr key={c.application_id} className="hover:bg-slate-50">
                   <td className="px-3 py-2 font-mono text-xs text-slate-500">{c.application_id}</td>
                   <td className="px-3 py-2 font-medium text-slate-800">{c.borrower}</td>
-                  <td className="px-3 py-2">{c.accord_outcome}</td>
+                  <td className="px-3 py-2">{accordLabel(c.accord_outcome)}</td>
                   <td className="px-3 py-2">{c.manual_outcome}</td>
                   <td className={`px-3 py-2 font-medium ${MATCH[c.agreement]?.cls || ''}`}>{MATCH[c.agreement]?.label || c.agreement}</td>
                 </tr>
