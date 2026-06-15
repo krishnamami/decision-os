@@ -120,11 +120,13 @@ export default function RegulationTransparency() {
   useEffect(() => {
     let alive = true
     setErr(null)
-    fetchRegulationTransparency(stateFilter ? { state_code: stateFilter } : undefined)
+    // Fetch all layers once; the state dropdown filters only the state layer
+    // client-side so federal/agency stay visible.
+    fetchRegulationTransparency()
       .then((d) => alive && setData(d))
       .catch((e) => alive && setErr(e instanceof Error ? e.message : 'Failed to load'))
     return () => { alive = false }
-  }, [stateFilter])
+  }, [])
 
   const show = (l: string) => tab === 'all' || tab === l
   const lastUpdated = useMemo(() => {
@@ -180,12 +182,15 @@ export default function RegulationTransparency() {
             {layers.agency.length === 0 && <div className="px-4 py-3 text-sm text-slate-400">No agency guidelines.</div>}
           </LayerCard>
         )}
-        {show('state') && (
-          <LayerCard title="State" count={layers.state.length} subtitle={`Applied per property location on every loan${summary.states_covered.length ? ` · ${summary.states_covered.length} states` : ''}`}>
-            {layers.state.map((r) => <RuleRow key={r.regulation_id} r={r} />)}
-            {layers.state.length === 0 && <div className="px-4 py-3 text-sm text-slate-400">No state rules for this filter.</div>}
-          </LayerCard>
-        )}
+        {show('state') && (() => {
+          const stateRules = stateFilter ? layers.state.filter((r) => r.state_code === stateFilter) : layers.state
+          return (
+            <LayerCard title="State" count={stateRules.length} subtitle={`Applied per property location on every loan${summary.states_covered.length ? ` · ${summary.states_covered.length} states` : ''}${stateFilter ? ` · filtered to ${stateFilter}` : ''}`}>
+              {stateRules.map((r) => <RuleRow key={r.regulation_id} r={r} />)}
+              {stateRules.length === 0 && <div className="px-4 py-3 text-sm text-slate-400">No state rules for this filter.</div>}
+            </LayerCard>
+          )
+        })()}
         {show('lender') && <LenderCard versions={layers.lender} />}
       </div>
 
