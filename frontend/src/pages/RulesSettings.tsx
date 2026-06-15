@@ -357,6 +357,13 @@ export default function RulesSettings() {
         </div>
       </div>
 
+      {/* Full regulation reference (the old transparency view, still reachable) */}
+      <div className="-mt-2 text-right">
+        <button onClick={() => navigate('/regulation-transparency')} className="text-sm font-semibold text-brand hover:underline">
+          Full regulation reference →
+        </button>
+      </div>
+
       {/* Dashboard-wide validation-failure banner */}
       {validationFailed > 0 && !showValidation && (
         <button onClick={() => setShowValidation(true)} className="w-full rounded-xl border border-red-300 bg-red-50 p-4 text-left text-sm font-bold text-red-800 hover:bg-red-100">

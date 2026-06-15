@@ -24,7 +24,7 @@ const TABS = [
   { to: '/simulation', product: 'simulation', label: 'Simulation' },
   { to: '/audit', product: 'audit', label: 'Audit' },
   { to: '/data-health', product: 'data_health', label: 'Data Health' },
-  { to: '/regulation-transparency', product: 'data_health', label: 'Policy Rules' },
+  { to: '/settings/rules', product: 'data_health', label: 'Policy Rules' },
 ]
 
 // Which nav tabs each role sees (by label). Roles not listed fall back to
