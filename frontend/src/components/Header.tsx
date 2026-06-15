@@ -103,20 +103,20 @@ export default function Header() {
         </div>
       )}
 
-      <div ref={navRef} className="relative border-b border-[#E5E7EB] bg-white">
+      <div ref={navRef} className="relative border-b border-white/10 bg-[#0B1220]">
         <div className="mx-auto flex max-w-7xl items-center px-6" style={{ height: 52 }}>
           <button onClick={() => go('/pipeline')} className="flex items-center gap-2">
             <span className="flex h-7 w-7 items-center justify-center rounded-md bg-brand text-sm font-bold text-white">A</span>
-            <span className="text-lg font-bold tracking-tight text-slate-900">accord</span>
+            <span className="text-lg font-bold tracking-tight text-white">accord</span>
           </button>
 
-          <nav className="ml-8 flex items-center gap-6 text-sm font-medium text-slate-600">
-            <button onClick={() => setProductsOpen((v) => !v)} className={`flex items-center gap-1 hover:text-slate-900 ${productsOpen ? 'text-slate-900' : ''}`}>
+          <nav className="ml-8 flex items-center gap-6 text-sm font-medium text-white/70">
+            <button onClick={() => setProductsOpen((v) => !v)} className={`flex items-center gap-1 hover:text-white ${productsOpen ? 'text-white' : ''}`}>
               Products <span className="text-[10px]">▾</span>
             </button>
-            <a href="#" className="hover:text-slate-900">Pricing</a>
-            <a href="#" className="hover:text-slate-900">Docs</a>
-            <a href="#" className="hover:text-slate-900">Blog</a>
+            <a href="#" className="hover:text-white">Pricing</a>
+            <a href="#" className="hover:text-white">Docs</a>
+            <a href="#" className="hover:text-white">Blog</a>
           </nav>
 
           {/* Notifications + user menu */}
@@ -184,7 +184,7 @@ export default function Header() {
       </div>
 
       {/* Active product bar — role-hidden / plan-locked */}
-      <div className="border-b border-[#E5E7EB] bg-white">
+      <div className="border-b border-white/10 bg-[#0B1220]">
         <nav className="mx-auto flex max-w-7xl items-center gap-6 px-6">
           {TABS.map((t) => {
             if (!roleAllows(t.label)) return null // role can't access — hide
@@ -193,7 +193,7 @@ export default function Header() {
                 <span
                   key={t.to}
                   title={UPGRADE[t.product] ?? 'Not included in your plan'}
-                  className="flex cursor-not-allowed items-center gap-1 py-3 text-sm font-medium text-slate-300"
+                  className="flex cursor-not-allowed items-center gap-1 py-3 text-sm font-medium text-white/30"
                 >
                   🔒 {t.label}
                 </span>
@@ -205,7 +205,7 @@ export default function Header() {
                 key={t.to}
                 to={t.to}
                 className={`-mb-px border-b-2 py-3 text-sm font-medium transition ${
-                  active ? 'border-brand text-brand' : 'border-transparent text-[#6B7280] hover:text-slate-800'
+                  active ? 'border-[#34D399] text-white' : 'border-transparent text-white/60 hover:text-white'
                 }`}
               >
                 {t.label}
@@ -215,7 +215,7 @@ export default function Header() {
           {comparisonActive && canCompare && (
             <NavLink
               to="/comparison"
-              className={({ isActive }) => `-mb-px border-b-2 py-3 text-sm font-medium transition ${isActive ? 'border-brand text-brand' : 'border-transparent text-[#6B7280] hover:text-slate-800'}`}
+              className={({ isActive }) => `-mb-px border-b-2 py-3 text-sm font-medium transition ${isActive ? 'border-[#34D399] text-white' : 'border-transparent text-white/60 hover:text-white'}`}
             >
               🔄 Comparison
             </NavLink>
