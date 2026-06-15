@@ -84,6 +84,7 @@ export default function ComparisonMode() {
   const [report, setReport] = useState<ComparisonReport | null>(null)
   const [duration, setDuration] = useState(90)
   const [busy, setBusy] = useState(false)
+  const [tableFilter, setTableFilter] = useState<'all' | 'agree' | 'accord_stricter' | 'accord_looser'>('all')
 
   const load = () => fetchComparisonReport().then(setReport).catch(() => undefined)
   useEffect(() => { load() }, [])
@@ -137,10 +138,15 @@ export default function ComparisonMode() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-5 px-6 py-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-bold text-slate-900">
-          🔄 Comparison Mode — {report.ended ? `Complete · ${s.total_loans} loans` : `Day ${p.day} of ${p.duration}`}
-        </h1>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">
+            🔄 Comparison Mode — {report.ended ? `Complete · ${s.total_loans} loans` : `Day ${p.day} of ${p.duration}`}
+          </h1>
+          {!report.ended && (
+            <p className="mt-1 text-sm text-slate-500">Running silently alongside your team. No loan outcomes are affected until you activate Accord.</p>
+          )}
+        </div>
         <div className="flex gap-2">
           <button onClick={() => printReport(report, tenant?.name || 'Tenant')} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">📥 Export report (PDF)</button>
           <button onClick={exportCsv} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">📥 Export data (CSV)</button>
@@ -155,7 +161,9 @@ export default function ComparisonMode() {
         <div className="mx-auto mt-3 h-3 max-w-lg overflow-hidden rounded-full bg-slate-100">
           <div className="h-full rounded-full bg-brand" style={{ width: `${s.agreement_rate}%` }} />
         </div>
-        <div className="mt-2 text-sm text-slate-500">{s.agree} agree · {s.accord_stricter} Accord stricter · {s.accord_looser} Accord looser · {s.disagree} disagree</div>
+        <div className="mt-2 text-sm text-slate-500">
+          {s.agree} agree · {s.accord_stricter} cases Accord would have blocked · human approved · {s.accord_looser} cases Accord approved · human blocked · {s.disagree} disagree
+        </div>
         {report.ended && (
           <p className="mx-auto mt-3 max-w-xl text-sm font-medium text-slate-700">
             {s.agreement_rate >= 95 ? 'Accord matches your team’s judgment. Ready for primary use.' : s.agreement_rate >= 90 ? 'Strong agreement. A few patterns left to calibrate.' : 'Review the disagreements and calibrate rules before primary use.'}
@@ -199,13 +207,39 @@ export default function ComparisonMode() {
       {/* All comparisons */}
       <div className="rounded-xl border border-slate-200 bg-white p-5">
         <h2 className="mb-3 text-sm font-bold text-slate-900">All comparisons</h2>
+        {/* Filter tabs */}
+        {(() => {
+          const comps = report.all_comparisons || []
+          const countBy = (k: string) => comps.filter((c) => c.agreement === k).length
+          const tabs: Array<{ key: typeof tableFilter; label: string; count: number }> = [
+            { key: 'all', label: 'All', count: comps.length },
+            { key: 'agree', label: 'Agree', count: countBy('agree') },
+            { key: 'accord_stricter', label: 'Accord stricter', count: countBy('accord_stricter') },
+            { key: 'accord_looser', label: 'Accord looser', count: countBy('accord_looser') },
+          ]
+          return (
+            <div className="mb-3 flex flex-wrap gap-2">
+              {tabs.map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => setTableFilter(t.key)}
+                  className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${tableFilter === t.key ? 'border-brand bg-brand-light/40 text-brand-dark' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}
+                >
+                  {t.label} {t.count}
+                </button>
+              ))}
+            </div>
+          )
+        })()}
         <div className="overflow-hidden rounded-lg border border-slate-200">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr><th className="px-3 py-2 text-left">App ID</th><th className="px-3 py-2 text-left">Borrower</th><th className="px-3 py-2 text-left">Accord</th><th className="px-3 py-2 text-left">Manual</th><th className="px-3 py-2 text-left">Match</th></tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {(report.all_comparisons || []).map((c) => (
+              {(report.all_comparisons || [])
+                .filter((c) => tableFilter === 'all' || c.agreement === tableFilter)
+                .map((c) => (
                 <tr key={c.application_id} className="hover:bg-slate-50">
                   <td className="px-3 py-2 font-mono text-xs text-slate-500">{c.application_id}</td>
                   <td className="px-3 py-2 font-medium text-slate-800">{c.borrower}</td>
