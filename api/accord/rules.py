@@ -1316,12 +1316,12 @@ async def field_impacts(tenant_id: str = Depends(get_tenant_id)) -> dict:
             if value <= baseline:
                 label = f"Your floor ({int(value)}) is at the agency minimum ({baseline}) — no loans sit in the gap."
             else:
-                label = f"{n} {loanword} have {noun} {baseline}–{int(value) - 1} — they pass the agency minimum ({baseline}) but not yours."
+                label = f"{n} {loanword} between {noun} {baseline} and {int(value) - 1} — above the agency minimum ({baseline}), below your floor."
         else:
             if value >= baseline:
                 label = f"Your cap ({int(value)}%) matches the agency max ({baseline}%) — no loans sit in the gap."
             else:
-                label = f"{n} {loanword} have {noun} {int(value) + 1}–{baseline}% — within the agency max ({baseline}%) but above your cap."
+                label = f"{n} {loanword} between {noun} {int(value) + 1}% and {baseline}% — within the agency max ({baseline}%), above your cap."
         out[key] = {"count": n, "label": label}
 
     # Fields with no clean agency gap → just report the active population.
