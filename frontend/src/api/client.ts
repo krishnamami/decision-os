@@ -796,9 +796,10 @@ export async function uploadRateSheet(file: File): Promise<RateSheetUploadResult
 }
 export interface RateSheetStatus {
   last_upload: string | null
+  last_uploaded_by: string | null
   last_record_count: number | null
   total_entries: number
-  recent: Array<{ product_id: string; credit_band: string; ltv_max: number; base_rate: number; llpa_adjustment: number; effective_date: string; uploaded_at: string }>
+  recent: Array<{ product_id: string; credit_band: string; ltv_max: number; base_rate: number; llpa_adjustment: number; effective_date: string; uploaded_at: string; uploaded_by?: string | null }>
 }
 export function fetchRateSheetStatus(): Promise<RateSheetStatus> {
   return getJSON('/api/accord/rules/rate-sheet/status')

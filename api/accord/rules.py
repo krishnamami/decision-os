@@ -1199,16 +1199,33 @@ async def rate_sheet_status(tenant_id: str = Depends(get_tenant_id)) -> dict:
     async with pool.acquire() as conn:
         ds = await conn.fetchrow("SELECT last_success, record_count, status FROM data_source_status WHERE source_id='rate_sheet'")
         total = await conn.fetchval("SELECT COUNT(*) FROM rate_sheet_entry WHERE tenant_id=$1", tenant_id)
+        # Full current rate table (joined to the uploader for the "by …" line).
         recent = await conn.fetch(
-            "SELECT product_id, credit_band, ltv_max, base_rate, llpa_adjustment, effective_date, uploaded_at "
-            "FROM rate_sheet_entry WHERE tenant_id=$1 ORDER BY uploaded_at DESC, effective_date DESC LIMIT 8", tenant_id)
+            "SELECT rse.product_id, rse.credit_band, rse.ltv_max, rse.base_rate, rse.llpa_adjustment, "
+            "       rse.effective_date, rse.uploaded_at, u.name AS uploaded_by_name, u.email AS uploaded_by_email "
+            "FROM rate_sheet_entry rse "
+            "LEFT JOIN users u ON u.user_id = rse.uploaded_by "
+            "WHERE rse.tenant_id=$1 "
+            "ORDER BY rse.product_id, rse.credit_band, rse.ltv_max LIMIT 500", tenant_id)
+        # Most recent upload for THIS tenant — drives the "Last uploaded … by …" header.
+        last = await conn.fetchrow(
+            "SELECT rse.uploaded_at, u.name AS uploaded_by_name, u.email AS uploaded_by_email "
+            "FROM rate_sheet_entry rse LEFT JOIN users u ON u.user_id = rse.uploaded_by "
+            "WHERE rse.tenant_id=$1 ORDER BY rse.uploaded_at DESC LIMIT 1", tenant_id)
+
+    def _uploader(row) -> "str | None":
+        return (row["uploaded_by_name"] or row["uploaded_by_email"]) if row else None
+
     return {
-        "last_upload": _iso(ds["last_success"]) if ds else None,
+        # Prefer the tenant's own latest entry; fall back to the global source log.
+        "last_upload": _iso(last["uploaded_at"]) if last else (_iso(ds["last_success"]) if ds else None),
+        "last_uploaded_by": _uploader(last),
         "last_record_count": ds["record_count"] if ds else None,
         "total_entries": total,
         "recent": [{
             "product_id": r["product_id"], "credit_band": r["credit_band"], "ltv_max": float(r["ltv_max"]),
             "base_rate": float(r["base_rate"]), "llpa_adjustment": float(r["llpa_adjustment"]),
             "effective_date": _iso(r["effective_date"]), "uploaded_at": _iso(r["uploaded_at"]),
+            "uploaded_by": _uploader(r),
         } for r in recent],
     }

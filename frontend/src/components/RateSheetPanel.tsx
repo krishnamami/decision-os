@@ -1,13 +1,43 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { fetchRateSheetStatus, uploadRateSheet, type RateSheetStatus, type RateSheetUploadResult } from '../api/client'
 
 const COLS = ['product_id', 'credit_band', 'ltv_max', 'base_rate', 'llpa_adjustment', 'effective_date']
 const SAMPLE = `product_id,credit_band,ltv_max,base_rate,llpa_adjustment,effective_date
-CONF30,740-759,80,6.500,0.250,2026-07-01
-CONF30,720-739,80,6.625,0.500,2026-07-01
-FHA30,680-699,96.5,6.250,0.000,2026-07-01`
+PRD-FNMA-30FX,super_prime,80,6.750,0.000,2026-07-01
+PRD-FNMA-30FX,prime,80,6.750,0.125,2026-07-01
+PRD-FHA-30FX,near_prime,96.5,6.750,0.250,2026-07-01`
+
+// Credit-band chips (matches the seeded banding scheme).
+const bandColor: Record<string, { bg: string; color: string; label: string }> = {
+  super_prime: { bg: '#d1e8d8', color: '#0F4D37', label: 'Super prime 760+' },
+  prime: { bg: '#e6f1fb', color: '#185fa5', label: 'Prime 700–759' },
+  near_prime: { bg: '#faeeda', color: '#633806', label: 'Near prime 660–699' },
+  subprime: { bg: '#fcebeb', color: '#791f1f', label: 'Subprime 620–659' },
+}
+
+// Friendly product names for known product_ids; unknown ids fall back to the raw id.
+const productLabel: Record<string, string> = {
+  'PRD-FNMA-30FX': 'Conv 30yr Fixed',
+  'PRD-FHLMC-30FX': 'Conv 30yr Fixed (Freddie)',
+  'PRD-FNMA-20FX': 'Conv 20yr Fixed',
+  'PRD-FNMA-15FX': 'Conv 15yr Fixed',
+  'PRD-FHA-30FX': 'FHA 30yr',
+  'PRD-VA-30FX': 'VA 30yr',
+  'PRD-NONQM-30FX': 'Non-QM 30yr',
+}
+const prodName = (id: string) => productLabel[id] ?? id
 
 const fmt = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString() : '—')
+
+function BandChip({ band }: { band: string }) {
+  const c = bandColor[band]
+  if (!c) return <span className="rounded px-2 py-0.5 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200">{band}</span>
+  return (
+    <span className="rounded px-2 py-0.5 text-[11px] font-semibold" style={{ background: c.bg, color: c.color }}>
+      {c.label}
+    </span>
+  )
+}
 
 export default function RateSheetPanel({ canEdit }: { canEdit: boolean }) {
   const [status, setStatus] = useState<RateSheetStatus | null>(null)
@@ -15,6 +45,8 @@ export default function RateSheetPanel({ canEdit }: { canEdit: boolean }) {
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<RateSheetUploadResult | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [productFilter, setProductFilter] = useState('all')
+  const [bandFilter, setBandFilter] = useState('all')
   const inputRef = useRef<HTMLInputElement>(null)
 
   const load = () => fetchRateSheetStatus().then(setStatus).catch(() => undefined)
@@ -34,6 +66,13 @@ export default function RateSheetPanel({ canEdit }: { canEdit: boolean }) {
     } finally { setBusy(false) }
   }
 
+  const rows = status?.recent ?? []
+  // Product options come from whatever is actually on file (labelled).
+  const products = useMemo(() => Array.from(new Set(rows.map((r) => r.product_id))).sort(), [rows])
+  const filtered = rows.filter(
+    (r) => (productFilter === 'all' || r.product_id === productFilter) && (bandFilter === 'all' || r.credit_band === bandFilter),
+  )
+
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-5">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -42,9 +81,86 @@ export default function RateSheetPanel({ canEdit }: { canEdit: boolean }) {
           <p className="text-xs text-slate-500">Upload your lender rate sheet (CSV) — base rates and LLPA adjustments by product, credit band, and LTV.</p>
         </div>
         <div className="text-right text-xs text-slate-500">
-          <div>Last upload: <span className="font-medium text-slate-700">{fmt(status?.last_upload)}</span></div>
           <div>{status?.total_entries ?? 0} entries on file</div>
         </div>
+      </div>
+
+      {/* 3. Last uploaded — prominent */}
+      <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600 ring-1 ring-slate-200">
+        {status?.last_upload ? (
+          <>
+            <span className="font-semibold text-slate-700">Last uploaded:</span> {fmt(status.last_upload)}
+            {status.last_uploaded_by && <> · by <span className="font-medium text-slate-700">{status.last_uploaded_by}</span></>}
+          </>
+        ) : (
+          <span className="text-amber-700">Never uploaded — pricing uses placeholder rates</span>
+        )}
+      </div>
+
+      {/* 1. Current rates — filterable table */}
+      <div className="mt-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current rates</h4>
+          <div className="flex items-center gap-2">
+            <select
+              value={productFilter}
+              onChange={(e) => setProductFilter(e.target.value)}
+              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700"
+            >
+              <option value="all">All products</option>
+              {products.map((p) => <option key={p} value={p}>{prodName(p)}</option>)}
+            </select>
+            <select
+              value={bandFilter}
+              onChange={(e) => setBandFilter(e.target.value)}
+              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700"
+            >
+              <option value="all">All bands</option>
+              <option value="super_prime">Super prime</option>
+              <option value="prime">Prime</option>
+              <option value="near_prime">Near prime</option>
+              <option value="subprime">Subprime</option>
+            </select>
+          </div>
+        </div>
+
+        {rows.length === 0 ? (
+          <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            ⚠️ No rate sheet on file — pricing falls back to placeholder rates. Upload a CSV below to activate real pricing.
+          </div>
+        ) : (
+          <div className="mt-2 overflow-hidden rounded-lg border border-slate-200">
+            <table className="min-w-full text-xs">
+              <thead className="bg-slate-50 uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-3 py-1.5 text-left">Product</th>
+                  <th className="px-3 py-1.5 text-left">Credit band</th>
+                  <th className="px-3 py-1.5 text-right">Max LTV</th>
+                  <th className="px-3 py-1.5 text-right">Base rate</th>
+                  <th className="px-3 py-1.5 text-right">LLPA adj</th>
+                  <th className="px-3 py-1.5 text-right">Effective rate</th>
+                  <th className="px-3 py-1.5 text-left">Effective date</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filtered.map((r, i) => (
+                  <tr key={i}>
+                    <td className="px-3 py-1.5 font-medium text-slate-700">{prodName(r.product_id)}</td>
+                    <td className="px-3 py-1.5"><BandChip band={r.credit_band} /></td>
+                    <td className="px-3 py-1.5 text-right text-slate-600">{r.ltv_max}%</td>
+                    <td className="px-3 py-1.5 text-right text-slate-800">{r.base_rate.toFixed(3)}%</td>
+                    <td className="px-3 py-1.5 text-right text-slate-600">{r.llpa_adjustment >= 0 ? '+' : ''}{r.llpa_adjustment.toFixed(3)}</td>
+                    <td className="px-3 py-1.5 text-right font-semibold text-slate-900">{(r.base_rate + r.llpa_adjustment).toFixed(3)}%</td>
+                    <td className="px-3 py-1.5 text-slate-500">{r.effective_date}</td>
+                  </tr>
+                ))}
+                {filtered.length === 0 && (
+                  <tr><td colSpan={7} className="px-3 py-3 text-center text-slate-400">No rates match this filter.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Format guide */}
@@ -57,23 +173,31 @@ export default function RateSheetPanel({ canEdit }: { canEdit: boolean }) {
         <p className="mt-1 text-[11px] text-slate-400">Rows are upserted by (product, credit band, LTV, effective date). effective_date is ISO (YYYY-MM-DD).</p>
       </div>
 
-      {/* Upload */}
+      {/* 2. Snapshot disclaimer + Upload */}
       {canEdit ? (
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".csv,text/csv"
-            onChange={(e) => { setFile(e.target.files?.[0] ?? null); setErr(null); setResult(null) }}
-            className="text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-brand file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white hover:file:bg-brand-dark"
-          />
-          <button
-            onClick={upload}
-            disabled={!file || busy}
-            className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-40"
-          >
-            {busy ? 'Uploading…' : 'Upload rate sheet'}
-          </button>
+        <div className="mt-4">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">
+            <span className="font-semibold">Before you upload:</span> Uploading a new rate sheet activates it immediately for all
+            new loan evaluations. Loans currently open in the pipeline will be snapshotted at today's rates and their pricing will
+            not change automatically. If you want a loan to use the new rates, re-evaluate it manually from the workbench. This
+            action is logged and cannot be undone.
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <input
+              ref={inputRef}
+              type="file"
+              accept=".csv,text/csv"
+              onChange={(e) => { setFile(e.target.files?.[0] ?? null); setErr(null); setResult(null) }}
+              className="text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-brand file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white hover:file:bg-brand-dark"
+            />
+            <button
+              onClick={upload}
+              disabled={!file || busy}
+              className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-40"
+            >
+              {busy ? 'Uploading…' : 'Upload rate sheet'}
+            </button>
+          </div>
         </div>
       ) : (
         <p className="mt-4 text-xs text-slate-400">🔒 Admin or manager access (Business plan) required to upload.</p>
@@ -89,29 +213,6 @@ export default function RateSheetPanel({ canEdit }: { canEdit: boolean }) {
               {result.errors.map((e, i) => <li key={i}>{e}</li>)}
             </ul>
           )}
-        </div>
-      )}
-
-      {/* Recent entries */}
-      {status && status.recent.length > 0 && (
-        <div className="mt-4 overflow-hidden rounded-lg border border-slate-200">
-          <table className="min-w-full text-xs">
-            <thead className="bg-slate-50 uppercase tracking-wide text-slate-500">
-              <tr><th className="px-3 py-1.5 text-left">Product</th><th className="px-3 py-1.5 text-left">Band</th><th className="px-3 py-1.5 text-left">LTV ≤</th><th className="px-3 py-1.5 text-left">Base rate</th><th className="px-3 py-1.5 text-left">LLPA</th><th className="px-3 py-1.5 text-left">Effective</th></tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {status.recent.map((r, i) => (
-                <tr key={i}>
-                  <td className="px-3 py-1.5 font-medium text-slate-700">{r.product_id}</td>
-                  <td className="px-3 py-1.5 text-slate-600">{r.credit_band}</td>
-                  <td className="px-3 py-1.5 text-slate-600">{r.ltv_max}%</td>
-                  <td className="px-3 py-1.5 text-slate-800">{r.base_rate.toFixed(3)}%</td>
-                  <td className="px-3 py-1.5 text-slate-600">{r.llpa_adjustment >= 0 ? '+' : ''}{r.llpa_adjustment}</td>
-                  <td className="px-3 py-1.5 text-slate-500">{r.effective_date}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       )}
     </div>
