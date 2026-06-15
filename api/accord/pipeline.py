@@ -127,6 +127,38 @@ def _require_db() -> None:
         raise HTTPException(503, "DATABASE_URL not configured")
 
 
+@router.get("/products")
+async def list_products(tenant_id: str = Depends(get_tenant_id)) -> dict:
+    """Read-only catalog of the tenant's loan products with their governing
+    authority (Fannie / FHA / VA / …). Includes shared 'default' products."""
+    _require_db()
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT DISTINCT p.product_id, p.product_name, p.active_indicator, p.rate_type,
+                   ga.authority_name AS governing_authority
+            FROM product p
+            JOIN program pgm ON pgm.program_id = p.program_id
+            JOIN governing_authority ga ON ga.governing_authority_id = pgm.governing_authority_id
+            WHERE p.tenant_id IN ($1, 'default')
+            ORDER BY p.active_indicator DESC, p.product_name
+            """,
+            tenant_id,
+        )
+    return {
+        "products": [
+            {
+                "product_id": r["product_id"], "product_name": r["product_name"],
+                "active_indicator": bool(r["active_indicator"]), "rate_type": r["rate_type"],
+                "governing_authority": r["governing_authority"],
+            }
+            for r in rows
+        ],
+        "active_count": sum(1 for r in rows if r["active_indicator"]),
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Tiny in-process TTL cache for portfolio-wide AGGREGATES (KPIs, analytics,
 # compliance health). These scan the whole decision table and change

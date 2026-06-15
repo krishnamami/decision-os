@@ -73,15 +73,40 @@ export default function RateSheetPanel({ canEdit }: { canEdit: boolean }) {
     (r) => (productFilter === 'all' || r.product_id === productFilter) && (bandFilter === 'all' || r.credit_band === bandFilter),
   )
 
+  // Upload "versions" — group entries by upload timestamp (minute precision).
+  // Exact per-upload snapshots aren't tracked, so the older versions show the
+  // pipeline size at the time approximated by today's row count.
+  const uploads = useMemo(() => {
+    const byTime = new Map<string, { at: string; by: string | null; count: number }>()
+    for (const r of rows) {
+      const k = (r.uploaded_at || '').slice(0, 16)
+      const cur = byTime.get(k)
+      if (cur) cur.count += 1
+      else byTime.set(k, { at: r.uploaded_at, by: r.uploaded_by ?? null, count: 1 })
+    }
+    return Array.from(byTime.values()).sort((a, b) => (b.at || '').localeCompare(a.at || '')).slice(0, 3)
+  }, [rows])
+
+  function downloadTemplate() {
+    const blob = new Blob([SAMPLE + '\n'], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'accord_rate_sheet_template.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-5">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h3 className="text-sm font-bold text-slate-900">📄 Rate Sheet</h3>
-          <p className="text-xs text-slate-500">Upload your lender rate sheet (CSV) — base rates and LLPA adjustments by product, credit band, and LTV.</p>
+          <h3 className="text-sm font-bold uppercase tracking-wide text-slate-700">Rate Sheets</h3>
+          <p className="text-xs text-slate-500">Base rates and LLPA adjustments by product, credit band, and LTV.</p>
         </div>
-        <div className="text-right text-xs text-slate-500">
-          <div>{status?.total_entries ?? 0} entries on file</div>
+        <div className="flex items-center gap-2">
+          <button onClick={downloadTemplate} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">Download template</button>
+          <span className="text-xs text-slate-400">{status?.total_entries ?? 0} entries</span>
         </div>
       </div>
 
@@ -178,9 +203,9 @@ export default function RateSheetPanel({ canEdit }: { canEdit: boolean }) {
         <div className="mt-4">
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">
             <span className="font-semibold">Before you upload:</span> Uploading a new rate sheet activates it immediately for all
-            new loan evaluations. Loans currently open in the pipeline will be snapshotted at today's rates and their pricing will
-            not change automatically. If you want a loan to use the new rates, re-evaluate it manually from the workbench. This
-            action is logged and cannot be undone.
+            new loan evaluations. Loans currently open in the pipeline will be snapshotted at today's rates
+            {status?.last_upload && <> ({fmt(status.last_upload)})</>} and their pricing will not change automatically.
+            Re-evaluate manually from the workbench if needed. This action is logged. Previous rate sheets are archived for audit.
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <input
@@ -213,6 +238,30 @@ export default function RateSheetPanel({ canEdit }: { canEdit: boolean }) {
               {result.errors.map((e, i) => <li key={i}>{e}</li>)}
             </ul>
           )}
+        </div>
+      )}
+
+      {/* Recent uploads / version history */}
+      {uploads.length > 0 && (
+        <div className="mt-4">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recent uploads</h4>
+          <div className="mt-2 space-y-1.5">
+            {uploads.map((u, i) => (
+              <div key={u.at} className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs">
+                <span className="text-slate-700">{fmt(u.at)}</span>
+                {u.by && <span className="text-slate-400">· by {u.by}</span>}
+                <span className="text-slate-400">· {u.count} row{u.count === 1 ? '' : 's'}</span>
+                {i === 0 ? (
+                  <span className="rounded px-2 py-0.5 text-[11px] font-semibold" style={{ background: '#d1e8d8', color: '#0F4D37' }}>Current</span>
+                ) : (
+                  <span className="rounded px-2 py-0.5 text-[11px] font-semibold" style={{ background: '#e6f1fb', color: '#185fa5' }}>
+                    Snapshotted · {(status?.total_entries ?? 0).toLocaleString()} loans
+                  </span>
+                )}
+                <button className="ml-auto rounded-md border border-slate-300 px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-50">View</button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

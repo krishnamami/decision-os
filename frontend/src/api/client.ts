@@ -559,6 +559,26 @@ export function fetchRuleAlerts(): Promise<{ alerts: RuleAlert[]; new_count: num
   return getJSON('/api/accord/rules/alerts')
 }
 
+// ── Policy Studio redesign: products, pipeline protection, field impacts ──
+export interface Product {
+  product_id: string; product_name: string; active_indicator: boolean
+  rate_type: string | null; governing_authority: string | null
+}
+export function fetchProducts(): Promise<{ products: Product[]; active_count: number }> {
+  return getJSON('/api/accord/products')
+}
+export interface PipelineProtection {
+  has_history: boolean; total_locked: number; pinned: number; pinned_pct: number
+  current_version: number | null; protected: Array<{ pinned_version: number; count: number }>
+}
+export function fetchPipelineProtection(): Promise<PipelineProtection> {
+  return getJSON('/api/accord/rules/pipeline-protection')
+}
+export interface FieldImpact { count: number; label: string }
+export function fetchFieldImpacts(): Promise<{ impacts: Record<string, FieldImpact>; active_loans: number }> {
+  return getJSON('/api/accord/rules/overlay/field-impacts')
+}
+
 // ── Rules versioning (advanced) ───────────────────────────────────
 export interface ScheduledVersion extends TenantVersion {}
 export interface ExpiringWaiver { name: string; field: string; value: number; normal: number; expires: string; days_remaining: number; severity: string }

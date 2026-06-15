@@ -1229,3 +1229,98 @@ async def rate_sheet_status(tenant_id: str = Depends(get_tenant_id)) -> dict:
             "uploaded_by": _uploader(r),
         } for r in recent],
     }
+
+
+# ── Pipeline protection summary (Section 5 of Policy Studio) ──
+@router.get("/pipeline-protection")
+async def pipeline_protection(tenant_id: str = Depends(get_tenant_id)) -> dict:
+    """Rate-lock / pipeline-protection stats for the tenant: how many loans are
+    rate-locked, how many are pinned to a rule version, and which older versions
+    are still protecting loans even though a newer version is active."""
+    _require_db()
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        has_history = bool(await conn.fetchval(
+            "SELECT 1 FROM tenant_rules WHERE tenant_id=$1 LIMIT 1", tenant_id))
+        agg = await conn.fetchrow(
+            """SELECT COUNT(*) FILTER (WHERE rate_locked) AS total_locked,
+                      COUNT(*) FILTER (WHERE rate_locked AND pinned_rule_version IS NOT NULL) AS pinned
+               FROM entity_states WHERE tenant_id=$1""",
+            tenant_id)
+        current = await _active_version(conn, tenant_id)
+        cur_v = current["version"] if current else None
+        # Loans pinned to an OLDER version than the current active one are "protected".
+        protected_rows = await conn.fetch(
+            """SELECT tr.version AS pinned_version, COUNT(*) AS cnt
+               FROM entity_states es
+               JOIN tenant_rules tr ON tr.rule_version_id = es.pinned_rule_version
+               WHERE es.tenant_id=$1 AND es.rate_locked AND es.pinned_rule_version IS NOT NULL
+               GROUP BY tr.version ORDER BY tr.version""",
+            tenant_id)
+    total_locked = agg["total_locked"] if agg else 0
+    pinned = agg["pinned"] if agg else 0
+    protected = [{"pinned_version": r["pinned_version"], "count": r["cnt"]}
+                 for r in protected_rows if cur_v is not None and r["pinned_version"] < cur_v]
+    return {
+        "has_history": has_history,
+        "total_locked": total_locked,
+        "pinned": pinned,
+        "pinned_pct": round(100 * pinned / total_locked) if total_locked else 0,
+        "current_version": cur_v,
+        "protected": protected,
+    }
+
+
+# ── Per-field pipeline impact (gap between agency baseline and your value) ──
+# Agency baselines the editable overlay tightens against.
+_FIELD_BASELINE = {
+    "credit.min_score": ("credit", "mid_credit_score", False, 620, "above", "credit"),
+    "dti.back_max":     ("dti", "dti_back", True, 50, "below", "DTI"),
+    "ltv.max":          ("ltv", "ltv", True, 97, "below", "LTV"),
+}
+
+
+@router.get("/overlay/field-impacts")
+async def field_impacts(tenant_id: str = Depends(get_tenant_id)) -> dict:
+    """For each editable overlay field, how many active loans sit in the gap
+    between the agency baseline and the tenant's (stricter) value — i.e. loans
+    that pass the agency standard but not yours."""
+    _require_db()
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        active = await _active_version(conn, tenant_id)
+        rules = _jsonb(active["rules"]) if active else {}
+        loans = await _active_loans(conn, tenant_id)
+
+    total_active = len(loans)
+    out: dict = {}
+    for key, (cat, col, pct, baseline, direction, noun) in _FIELD_BASELINE.items():
+        value = (rules.get(cat) or {}).get(key.split(".")[1])
+        if not isinstance(value, (int, float)):
+            out[key] = {"count": 0, "label": f"{total_active} active loans run under this rule."}
+            continue
+        n = 0
+        for l in loans:
+            v = _norm(l[col], pct)
+            if v is None:
+                continue
+            # "above": your floor is higher than agency → loans in [agency, your value)
+            if direction == "above":
+                if baseline <= v < value:
+                    n += 1
+            else:  # "below": your cap is lower than agency → loans in (your value, agency]
+                if value < v <= baseline:
+                    n += 1
+        if direction == "above":
+            label = f"{n} loans have {noun} {baseline}–{int(value) - 1} — they pass the agency minimum ({baseline}) but not yours."
+        else:
+            label = f"{n} loans have {noun} {int(value) + 1}–{baseline}% — within the agency max ({baseline}%) but above your cap."
+        out[key] = {"count": n, "label": label}
+
+    # Fields with no clean agency gap → just report the active population.
+    for key in ("credit.prime_threshold", "dti.front_max", "ltv.no_mi_threshold",
+                "fraud.watchlist_threshold", "fraud.identity_min",
+                "income.max_discrepancy_pct", "reserves.primary", "reserves.investment"):
+        out.setdefault(key, {"count": total_active, "label": f"{total_active} active loans run under this rule."})
+
+    return {"impacts": out, "active_loans": total_active}
