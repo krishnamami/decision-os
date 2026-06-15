@@ -87,10 +87,9 @@ export default function Simulation() {
   return (
     <div>
       {/* 1. Hero */}
-      <div className="px-6 py-12 text-center text-white" style={{ background: 'linear-gradient(135deg, #0F6E56, #1D9E75)' }}>
-        <div className="text-5xl">🐟</div>
-        <h1 className="mt-3 text-3xl font-bold">MiroFish Portfolio Simulator</h1>
-        <p className="mt-2 text-base text-white/80">Change a rule. Debate a loan. Scan for patterns.</p>
+      <div className="px-6 py-12 text-center text-white" style={{ background: '#0F4D37' }}>
+        <h1 className="text-3xl font-bold">Policy Simulator</h1>
+        <p className="mt-2 text-base text-white/80">Test any rule change against your real pipeline before it goes live.</p>
       </div>
 
       <div className="mx-auto max-w-6xl space-y-12 px-6 py-8">
