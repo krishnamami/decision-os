@@ -754,3 +754,51 @@ export function fetchRegulationTransparency(params?: { layer?: string; state_cod
   const qs = q.toString()
   return getJSON<RegulationTransparency>(`/api/accord/rules/regulations/transparency${qs ? `?${qs}` : ''}`)
 }
+
+// ── Policy Studio backend (PROMPT E) ────────────────────────────────────────
+export interface ImpactByDecision {
+  decision_id: string
+  threshold: number
+  newly_blocked: number
+  newly_allowed: number
+  samples: Array<{ application_id: string; name: string; value: number; change: string }>
+}
+export interface PreviewImpactResult {
+  total_loans_affected: number
+  active_loans_evaluated: number
+  impact_by_decision: ImpactByDecision[]
+  recommendation: string
+}
+export function previewOverlayImpact(rules: Record<string, unknown>): Promise<PreviewImpactResult> {
+  return postJSON('/api/accord/rules/overlay/preview-impact', { rules })
+}
+
+export interface RateSheetUploadResult {
+  uploaded: number
+  rows_in_file: number
+  errors: string[]
+  effective_dates: string[]
+  uploaded_at: string
+}
+export async function uploadRateSheet(file: File): Promise<RateSheetUploadResult> {
+  const path = '/api/accord/rules/rate-sheet/upload'
+  const fd = new FormData()
+  fd.append('file', file)
+  const res = await fetch(`${API_BASE}${path}`, { method: 'POST', headers: authHeaders(), body: fd })
+  if (res.status === 401) handle401(path)
+  if (!res.ok) {
+    let m = `${res.status} ${res.statusText}`
+    try { const j = await res.json(); if (j && typeof j.detail === 'string') m = j.detail } catch { /* non-JSON */ }
+    throw new Error(m)
+  }
+  return res.json() as Promise<RateSheetUploadResult>
+}
+export interface RateSheetStatus {
+  last_upload: string | null
+  last_record_count: number | null
+  total_entries: number
+  recent: Array<{ product_id: string; credit_band: string; ltv_max: number; base_rate: number; llpa_adjustment: number; effective_date: string; uploaded_at: string }>
+}
+export function fetchRateSheetStatus(): Promise<RateSheetStatus> {
+  return getJSON('/api/accord/rules/rate-sheet/status')
+}

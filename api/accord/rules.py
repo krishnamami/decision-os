@@ -8,11 +8,13 @@ freshness + agency change alerts. Reuses the accord asyncpg pool.
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from api.accord.auth import get_current_user, get_tenant_id
@@ -76,12 +78,15 @@ def validate_overlay(rules: dict, programs: list[str]) -> tuple[list[str], list[
             warnings.append(f"Credit floor {credit} is below the Fannie guideline of 620")
 
     dti = (rules.get("dti") or {}).get("back_max")
-    if isinstance(dti, (int, float)) and dti > 43:
-        warnings.append(f"DTI {dti}% exceeds the QM safe-harbor limit of 43%")
+    if isinstance(dti, (int, float)):
+        if dti > 57:
+            errors.append(f"DTI {dti}% exceeds the hard maximum of 57%")
+        elif dti > 43:
+            warnings.append(f"DTI {dti}% exceeds the QM safe-harbor limit of 43%")
 
     ltv = (rules.get("ltv") or {}).get("max")
     if isinstance(ltv, (int, float)) and ltv > 97:
-        warnings.append(f"LTV {ltv}% exceeds the Fannie conventional maximum of 97%")
+        errors.append(f"LTV {ltv}% exceeds the Fannie conventional maximum of 97%")
 
     return errors, warnings
 
@@ -986,4 +991,224 @@ async def regulation_transparency(
                 else f"{unpinned} locked loans have no pin (tenant may have no rule history)."
             ),
         },
+    }
+
+
+# ════════════════════════════════════════════════════════════════════
+# PROMPT E — Policy Studio backend additions
+# ════════════════════════════════════════════════════════════════════
+
+# ── Part 1. Floor-enforced overlay update (force/warnings contract) ──
+class OverlayUpdate(BaseModel):
+    rules: dict
+    change_reason: str
+    changes_summary: Optional[str] = None
+    programs: Optional[list[str]] = None
+    force: bool = False
+
+
+@router.put("/overlay")
+async def update_overlay(body: OverlayUpdate, user: dict = Depends(get_current_user)) -> dict:
+    """Floor-enforced overlay change. Hard floors (credit < 580 FHA, DTI > 57,
+    LTV > 97) return 422. Soft warnings (credit < 620, DTI > 43) require
+    ``force=true`` to proceed; otherwise the warnings are returned uncommitted.
+    On success a pending_approval version is created (same as the classic PUT)."""
+    _require(user, "admin", "manager")
+    _require_db()
+    tenant_id = user["tenant_id"]
+    if not (body.change_reason or "").strip():
+        raise HTTPException(422, "A reason for the change is required")
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        await _check_not_frozen(conn, tenant_id)
+        active = await _active_version(conn, tenant_id)
+        programs = body.programs or (_jsonb(active["programs"]) if active else ["conventional", "fha"])
+        errors, warnings = validate_overlay(body.rules, programs)
+        if errors:
+            raise HTTPException(status_code=422, detail=errors[0])
+        if warnings and not body.force:
+            return {"ok": False, "requires_confirmation": True, "warnings": warnings, "errors": []}
+
+        # Boundary validation suite — a bad rule can never go live.
+        from api.accord.validation import run_validation
+        val = await run_validation(tenant_id, proposed_rules=body.rules, programs=programs)
+        if val["failed"] > 0:
+            fails = [t for t in val["tests"] if not t["passed"]][:3]
+            detail = "; ".join(f"{t['id']}: expected {t['expected']} but got {t['actual']}" for t in fails)
+            raise HTTPException(422, f"Rule change cannot be activated — {val['failed']} validation test(s) failed: {detail}")
+
+        next_version = (await conn.fetchval(
+            "SELECT COALESCE(MAX(version), 0) + 1 FROM tenant_rules WHERE tenant_id=$1", tenant_id)) or 1
+        await conn.execute(
+            "DELETE FROM tenant_rules WHERE tenant_id=$1 AND status='pending_approval'", tenant_id)
+        new_id = await conn.fetchval(
+            "INSERT INTO tenant_rules (tenant_id, version, status, rules, programs, changes_summary, change_reason, created_by) "
+            "VALUES ($1,$2,'pending_approval',$3::jsonb,$4::jsonb,$5,$6,$7) RETURNING rule_version_id",
+            tenant_id, next_version, json.dumps(body.rules), json.dumps(programs),
+            body.changes_summary, body.change_reason, _uuid(user.get("user_id")))
+    return {"ok": True, "rule_version_id": str(new_id), "version": next_version,
+            "status": "pending_approval", "warnings": warnings}
+
+
+# ── Part 2. Shadow impact preview — proposed rules vs active decisions ──
+# (decision_id, overlay category, overlay field, entity_states column, direction, is_pct)
+_PREVIEW_DECISIONS = [
+    ("credit_assessment", "credit", "min_score", "mid_credit_score", "below", False),
+    ("dti_calculation", "dti", "back_max", "dti_back", "above", True),
+    ("ltv_assessment", "ltv", "max", "ltv", "above", True),
+]
+
+
+async def _preview_impact(conn, tenant_id: str, proposed: dict) -> dict:
+    loans = await _active_loans(conn, tenant_id)
+    dids = [d[0] for d in _PREVIEW_DECISIONS]
+    outc = await conn.fetch(
+        "SELECT DISTINCT ON (application_id, decision_id) application_id, decision_id, outcome "
+        "FROM decision_outputs WHERE tenant_id=$1 AND decision_id = ANY($2) "
+        "ORDER BY application_id, decision_id, version DESC",
+        tenant_id, dids)
+    cur = {(r["application_id"], r["decision_id"]): r["outcome"] for r in outc}
+
+    by_decision: list = []
+    affected: set = set()
+    for did, cat, field, valcol, direction, pct in _PREVIEW_DECISIONS:
+        thr = (proposed.get(cat) or {}).get(field)
+        if not isinstance(thr, (int, float)):
+            continue
+        newly_blocked: list = []
+        newly_allowed: list = []
+        for l in loans:
+            v = _norm(l[valcol], pct)
+            if v is None:
+                continue
+            proposed_block = (v < thr) if direction == "below" else (v > thr)
+            was_block = cur.get((l["application_id"], did)) == "block"
+            if proposed_block and not was_block:
+                newly_blocked.append(l)
+                affected.add(l["application_id"])
+            elif not proposed_block and was_block:
+                newly_allowed.append(l)
+                affected.add(l["application_id"])
+        if newly_blocked or newly_allowed:
+            def _samp(rows, change):
+                return [{"application_id": x["application_id"], "name": x["full_name"] or x["application_id"],
+                         "value": round(_norm(x[valcol], pct), 1), "change": change} for x in rows[:5]]
+            by_decision.append({
+                "decision_id": did, "threshold": thr,
+                "newly_blocked": len(newly_blocked), "newly_allowed": len(newly_allowed),
+                "samples": (_samp(newly_blocked, "newly blocked") + _samp(newly_allowed, "newly allowed"))[:5],
+            })
+
+    total = len(affected)
+    nbt = sum(d["newly_blocked"] for d in by_decision)
+    nat = sum(d["newly_allowed"] for d in by_decision)
+    if total == 0:
+        rec = "No active pipeline loans are affected by this change."
+    else:
+        rec = (f"{total} active loan(s) affected — {nbt} newly blocked, {nat} newly allowed. "
+               "Review the sample loans before submitting for approval.")
+    return {"total_loans_affected": total, "active_loans_evaluated": len(loans),
+            "impact_by_decision": by_decision, "recommendation": rec}
+
+
+@router.post("/overlay/preview-impact")
+async def preview_impact(payload: dict = Body(...), tenant_id: str = Depends(get_tenant_id)) -> dict:
+    _require_db()
+    rules = payload.get("rules") or {}
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        return await _preview_impact(conn, tenant_id, rules)
+
+
+# ── Part 3. Rate sheet upload (CSV -> rate_sheet_entry) ──
+_RATE_SHEET_COLS = ("product_id", "credit_band", "ltv_max", "base_rate", "llpa_adjustment", "effective_date")
+
+
+@router.post("/rate-sheet/upload")
+async def rate_sheet_upload(file: UploadFile = File(...), user: dict = Depends(get_current_user)) -> dict:
+    _require(user, "admin", "manager")
+    _require_db()
+    tid = user["tenant_id"]
+    raw = await file.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1", errors="replace")
+    if not text.strip():
+        raise HTTPException(400, "Uploaded file is empty")
+
+    reader = csv.DictReader(io.StringIO(text))
+    cols = {(h or "").strip() for h in (reader.fieldnames or [])}
+    missing = [c for c in _RATE_SHEET_COLS if c not in cols]
+    if missing:
+        raise HTTPException(422, f"CSV missing required columns: {', '.join(missing)}")
+
+    rows: list = []
+    errors: list = []
+    for i, r in enumerate(reader, start=2):
+        try:
+            rows.append({
+                "product_id": (r["product_id"] or "").strip(),
+                "credit_band": (r["credit_band"] or "").strip(),
+                "ltv_max": float(r["ltv_max"]),
+                "base_rate": float(r["base_rate"]),
+                "llpa_adjustment": float((r["llpa_adjustment"] or "0")),
+                "effective_date": date.fromisoformat((r["effective_date"] or "").strip()[:10]),
+            })
+        except (ValueError, TypeError, KeyError) as e:
+            errors.append(f"Row {i}: {e}")
+            if len(errors) > 50:
+                break
+    if not rows:
+        raise HTTPException(422, "No valid rows parsed" + (f" - {errors[0]}" if errors else ""))
+
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            uploaded = 0
+            for row in rows:
+                await conn.execute(
+                    "INSERT INTO rate_sheet_entry "
+                    "(tenant_id, product_id, credit_band, ltv_max, base_rate, llpa_adjustment, effective_date, uploaded_by, uploaded_at) "
+                    "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW()) "
+                    "ON CONFLICT (tenant_id, product_id, credit_band, ltv_max, effective_date) "
+                    "DO UPDATE SET base_rate=EXCLUDED.base_rate, llpa_adjustment=EXCLUDED.llpa_adjustment, "
+                    "uploaded_by=EXCLUDED.uploaded_by, uploaded_at=NOW()",
+                    tid, row["product_id"], row["credit_band"], row["ltv_max"], row["base_rate"],
+                    row["llpa_adjustment"], row["effective_date"], _uuid(user.get("user_id")))
+                uploaded += 1
+            # Best-effort freshness logging — never fail the upload over this.
+            try:
+                await conn.execute(
+                    "INSERT INTO data_source_status (source_id, source_name, last_download, last_success, record_count, status, updated_at) "
+                    "VALUES ('rate_sheet','Rate Sheet Upload',NOW(),NOW(),$1,'ok',NOW()) "
+                    "ON CONFLICT (source_id) DO UPDATE SET last_download=NOW(), last_success=NOW(), "
+                    "record_count=$1, status='ok', error_message=NULL, updated_at=NOW()",
+                    uploaded)
+            except Exception:
+                pass
+    eff = sorted({r["effective_date"].isoformat() for r in rows})
+    return {"uploaded": uploaded, "rows_in_file": uploaded + len(errors), "errors": errors[:10],
+            "effective_dates": eff, "uploaded_at": datetime.utcnow().isoformat() + "Z"}
+
+
+@router.get("/rate-sheet/status")
+async def rate_sheet_status(tenant_id: str = Depends(get_tenant_id)) -> dict:
+    _require_db()
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        ds = await conn.fetchrow("SELECT last_success, record_count, status FROM data_source_status WHERE source_id='rate_sheet'")
+        total = await conn.fetchval("SELECT COUNT(*) FROM rate_sheet_entry WHERE tenant_id=$1", tenant_id)
+        recent = await conn.fetch(
+            "SELECT product_id, credit_band, ltv_max, base_rate, llpa_adjustment, effective_date, uploaded_at "
+            "FROM rate_sheet_entry WHERE tenant_id=$1 ORDER BY uploaded_at DESC, effective_date DESC LIMIT 8", tenant_id)
+    return {
+        "last_upload": _iso(ds["last_success"]) if ds else None,
+        "last_record_count": ds["record_count"] if ds else None,
+        "total_entries": total,
+        "recent": [{
+            "product_id": r["product_id"], "credit_band": r["credit_band"], "ltv_max": float(r["ltv_max"]),
+            "base_rate": float(r["base_rate"]), "llpa_adjustment": float(r["llpa_adjustment"]),
+            "effective_date": _iso(r["effective_date"]), "uploaded_at": _iso(r["uploaded_at"]),
+        } for r in recent],
     }

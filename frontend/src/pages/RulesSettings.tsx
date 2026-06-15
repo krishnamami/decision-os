@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import {
-  approveRules, fetchRuleAlerts, fetchRules, fetchRulesHistory, fetchValidationReport, ratifyEmergency,
-  type AgencyGuideline, type RegulatoryRule, type RuleAlert, type RulesResponse, type TenantVersion,
+  approveRules, fetchRuleAlerts, fetchRules, fetchRulesHistory, fetchValidationReport, previewOverlayImpact, ratifyEmergency,
+  type AgencyGuideline, type PreviewImpactResult, type RegulatoryRule, type RuleAlert, type RulesResponse, type TenantVersion,
 } from '../api/client'
+import RateSheetPanel from '../components/RateSheetPanel'
 import RuleValidation from '../components/RuleValidation'
 import DataFreshness from '../components/DataFreshness'
 import RuleHistory from '../components/RuleHistory'
@@ -133,6 +134,9 @@ export default function RulesSettings() {
   const [showReconstruct, setShowReconstruct] = useState(false)
   const [showValidation, setShowValidation] = useState(false)
   const [validationFailed, setValidationFailed] = useState(0)
+  const [showRateSheet, setShowRateSheet] = useState(false)
+  const [impact, setImpact] = useState<PreviewImpactResult | null>(null)
+  const [impactBusy, setImpactBusy] = useState(false)
 
   const plan = tenant?.plan
   const examFrozen = data?.examination?.active === true
@@ -196,6 +200,19 @@ export default function RulesSettings() {
     }
   }
 
+  // Shadow impact preview — what the proposed overlay would do to active loans.
+  async function runPreview() {
+    setImpactBusy(true)
+    setImpact(null)
+    try {
+      setImpact(await previewOverlayImpact(draft))
+    } catch (e: any) {
+      setMsg({ kind: 'err', text: e?.message || 'Preview failed' })
+    } finally {
+      setImpactBusy(false)
+    }
+  }
+
   if (!data || !draft) return <div className="p-10 text-center text-sm text-slate-400">Loading decision rules…</div>
 
   const newAlerts = alerts.filter((a) => a.status === 'new').length
@@ -218,6 +235,7 @@ export default function RulesSettings() {
             <button onClick={() => setShowHistory(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">View history</button>
             <button onClick={() => exportPdf(data, tenant?.name || 'Tenant')} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">📥 Export PDF</button>
             <button onClick={() => setShowFreshness((v) => !v)} className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${showFreshness ? 'border-brand bg-brand-light/40 text-brand-dark' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}>Data Freshness</button>
+            <button onClick={() => setShowRateSheet((v) => !v)} className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${showRateSheet ? 'border-brand bg-brand-light/40 text-brand-dark' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}>📄 Rate Sheet</button>
             <button onClick={() => setShowAlerts((v) => !v)} className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${showAlerts ? 'border-brand bg-brand-light/40 text-brand-dark' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}>
               Rule Alerts{newAlerts ? ` (${newAlerts} new)` : ''}
             </button>
@@ -298,6 +316,8 @@ export default function RulesSettings() {
       {showFreshness && (
         <div className="rounded-xl border border-slate-200 bg-white p-5"><DataFreshness /></div>
       )}
+
+      {showRateSheet && <RateSheetPanel canEdit={canEdit} />}
 
       {showRetro && (planAllows(plan, 'enterprise')
         ? <RetrospectivePanel versions={versions} />
@@ -400,6 +420,14 @@ export default function RulesSettings() {
 
         <div className="mt-4 flex flex-wrap gap-2">
           <button
+            onClick={runPreview}
+            disabled={!dirty || impactBusy}
+            title="See which active loans this overlay change would affect, before submitting."
+            className="rounded-lg border border-brand px-4 py-2 text-sm font-semibold text-brand hover:bg-brand-light/40 disabled:opacity-40"
+          >
+            {impactBusy ? 'Previewing…' : '🔍 Preview Impact'}
+          </button>
+          <button
             onClick={() => setShowSubmit(true)}
             disabled={!canEdit || !dirty || issues.errs.length > 0}
             title={examFrozen ? 'Rule changes frozen during active examination.' : undefined}
@@ -409,6 +437,39 @@ export default function RulesSettings() {
           </button>
           <button onClick={() => exportPdf(data, tenant?.name || 'Tenant')} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">📥 Export PDF</button>
         </div>
+
+        {/* Shadow impact preview result */}
+        {impact && (
+          <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-bold text-slate-900">🔍 Impact preview</h4>
+              <button onClick={() => setImpact(null)} className="text-xs text-slate-400 hover:text-slate-700">✕ Dismiss</button>
+            </div>
+            <p className="mt-1 text-sm text-slate-700">{impact.recommendation}</p>
+            <p className="mt-0.5 text-xs text-slate-400">{impact.total_loans_affected} affected of {impact.active_loans_evaluated} active loan(s) evaluated.</p>
+            {impact.impact_by_decision.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {impact.impact_by_decision.map((d) => (
+                  <div key={d.decision_id} className="rounded-lg border border-slate-200 bg-white p-3">
+                    <div className="text-sm font-semibold text-slate-800">
+                      {d.decision_id.replace(/_/g, ' ')}
+                      <span className="ml-2 text-xs font-normal text-slate-400">threshold {d.threshold}</span>
+                    </div>
+                    <div className="mt-0.5 text-xs">
+                      {d.newly_blocked > 0 && <span className="mr-3 font-medium text-red-600">🔴 {d.newly_blocked} newly blocked</span>}
+                      {d.newly_allowed > 0 && <span className="font-medium text-green-700">🟢 {d.newly_allowed} newly allowed</span>}
+                    </div>
+                    {d.samples.length > 0 && (
+                      <ul className="mt-1 space-y-0.5 text-[11px] text-slate-500">
+                        {d.samples.map((s, i) => <li key={i}>{s.name} · {s.value} · {s.change}</li>)}
+                      </ul>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <p className="mt-2 text-xs text-slate-400">
           {examFrozen ? 'Rule changes frozen during active examination.' : 'Submitting opens the timing + pipeline options. Changes require admin approval.'}
         </p>
