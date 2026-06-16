@@ -85,7 +85,13 @@ export default function LoanDetail() {
   if (!loan) return null
 
   const canExaminer = ['compliance', 'admin', 'super_admin'].includes(role)
-  const teamCount = new Set(actions.map((a) => a.performed_by)).size
+  // Team members = everyone who touched this file: human reviewers recorded on
+  // the decisions (decision_outputs.human_reviewer) plus anyone who logged an
+  // action. Counting only actions missed reviewers who approved without a note.
+  const team = new Set<string>()
+  ;(loan.decisions ?? []).forEach((d) => { if (d.reviewer) team.add(d.reviewer) })
+  actions.forEach((a) => { if (a.performed_by) team.add(a.performed_by) })
+  const teamCount = team.size
 
   return (
     <div className="mx-auto max-w-7xl px-6 py-6 pb-20">
