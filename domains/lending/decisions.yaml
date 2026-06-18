@@ -308,6 +308,13 @@ decisions:
             authority: federal
             rule_name: Loan Estimate Delivery
             citation: Regulation Z §1026.19(e)
+        - expression: tx_cashout_ltv_violation == true
+          governed_by:
+            type: regulatory_rules
+            authority: state
+            jurisdiction: TX
+            rule_name: Texas Cash-Out Refinance LTV Limit
+            citation: TX Constitution Art. XVI 50(a)(6)
       escalate_if:
         - regulatory_ambiguity == true
         - mixed_jurisdiction == true

@@ -103,6 +103,11 @@ class EdmsContextStore:
                 "regulatory_ambiguity": "regulatory_ambiguity",
                 "mixed_jurisdiction": "mixed_jurisdiction",
                 "minor_data_gap": "minor_data_gap",
+                # State-specific inputs for the TX cash-out LTV rule.
+                "property_state": "property_state",
+                "loan_purpose": "loan_purpose",
+                "ltv": "ltv",
+                "tx_cashout_ltv_violation": "tx_cashout_ltv_violation",
             },
             "id_field": "application_id",
         },

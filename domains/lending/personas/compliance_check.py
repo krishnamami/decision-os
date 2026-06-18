@@ -47,6 +47,23 @@ class ComplianceAgent(LendingPersona):
         property_state = compliance.get("property_state") or ""
         state_rule_count = len(applicable_state_rules)
 
+        # TX Constitution Art. XVI 50(a)(6): a cash-out refinance on a Texas
+        # homestead is capped at 80% LTV. Over that is a hard state-rule
+        # violation -> block. property_state / loan_purpose / ltv are surfaced
+        # onto the ComplianceRecord from loan_terms by EdmsContextStore.
+        loan_purpose = compliance.get("loan_purpose") or ""
+        try:
+            ltv_pct = float(compliance.get("ltv") or 0)
+        except (TypeError, ValueError):
+            ltv_pct = 0.0
+        tx_cashout_ltv_violation = (
+            str(property_state).upper() == "TX"
+            and str(loan_purpose) == "cash_out_refinance"
+            and ltv_pct > 80.0
+        )
+        if tx_cashout_ltv_violation:
+            state_rules_passed = False
+
         signals = [
             make_signal(
                 "all_hmda_fields_complete",
@@ -63,7 +80,7 @@ class ComplianceAgent(LendingPersona):
             make_signal("cd_timing_compliant", cd_timing_compliant),
         ]
 
-        if fair_lending_violation or missing_disclosures:
+        if fair_lending_violation or missing_disclosures or tx_cashout_ltv_violation:
             outcome = DecisionOutcome.BLOCK
             confidence = 0.95
         elif regulatory_ambiguity or mixed_jurisdiction:
@@ -94,6 +111,9 @@ class ComplianceAgent(LendingPersona):
                 "applicable_state_rules": applicable_state_rules,
                 "property_state": property_state,
                 "state_rule_count": state_rule_count,
+                # Exposed so the decisions.yaml boundary block_if can match it
+                # (the policy engine evaluates against output_payload).
+                "tx_cashout_ltv_violation": tx_cashout_ltv_violation,
             },
             proposed_outcome=outcome,
             confidence=confidence,
