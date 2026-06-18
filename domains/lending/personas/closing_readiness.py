@@ -44,12 +44,21 @@ class ClosingAgent(LendingPersona):
         title_clear = title_status == "clear"
         title_defect = title_status == "defect"
 
-        cd_timing_compliant = bool(
-            compliance_payload.get("cd_timing_compliant")
-            or compliance_record.get("cd_timing_compliant")
-            or False
-        )
-        cd_timing_violation = not cd_timing_compliant
+        # CD-timing violation is an authoritative loan fact (TRID 3-business-day
+        # rule), surfaced on the URLA; default False (compliant) when unflagged.
+        # Rate-lock days-remaining comes from loan_terms (builder-computed).
+        loan = first_object(bundle, "Loan") or {}
+        urla = loan.get("urla") or {}
+        cd_timing_violation = bool(urla.get("cd_timing_violation"))
+        cd_timing_compliant = not cd_timing_violation
+        days_until_rate_lock_expiry = loan.get("days_until_rate_lock_expiry")
+        try:
+            rate_lock_expiring_soon = (
+                days_until_rate_lock_expiry is not None
+                and int(days_until_rate_lock_expiry) <= 5
+            )
+        except (TypeError, ValueError):
+            rate_lock_expiring_soon = False
         compliance_outcome = compliance_payload.get("outcome") or compliance_payload.get("decision")
 
         # Own-data: final conditions checklist + insurance binder.
@@ -97,6 +106,10 @@ class ClosingAgent(LendingPersona):
         if title_defect or compliance_outcome == "block" or cd_timing_violation:
             outcome = DecisionOutcome.BLOCK
             confidence = 0.95
+        elif rate_lock_expiring_soon:
+            # Rate lock expiring within 5 days — needs UW action, not a block.
+            outcome = DecisionOutcome.ESCALATE
+            confidence = 0.7
         elif lien_dispute or insurance_gap:
             outcome = DecisionOutcome.ESCALATE
             confidence = 0.65
@@ -121,6 +134,9 @@ class ClosingAgent(LendingPersona):
                 "outstanding_conditions": [] if all_conditions_cleared else ["minor_review"],
                 "all_conditions_cleared": all_conditions_cleared,
                 "cd_timing_compliant": cd_timing_compliant,
+                "cd_timing_violation": cd_timing_violation,
+                "days_until_rate_lock_expiry": days_until_rate_lock_expiry,
+                "rate_lock_expiring_soon": rate_lock_expiring_soon,
                 "title_clear": title_clear,
                 "title_defect": title_defect,
                 "minor_conditions_outstanding": minor_conditions_outstanding,

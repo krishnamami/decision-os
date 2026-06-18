@@ -7,7 +7,7 @@ from core.normalizer.models import DecisionOutcome
 from core.policy_engine import PolicyDecision
 from core.trace import SignalDirection
 
-from .base import LendingPersona, OfflineReasoning, make_signal, upstream_payload
+from .base import LendingPersona, OfflineReasoning, first_object, make_signal, upstream_payload
 
 
 # Compact product catalog. Each entry is a (product, dti_max, ltv_max,
@@ -62,6 +62,54 @@ class ProductEligibilityAgent(LendingPersona):
         dti_payload = upstream_payload(bundle, "dti_calculation")
         ltv_payload = upstream_payload(bundle, "ltv_assessment")
         credit_payload = upstream_payload(bundle, "credit_assessment")
+
+        # VA entitlement gate (runs before the generic catalog filter). VA
+        # loans need a Certificate of Eligibility check; second-use entitlement
+        # escalates, and insufficient remaining entitlement blocks.
+        _loan = first_object(bundle, "Loan") or {}
+        _urla = _loan.get("urla") or {}
+        if str(_urla.get("loan_type") or "").upper() == "VA":
+            def _num(x):
+                try:
+                    return float(x)
+                except (TypeError, ValueError):
+                    return None
+            va_used = _urla.get("va_entitlement_used")
+            va_remaining = _urla.get("va_entitlement_remaining")
+            loan_amt = _num(_urla.get("loan_amount")) or 0.0
+            rem = _num(va_remaining)
+            insufficient = rem is not None and rem < loan_amt * 0.25
+            va_outcome = DecisionOutcome.BLOCK if insufficient else DecisionOutcome.ESCALATE
+            return OfflineReasoning(
+                output_payload={
+                    "loan_type": "VA",
+                    "va_entitlement_used": va_used,
+                    "va_entitlement_remaining": va_remaining,
+                    "eligible_products": [] if insufficient else ["va_30y"],
+                    # block_if reads no_eligible_products; escalate_if reads
+                    # guideline_exception_required (COE / second-use review).
+                    "no_eligible_products": insufficient,
+                    "guideline_exception_required": not insufficient,
+                },
+                proposed_outcome=va_outcome,
+                confidence=0.8,
+                signals=[
+                    make_signal("loan_type", "VA"),
+                    make_signal("va_entitlement_used", va_used),
+                    make_signal("va_entitlement_remaining", va_remaining),
+                ],
+                contradictions=[],
+                hypothesis=(
+                    "VA loans require COE verification; second-use entitlement "
+                    "escalates and insufficient remaining entitlement blocks."
+                ),
+                conclusion=(
+                    f"VA loan: entitlement_used={va_used}, remaining={va_remaining}, "
+                    f"loan_amount={loan_amt:.0f} -> {va_outcome.value}"
+                ),
+                confidence_basis="VA entitlement math is deterministic given COE values.",
+                summary=f"VA eligibility: {va_outcome.value} (entitlement_used={va_used}).",
+            )
 
         dti = dti_payload.get("dti_ratio") or dti_payload.get("dti")
         ltv = ltv_payload.get("ltv_ratio") or ltv_payload.get("ltv")

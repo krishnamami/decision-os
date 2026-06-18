@@ -208,6 +208,13 @@ decisions:
       block_if:
         - active_bankruptcy == true
         - foreclosure_last_36_months == true
+        - expression: credit_score < 580
+          governed_by:
+            type: agency_guidelines
+            agency: fha
+            guideline_name: Minimum Decision Credit Score
+            citation: HUD Handbook 4000.1 II.A.4
+            threshold_field: credit.min_score
       escalate_if:
         - thin_file == true
         - credit_score is null
@@ -655,6 +662,7 @@ decisions:
       escalate_if:
         - lien_dispute == true
         - insurance_gap == true
+        - rate_lock_expiring_soon == true
     sla_seconds: 180
     trace_required: true
 

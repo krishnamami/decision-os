@@ -76,6 +76,7 @@ class EdmsContextStore:
                 "open_tradelines": "open_tradelines",
                 "credit_utilization": "credit_utilization",
                 "monthly_obligations": "monthly_obligations",
+                "governing_credit_score": "governing_credit_score",
             },
             "id_field": "applicant_id",
         },

@@ -44,7 +44,12 @@ class CreditRiskAgent(LendingPersona):
         self, bundle: ContextBundle, policy: Optional[PolicyDecision]
     ) -> OfflineReasoning:
         credit = latest_object(bundle, "CreditProfile", sort_by="pulled_at") or {}
-        score = credit.get("credit_score")
+        # Qualify on the governing (lower) score when a co-borrower exists.
+        # The view's governing_credit_score falls back to the primary's score
+        # for single-borrower loans, so this is a no-op there.
+        score = credit.get("governing_credit_score")
+        if score is None:
+            score = credit.get("credit_score")
         active_bk = bool(credit.get("active_bankruptcy") or False)
         foreclosure_36 = bool(credit.get("foreclosure_last_36_months") or False)
         thin_file = bool(credit.get("thin_file") or False)
@@ -87,6 +92,9 @@ class CreditRiskAgent(LendingPersona):
             outcome = DecisionOutcome.ALLOW
         elif score >= 600:
             outcome = DecisionOutcome.RECOMMEND
+        elif score < 580:
+            # Below the FHA floor (580) — uninsurable on any agency program.
+            outcome = DecisionOutcome.BLOCK
         else:
             outcome = DecisionOutcome.ESCALATE
 
