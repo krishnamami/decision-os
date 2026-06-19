@@ -45,13 +45,12 @@ class ClosingAgent(LendingPersona):
         title_defect = title_status == "defect"
 
         # CD-timing violation is an authoritative loan fact (TRID 3-business-day
-        # rule), surfaced on the URLA; default False (compliant) when unflagged.
-        # Rate-lock days-remaining comes from loan_terms (builder-computed).
-        loan = first_object(bundle, "Loan") or {}
-        urla = loan.get("urla") or {}
-        cd_timing_violation = bool(urla.get("cd_timing_violation"))
+        # rule); rate-lock days-remaining is builder-computed. Both are exposed
+        # on this decision's ComplianceRecord (vw_closing_readiness_context
+        # field_map) — closing's bundle has no "Loan" object.
+        cd_timing_violation = bool(compliance_record.get("cd_timing_violation"))
         cd_timing_compliant = not cd_timing_violation
-        days_until_rate_lock_expiry = loan.get("days_until_rate_lock_expiry")
+        days_until_rate_lock_expiry = compliance_record.get("days_until_rate_lock_expiry")
         try:
             rate_lock_expiring_soon = (
                 days_until_rate_lock_expiry is not None

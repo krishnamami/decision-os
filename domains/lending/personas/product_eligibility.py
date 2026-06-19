@@ -66,17 +66,20 @@ class ProductEligibilityAgent(LendingPersona):
         # VA entitlement gate (runs before the generic catalog filter). VA
         # loans need a Certificate of Eligibility check; second-use entitlement
         # escalates, and insufficient remaining entitlement blocks.
-        _loan = first_object(bundle, "Loan") or {}
-        _urla = _loan.get("urla") or {}
-        if str(_urla.get("loan_type") or "").upper() == "VA":
+        # product_eligibility's bundle is an "Application" object (the
+        # vw_product_eligibility_context field_map), not a "Loan" — read the
+        # VA fields from there. The view exposes loan_type from the URLA and
+        # the va_entitlement_* columns.
+        _app = first_object(bundle, "Application") or {}
+        if str(_app.get("loan_type") or "").upper() == "VA":
             def _num(x):
                 try:
                     return float(x)
                 except (TypeError, ValueError):
                     return None
-            va_used = _urla.get("va_entitlement_used")
-            va_remaining = _urla.get("va_entitlement_remaining")
-            loan_amt = _num(_urla.get("loan_amount")) or 0.0
+            va_used = _app.get("va_entitlement_used")
+            va_remaining = _app.get("va_entitlement_remaining")
+            loan_amt = _num(_app.get("loan_amount")) or 0.0
             rem = _num(va_remaining)
             insufficient = rem is not None and rem < loan_amt * 0.25
             va_outcome = DecisionOutcome.BLOCK if insufficient else DecisionOutcome.ESCALATE

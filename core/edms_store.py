@@ -193,6 +193,8 @@ class EdmsContextStore:
                 "loan_type": "loan_type",
                 "loan_amount": "loan_amount",
                 "loan_purpose": "loan_purpose",
+                "va_entitlement_used": "va_entitlement_used",
+                "va_entitlement_remaining": "va_entitlement_remaining",
             },
             "id_field": "application_id",
         },
