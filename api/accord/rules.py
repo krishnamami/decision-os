@@ -17,7 +17,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from api.accord.auth import get_current_user, get_tenant_id
+from api.accord.auth import get_current_user, get_tenant_id, require_permission
 from api.accord.pipeline import _get_pool, _require_db
 
 router = APIRouter(prefix="/api/accord/rules", tags=["accord-rules"])
@@ -229,9 +229,10 @@ class RulesUpdate(BaseModel):
 
 
 @router.put("")
-async def update_rules(body: RulesUpdate, user: dict = Depends(get_current_user)) -> dict:
-    if user.get("role") not in ("admin", "manager"):
-        raise HTTPException(403, "Admin or manager access required to edit rules")
+async def update_rules(
+    body: RulesUpdate,
+    user: dict = Depends(require_permission("manage_policy")),
+) -> dict:
     _require_db()
     tenant_id = user["tenant_id"]
     if not (body.change_reason or "").strip():
@@ -271,9 +272,10 @@ async def update_rules(body: RulesUpdate, user: dict = Depends(get_current_user)
 
 # ── 4. Approve the pending change (admin only) → active ─────────────
 @router.post("/approve")
-async def approve_rules(payload: dict = Body(default={}), user: dict = Depends(get_current_user)) -> dict:
-    if user.get("role") != "admin":
-        raise HTTPException(403, "Admin access required to approve rule changes")
+async def approve_rules(
+    payload: dict = Body(default={}),
+    user: dict = Depends(require_permission("manage_policy")),
+) -> dict:
     _require_db()
     tenant_id = user["tenant_id"]
     pool = await _get_pool()

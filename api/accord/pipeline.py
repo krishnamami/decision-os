@@ -23,7 +23,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
-from api.accord.auth import get_current_user, get_tenant_id
+from api.accord.auth import get_current_user, get_tenant_id, require_permission
 from core.auth.security import hash_password
 
 try:
@@ -907,7 +907,11 @@ def _require_admin(user: dict) -> None:
 
 
 @router.post("/users/invite")
-async def invite_user(body: InviteBody, user: dict = Depends(get_current_user)) -> dict:
+async def invite_user(
+    body: InviteBody,
+    user: dict = Depends(get_current_user),
+    _perm: dict = Depends(require_permission("manage_users")),
+) -> dict:
     _require_admin(user)
     _require_db()
     if body.role not in ALLOWED_ROLES:
@@ -925,7 +929,11 @@ async def invite_user(body: InviteBody, user: dict = Depends(get_current_user)) 
 
 
 @router.post("/users/{user_id}/role")
-async def change_role(user_id: str, body: RoleBody, user: dict = Depends(get_current_user)) -> dict:
+async def change_role(
+    user_id: str, body: RoleBody,
+    user: dict = Depends(get_current_user),
+    _perm: dict = Depends(require_permission("manage_users")),
+) -> dict:
     _require_admin(user)
     _require_db()
     if body.role not in ALLOWED_ROLES:
@@ -940,7 +948,11 @@ async def change_role(user_id: str, body: RoleBody, user: dict = Depends(get_cur
 
 
 @router.post("/users/{user_id}/deactivate")
-async def deactivate_user(user_id: str, user: dict = Depends(get_current_user)) -> dict:
+async def deactivate_user(
+    user_id: str,
+    user: dict = Depends(get_current_user),
+    _perm: dict = Depends(require_permission("manage_users")),
+) -> dict:
     _require_admin(user)
     _require_db()
     if str(user_id) == str(user["user_id"]):
@@ -1801,6 +1813,7 @@ async def approve_decision(
 async def override_decision(
     application_id: str, decision_id: str,
     payload: dict = Body(...), tenant_id: str = Depends(get_tenant_id),
+    _perm: dict = Depends(require_permission("override_decision")),
 ) -> dict:
     _require_db()
     new_outcome = (payload.get("new_outcome") or "").strip()

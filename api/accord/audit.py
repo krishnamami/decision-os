@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from api.accord.auth import get_current_user, get_tenant_id
+from api.accord.auth import get_current_user, get_tenant_id, require_permission
 
 from api.accord.pipeline import PERSONAS, _f, _get_pool, _J, _require_db, cached_agg
 
@@ -113,11 +113,13 @@ async def _reports(tenant_id: str) -> dict:
 
 
 @router.get("/reports/{report_id}/data")
-async def report_data(report_id: str, user: dict = Depends(get_current_user)) -> dict:
+async def report_data(
+    report_id: str,
+    user: dict = Depends(require_permission("export_reports")),
+) -> dict:
     """Real, tenant-scoped rows for a governance report — the frontend turns
-    {columns, rows} into a CSV/PDF download. Managers + compliance only."""
-    if user.get("role") not in ("admin", "manager", "compliance"):
-        raise HTTPException(403, "Manager or compliance access required")
+    {columns, rows} into a CSV/PDF download. Gated by export_reports
+    (senior_uw + compliance + admin)."""
     _require_db()
     tid = user["tenant_id"]
     pool = await _get_pool()
