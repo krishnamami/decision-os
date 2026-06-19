@@ -54,8 +54,16 @@ class LTVAssessmentAgent(LendingPersona):
         appraised = float(prop.get("appraised_value") or 0.0)
         purchase_price = float(prop.get("purchase_price") or appraised)
         down_payment = float(prop.get("down_payment") or 0.0)
+        # loan_amount comes from this decision's Property field_map (the bundle
+        # has no "Loan" object); fall back to the Loan principal / equity math
+        # only when the view didn't supply it. Without prop.loan_amount the
+        # fallback used purchase_price-down_payment, which (when the view's
+        # purchase_price is null) collapses to appraised -> ltv==1.0 for every
+        # loan, wrongly blocking ltv_assessment and cascading downstream.
         loan_amount = float(
-            loan.get("principal_amount") or max(0.0, purchase_price - down_payment)
+            prop.get("loan_amount")
+            or loan.get("principal_amount")
+            or max(0.0, purchase_price - down_payment)
         )
         appraisal_disputed = bool(prop.get("appraisal_disputed") or False)
 
