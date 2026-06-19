@@ -18,8 +18,21 @@ credit 620, ltv 97); the evaluator scales them to the boundary's units.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Optional
+
+# Condition keys are interpolated into a jsonb path in get_waiver(); restrict
+# them to safe identifiers so a caller-supplied key can't inject SQL.
+_IDENT_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+
+def _jsonb_text(val: Any) -> str:
+    """The text a jsonb ``->>`` extraction yields for a Python value
+    (booleans render as 'true'/'false', everything else via str())."""
+    if isinstance(val, bool):
+        return "true" if val else "false"
+    return str(val)
 
 
 @dataclass
@@ -164,6 +177,34 @@ class ThresholdResolver:
             self._agency_cache = {}
         return self._agency_cache
 
+    async def get_waiver(
+        self,
+        tenant_id: str,
+        waiver_type: str,
+        conditions: Optional[dict] = None,
+    ) -> Optional[float]:
+        """Active, unexpired waiver value from tenant_rule_waivers, or None.
+
+        ``conditions`` is matched against the waiver's ``conditions`` JSONB by
+        text equality, so booleans / strings / numbers all compare correctly
+        (e.g. {"first_time_homebuyer": True} matches a JSON ``true``). Layer 1
+        of resolve_credit_floor(). Tenant-scoped by the ``tenant_id`` argument.
+        """
+        query = (
+            "SELECT waiver_value FROM tenant_rule_waivers "
+            "WHERE tenant_id = $1 AND waiver_type = $2 AND is_active = true "
+            "AND (expires_at IS NULL OR expires_at > NOW())"
+        )
+        params: list = [tenant_id, waiver_type]
+        for key, val in (conditions or {}).items():
+            if not _IDENT_RE.match(key):
+                continue  # skip unsafe keys rather than risk SQL injection
+            params.append(_jsonb_text(val))
+            query += f" AND conditions->>'{key}' = ${len(params)}"
+        row = await self._conn.fetchrow(query, *params)
+        return (float(row["waiver_value"])
+                if row and row["waiver_value"] is not None else None)
+
     async def resolve_credit_floor(
         self,
         tenant_id: str,
@@ -181,16 +222,13 @@ class ThresholdResolver:
         Reads the catalogue tables directly, tenant-scoped by the ``tenant_id``
         argument (the catalogue tables carry their own tenant_id column).
         """
-        # Layer 1 — FTB waiver
+        # Layer 1 — FTB waiver (tenant_rule_waivers)
         if first_time_buyer:
-            waiver = await self._conn.fetchrow(
-                "SELECT waiver_value FROM tenant_rule_waivers WHERE tenant_id = $1 "
-                "AND waiver_type = 'credit_floor_override' "
-                "AND (conditions->>'first_time_homebuyer')::boolean = true "
-                "AND is_active = true AND (expires_at IS NULL OR expires_at > NOW())",
-                tenant_id)
-            if waiver and waiver["waiver_value"] is not None:
-                return int(waiver["waiver_value"])
+            wv = await self.get_waiver(
+                tenant_id, "credit_floor_override",
+                {"first_time_homebuyer": True})
+            if wv is not None:
+                return int(wv)
 
         # Layer 2 — overlay (exact loan_type match wins over the NULL catch-all)
         overlay = await self._conn.fetchrow(
