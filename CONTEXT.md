@@ -21,7 +21,7 @@ No decision is a black box. No action happens without a policy. No context is un
 
 ## Current domain: Lending (mortgage)
 
-12 decisions covering the full mortgage cycle.
+13 decisions covering the full mortgage cycle (12 original + asset_verification, Session 16).
 Source of truth: `domains/lending/decisions.yaml`
 Vocabulary + ontology: `domains/lending/knowledge_base.json`
 
@@ -455,6 +455,103 @@ Connector layering — push vs pull (STEP 4 design)
 ---
 
 ## Session history
+
+### Session 16 — June 18–19 2026
+
+**Theme:** Harden transaction-data security (Phase 1, non-breaking) on the live
+EDMS RDS, add the **13th** lending decision (`asset_verification`, SC15) with a
+**reusable persona-onboarding script**, make SC15's data durable through the
+real EDMS S3 pipeline, and diagnose (not yet fix) the three remaining meridian
+scenario failures.
+
+**Commits — decision-os (pushed to `main`):**
+  - `c339ccc` — feat(auth): app-level RBAC from `role_permissions`.
+  - `8dc7caf` — feat(persona): `asset_verification` (SC15) + onboarding script.
+  - `260ccf2` — feat(security): DB roles + RLS migration script.
+
+**Commit — edms-simulator (pushed to `main`):**
+  - `0a61b57` — fix(sc15): durable asset fields in the ingest pipeline.
+
+**1. Transaction-data security — Phase 1 (safe foundation, NO enforcement).**
+   Applied to the **live RDS** via `scripts/migrations/security_foundation.py`
+   (idempotent, all **inert** so nothing in production changed):
+   - Roles `accord_app`, `accord_readonly`, `governance_admin` (NOLOGIN
+     NOINHERIT); grants on source tables + persona views + writables (no
+     DELETE); `governance_admin` owns `regulatory_rules`/`agency_guidelines`;
+     11 department roles inherit the service roles.
+   - RLS **policies** (`rls_*`) on 8 tables (`entity_states`, `applications`,
+     `applicants`, `decision_outputs`, `decision_timeline`, `document_index`,
+     `tenant_rules`, `rate_sheet_entry`) — created but **dormant**: no
+     `ENABLE`/`FORCE ROW LEVEL SECURITY`, and the app connects as `edms_admin`
+     which is **`rolbypassrls=TRUE`**, so isolation is not yet enforced.
+   - `role_permissions` table (JSONB action flags) seeded for 5 roles
+     (`underwriter`, `senior_uw`, `compliance`, `admin`, `read_only`).
+   **App-level RBAC** (`api/accord/auth.py`): `get_current_user` now attaches the
+   role's action permissions via a cached, fail-safe loader (never breaks the
+   auth hot path); `require_permission(perm)` dependency returns 403. Gated:
+   `override_decision` (pipeline override — was wide open), `manage_users`
+   (invite/role/deactivate), `manage_policy` (rules PUT + `/approve`),
+   `export_reports` (audit report data). `/auth/me` exposes `action_permissions`
+   additively (product `permissions` list unchanged). Verified locally vs live
+   RDS: underwriter→403, senior_uw/admin→pass.
+   **Phase 2 (deferred, NOT done):** `ENABLE`/`FORCE RLS`, switch the app to the
+   non-bypass `accord_app` login, set `app.tenant_id` per pool-acquire. These
+   three together are what would actually enforce DB-level tenant isolation —
+   and the GUC-per-acquire rework is the part that would break the current
+   per-query/no-transaction asyncpg pattern, so it stays deferred.
+
+**2. `asset_verification` persona (SC15) — the 13th lending decision.**
+   `domains/lending/personas/asset_verification.py` (`AssetVerificationAgent`, a
+   real `LendingPersona` with `_compute_offline`). A wave-1 **independent leaf**
+   (nothing depends on it → zero cascade risk). Outcome model: ESCALATE on a
+   large unsourced deposit (> $5K) or undocumented gift funds (UW sources them —
+   Fannie Mae B3-4.3-04/09); BLOCK on reserves < 2 months (B3-4.4-01); ALLOW
+   when verified. **Deliberately dropped** the prompt's "deposit > 50% of liquid
+   → block" rule, which would have blocked SC15 (deposit is 90% of liquid),
+   contradicting the expected escalate. SC15 (Maria Santos / "Rachel Green"):
+   $47K undocumented deposit, 3.2mo reserves → **escalate** ✅.
+   **Six real wiring points** (there is **no `infra/schema.sql`** — views are
+   live `CREATE OR REPLACE`): (1) `vw_asset_verification_context` projecting
+   `borrower.assets` (`scripts/migrations/add_asset_verification_view.py`);
+   (2) `EdmsContextStore.VIEW_MAPPINGS` → `AssetProfile`; (3) the persona class;
+   (4) `LENDING_PERSONA_CLASSES`; (5) `core/cron/runner.py` `WAVE_CONFIG`/`WAVES`/
+   `DECISION_DEFAULTS`; (6) `decisions.yaml` boundary
+   (`automate/block/escalate_if`). Meridian now **13/16** (was 12/15 + 1 no-persona).
+
+**3. Reusable persona onboarding** (`scripts/onboard_persona.py` +
+   `scripts/create_asset_verification.py`). Reflects the **real** architecture
+   (the 6 wiring points above, not a naive view+file model): generates + applies
+   the view DDL, writes a real `LendingPersona` stub (or caller-supplied code),
+   appends the `decisions.yaml` boundary, prints the exact edits for the 3 Python
+   registries, and smoke-tests projection + `_compute_offline`. Honest RLS note —
+   isolation is **not** asserted (BYPASSRLS app role). Idempotent.
+
+**4. EDMS durability for SC15** (`0a61b57`). SC15's asset data now flows through
+   the real S3 ingest instead of only the Decision-OS manual patch:
+   `scripts/meridian_scenarios_data.py` (SC15 asset fields, 47K to match the
+   patch) → `scripts/simulate_meridian_s3.py` `BANK_STATEMENT_M1` carries them
+   (defaults keep non-asset scenarios clean) → `core/aggregation/
+   entity_state_builder.py` new `_derive_asset_enrichment` extracts them into
+   `borrower.assets` (mirrors the income/identity enrichment pattern).
+   Re-ingest: `python scripts/simulate_meridian_s3.py --date 2026-06-20 --scenario SC15`.
+   NB: `scripts/patch_meridian_scenario_data.py` also re-applies SC15 (47K) so
+   the Decision-OS evaluate run stays green without a full re-ingest.
+
+**5. SC12/SC14/SC16 — diagnosed, NOT fixed (awaiting fix direction).** Three
+   distinct root causes:
+   - **SC12** `income_verification=recommend` (want block) — **data**: stated ==
+     verified (74400/74400 → 0% discrepancy); persona blocks only at > 25%. Fix =
+     lower SC12 verified income (~52K → ~30% > 25%).
+   - **SC14** `product_eligibility=block` (want escalate) — **upstream cascade**:
+     the VA gate proposes escalate (remaining 107325 > loan×0.25), but upstream
+     `dti_calculation=block` (DTI ≈ 42.99 vs meridian-v1 cap 43 — itself worth a
+     look) force-blocks via `upstream_block_propagates_to_dependents`.
+   - **SC16** `closing_readiness=block` (want escalate) — **data + policy
+     precedence**: SC16 carries `title_defect=True` + insurance gap + an upstream
+     underwriting block (trips BLOCK before the rate-lock escalate); and even with
+     clean data, closing's `automate_if` would match → `allow` and the
+     `escalate_if: rate_lock_expiring_soon == true` clause can't override it.
+     Fix = clean SC16 data + add `rate_lock_expiring_soon == false` to `automate_if`.
 
 ### Session 15 — June 5–13 2026
 
