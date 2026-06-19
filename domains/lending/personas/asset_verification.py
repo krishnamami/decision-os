@@ -1,0 +1,171 @@
+from __future__ import annotations
+
+from typing import Optional
+
+from core.context_store import ContextBundle
+from core.normalizer.models import DecisionOutcome
+from core.policy_engine import PolicyDecision
+from core.trace import SignalDirection
+
+from .base import LendingPersona, OfflineReasoning, latest_object, make_signal
+
+
+class AssetVerificationAgent(LendingPersona):
+    """asset_verification — asset documentation quality.
+
+    Reads the AssetProfile projected from ``vw_asset_verification_context``
+    (borrower.assets) and decides whether the asset picture is clear,
+    needs sourcing (escalate), or is a hard stop (block).
+
+    Outcome model (deliberately NOT a percent-of-assets auto-block):
+      BLOCK     reserves below the agency floor (default 2 months PITI) —
+                a clear, defensible hard stop.
+      ESCALATE  a large deposit (> $5K) or gift funds that aren't yet
+                documented — UW must source the funds before closing.
+                A large *unsourced* deposit is an escalate, not a denial,
+                even when it is most of the borrower's liquid assets
+                (Fannie Mae B3-4.3-04 wants it sourced, not refused).
+      ALLOW     assets verified and nothing needs sourcing.
+
+    SC15 (Maria Santos): $47K undocumented deposit, 3.2 months reserves →
+    needs_sourcing=true, reserves_insufficient=false → ESCALATE.
+    """
+
+    DEFAULT_AGENT_ID = "asset_verification_agent_v1"
+
+    LARGE_DEPOSIT_THRESHOLD = 5000.0
+    MIN_RESERVES_MONTHS = 2.0
+
+    def __init__(
+        self,
+        *,
+        agent_id: str = DEFAULT_AGENT_ID,
+        use_anthropic: bool = False,
+        **kw,
+    ):
+        super().__init__(
+            agent_id=agent_id,
+            persona="asset_verification_agent",
+            decision_id="asset_verification",
+            use_anthropic=use_anthropic,
+            **kw,
+        )
+
+    def _compute_offline(
+        self, bundle: ContextBundle, policy: Optional[PolicyDecision]
+    ) -> OfflineReasoning:
+        assets = latest_object(bundle, "AssetProfile") or {}
+
+        large_deposit = float(assets.get("large_deposit_amount") or 0.0)
+        deposit_documented = bool(assets.get("large_deposit_documented"))
+        liquid = float(
+            assets.get("liquid_assets_total")
+            or assets.get("total_liquid_assets")
+            or 0.0
+        )
+        reserves = assets.get("reserves_months")
+        reserves = float(reserves) if reserves is not None else None
+        gift_funds = float(assets.get("gift_funds") or 0.0)
+        gift_documented = bool(assets.get("gift_funds_documented"))
+        assets_verified = bool(assets.get("assets_verified"))
+
+        # ── Boundary-facing flags (the policy engine reads these) ────────
+        large_deposit_unsourced = large_deposit > self.LARGE_DEPOSIT_THRESHOLD and not deposit_documented
+        gift_funds_unsourced = gift_funds > 0 and not gift_documented
+        needs_sourcing = large_deposit_unsourced or gift_funds_unsourced
+        reserves_insufficient = (
+            reserves is not None and 0.0 < reserves < self.MIN_RESERVES_MONTHS
+        )
+        # A large undocumented deposit relative to liquid assets is a *signal*
+        # for the reviewer, not an auto-block.
+        deposit_pct_of_liquid = (large_deposit / liquid) if liquid > 0 else 0.0
+        assets_clear = assets_verified and not needs_sourcing and not reserves_insufficient
+
+        signals = [
+            make_signal("large_deposit_amount", round(large_deposit, 2)),
+            make_signal(
+                "large_deposit_unsourced",
+                large_deposit_unsourced,
+                direction=(
+                    SignalDirection.CONTRADICTS
+                    if large_deposit_unsourced
+                    else SignalDirection.NEUTRAL
+                ),
+                weight=2.0,
+            ),
+            make_signal("reserves_months", reserves if reserves is not None else "n/a"),
+            make_signal(
+                "deposit_pct_of_liquid_assets",
+                round(deposit_pct_of_liquid, 3),
+                notes="informational — large unsourced deposits are sourced, not denied",
+            ),
+        ]
+        if gift_funds_unsourced:
+            signals.append(
+                make_signal("gift_funds_unsourced", True, direction=SignalDirection.CONTRADICTS)
+            )
+
+        if reserves_insufficient:
+            outcome = DecisionOutcome.BLOCK
+            confidence = 0.9
+            conclusion = (
+                f"reserves {reserves:.1f}mo < {self.MIN_RESERVES_MONTHS:.0f}mo floor → block"
+            )
+            summary = f"Reserves {reserves:.1f} months below minimum — additional assets required."
+        elif needs_sourcing:
+            outcome = DecisionOutcome.ESCALATE
+            confidence = 0.8
+            parts = []
+            if large_deposit_unsourced:
+                parts.append(f"deposit ${large_deposit:,.0f} unsourced")
+            if gift_funds_unsourced:
+                parts.append(f"gift ${gift_funds:,.0f} without letter")
+            conclusion = " + ".join(parts) + " → escalate for sourcing"
+            summary = (
+                "Large/undocumented funds require sourcing before closing "
+                "(Fannie Mae B3-4.3-04 / B3-4.3-09)."
+            )
+        elif assets_verified:
+            outcome = DecisionOutcome.ALLOW
+            confidence = 0.92
+            conclusion = "assets verified, nothing to source → allow"
+            summary = "Assets verified. No documentation issues found."
+        else:
+            outcome = DecisionOutcome.ALLOW
+            confidence = 0.6
+            conclusion = "no asset flags → allow"
+            summary = "No asset issues identified."
+
+        return OfflineReasoning(
+            output_payload={
+                "large_deposit_amount": round(large_deposit, 2),
+                "large_deposit_documented": deposit_documented,
+                "large_deposit_unsourced": large_deposit_unsourced,
+                "gift_funds": round(gift_funds, 2),
+                "gift_funds_unsourced": gift_funds_unsourced,
+                "needs_sourcing": needs_sourcing,
+                "reserves_months": reserves,
+                "reserves_insufficient": reserves_insufficient,
+                "deposit_pct_of_liquid_assets": round(deposit_pct_of_liquid, 3),
+                "assets_verified": assets_verified,
+                "assets_clear": assets_clear,
+            },
+            proposed_outcome=outcome,
+            confidence=confidence,
+            signals=signals,
+            contradictions=[],
+            hypothesis=(
+                "Assets are clear when verified with adequate reserves and no "
+                "large unsourced deposits or undocumented gift funds."
+            ),
+            conclusion=conclusion,
+            confidence_basis=(
+                "High confidence on the reserves floor (deterministic). Sourcing "
+                "escalations are confident routing decisions, not denials — the "
+                "deposit-to-liquid ratio is informational only."
+            ),
+            summary=summary,
+        )
+
+
+__all__ = ["AssetVerificationAgent"]

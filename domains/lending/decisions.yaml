@@ -666,6 +666,40 @@ decisions:
     sla_seconds: 180
     trace_required: true
 
+  - id: asset_verification
+    name: Asset verification
+    atomic_tool: asset_verification_tool
+    context_window_days: 90
+    type: independent
+    description: >
+      Evaluates asset documentation quality — large deposits, gift funds,
+      and reserves adequacy. A large unsourced deposit is escalated for
+      sourcing (not denied); a reserves shortfall is a hard block.
+    own_data:
+      - bank_statements
+      - asset_documents
+      - gift_letters
+    shared_data:
+      - reserves_requirement
+    persona: asset_verification_agent
+    mode: recommend
+    risk_level: medium
+    owner_team: underwriting_ops
+    boundary:
+      automate_if:
+        - assets_clear == true
+      block_if:
+        - expression: reserves_insufficient == true
+          governed_by:
+            type: agency_guidelines
+            authority: fannie_mae
+            rule_name: Reserves Requirements
+            citation: Fannie Mae B3-4.4-01
+      escalate_if:
+        - needs_sourcing == true
+    sla_seconds: 30
+    trace_required: true
+
 # ─────────────────────────────────────────────
 # DECISION EXECUTION ORDER
 # ─────────────────────────────────────────────
@@ -676,6 +710,7 @@ execution_order:
     - credit_assessment
     - fraud_screening
     - compliance_check
+    - asset_verification
   sequential_dependent:
     - [income_verification]       # needs: employment_reconciliation
     - [dti_calculation]           # needs: income_verification

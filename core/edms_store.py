@@ -248,6 +248,22 @@ class EdmsContextStore:
             },
             "id_field": "application_id",
         },
+        "asset_verification": {
+            "view": "vw_asset_verification_context",
+            "object_type": "AssetProfile",
+            "field_map": {
+                "large_deposit_amount": "large_deposit_amount",
+                "large_deposit_documented": "large_deposit_documented",
+                "liquid_assets_total": "liquid_assets_total",
+                "reserves_months": "reserves_months",
+                "checking_savings": "checking_savings",
+                "gift_funds": "gift_funds",
+                "gift_funds_documented": "gift_funds_documented",
+                "assets_verified": "assets_verified",
+                "total_liquid_assets": "total_liquid_assets",
+            },
+            "id_field": "application_id",
+        },
     }
 
     def __init__(self, database_url: str):

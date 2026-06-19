@@ -27,8 +27,8 @@ TENANT = "meridian"
 # Expected key decision per scenario. The prompt's IDs are mapped to the real
 # Decision OS decision_ids (credit_check->credit_assessment,
 # employment_verification->employment_reconciliation,
-# eligibility_check->product_eligibility). asset_verification has NO Decision OS
-# persona — flagged, not evaluated.
+# eligibility_check->product_eligibility). asset_verification is now a real
+# Decision OS persona (SC15).
 # Expected key decision per scenario, reconciled to what the engine ACTUALLY
 # produces (Option 2). credit_assessment allow requires credit>=680 and
 # dti_calculation allow requires DTI<=36%, so SC06 (627) and SC07 (44%) are
@@ -55,8 +55,8 @@ EXPECTED_OUTCOMES = {
     'APP-MRID-SC14': ('product_eligibility',       'escalate'),
     'APP-MRID-SC16': ('closing_readiness',         'escalate'),
 
-    # NO PERSONA
-    'APP-MRID-SC15': (None, None),
+    # NEW PERSONA — asset_verification (large undocumented deposit → source it)
+    'APP-MRID-SC15': ('asset_verification',         'escalate'),
 }
 
 # Demo narrative for the two reconciled scenarios.

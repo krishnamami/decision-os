@@ -43,6 +43,18 @@ PATCHES = [
     ('APP-MRID-SC16', 'borrower',   ['income', 'income_discrepancy_pct'], '0.0'),
     ('APP-MRID-SC16', 'borrower',   ['employment', 'employer_name_match_confidence'], '0.95'),
     ('APP-MRID-SC16', 'loan_terms', ['days_until_rate_lock_expiry'], '3'),
+
+    # SC15 — Maria Santos large undocumented deposit. $47K deposit, 3.2 months
+    # reserves → asset_verification should ESCALATE (source the deposit), NOT
+    # block: a large unsourced deposit is sourced by UW, not denied
+    # (Fannie Mae B3-4.3-04). Reserves are adequate (>2mo) so no hard stop.
+    ('APP-MRID-SC15', 'borrower', ['assets', 'large_deposit_amount'], '47000'),
+    ('APP-MRID-SC15', 'borrower', ['assets', 'large_deposit_documented'], 'false'),
+    ('APP-MRID-SC15', 'borrower', ['assets', 'liquid_assets_total'], '52000'),
+    ('APP-MRID-SC15', 'borrower', ['assets', 'reserves_months'], '3.2'),
+    ('APP-MRID-SC15', 'borrower', ['assets', 'checking_savings'], '52000'),
+    ('APP-MRID-SC15', 'borrower', ['assets', 'gift_funds'], '0'),
+    ('APP-MRID-SC15', 'borrower', ['assets', 'gift_funds_documented'], 'true'),
 ]
 
 

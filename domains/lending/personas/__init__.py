@@ -5,6 +5,7 @@ from typing import Any, Optional
 from core.decision_agents import DecisionAgent
 
 from .approval_routing import WorkflowRoutingAgent
+from .asset_verification import AssetVerificationAgent
 from .base import LendingPersona, OfflineReasoning
 from .closing_readiness import ClosingAgent
 from .compliance_check import ComplianceAgent
@@ -36,6 +37,7 @@ LENDING_PERSONA_CLASSES: dict[str, type[LendingPersona]] = {
     "underwriting_decision":     SeniorUnderwritingAgent,
     "approval_routing":          WorkflowRoutingAgent,
     "closing_readiness":         ClosingAgent,
+    "asset_verification":        AssetVerificationAgent,
 }
 
 
@@ -78,6 +80,7 @@ __all__ = [
     "build_lending_personas",
     "register_with_platform",
     # individual agents
+    "AssetVerificationAgent",
     "ClosingAgent",
     "ComplianceAgent",
     "CreditRiskAgent",
