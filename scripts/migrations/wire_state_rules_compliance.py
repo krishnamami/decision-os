@@ -14,6 +14,16 @@ Schema adaptations vs. the original spec (verified against the live DB):
     'home_equity'), so the rules map onto those real values.
 
 Idempotent (CREATE OR REPLACE VIEW). Safe to run multiple times.
+
+⚠️  DEPRECATED — vw_compliance_check_context is NO LONGER owned here.
+    The canonical definition now lives in the EDMS schema: it reads
+    property_state / loan_purpose / ltv from loan_terms.urla and computes
+    tx_cashout_ltv_violation directly (see scripts/migrations/
+    add_persona_view_fields.py for the current persona-view field set, and
+    domains/lending/personas/compliance_check.py for the TX §50(a)(6) rule).
+    The COMPLIANCE_VIEW block below is the OLD shape (document_index /
+    borrower.compliance) and would REVERT that fix — so its execution is
+    disabled. This script now only (re)creates vw_regulation_transparency.
 """
 import asyncio
 import os
@@ -151,27 +161,13 @@ async def main() -> None:
 
     conn = await asyncpg.connect(_url())
     try:
-        await conn.execute(COMPLIANCE_VIEW)
-        print("vw_compliance_check_context recreated with state rules")
+        # DISABLED — see the module deprecation note. Re-creating
+        # vw_compliance_check_context from COMPLIANCE_VIEW would overwrite the
+        # canonical EDMS-owned definition and break the TX cash-out fix.
+        # await conn.execute(COMPLIANCE_VIEW)
+        _ = COMPLIANCE_VIEW  # kept for historical reference only
         await conn.execute(TRANSPARENCY_VIEW)
         print("vw_regulation_transparency created")
-
-        sample = await conn.fetchrow(
-            "SELECT application_id, state_rules_passed, property_state, "
-            "applicable_state_rules FROM vw_compliance_check_context "
-            "WHERE property_state = 'TX' LIMIT 1"
-        )
-        if sample:
-            print(f"TX sample: passed={sample['state_rules_passed']}, "
-                  f"state={sample['property_state']}, "
-                  f"rules={'set' if sample['applicable_state_rules'] else 'none'}")
-
-        counts = await conn.fetch(
-            "SELECT state_rules_passed, COUNT(*) c FROM vw_compliance_check_context "
-            "GROUP BY state_rules_passed ORDER BY state_rules_passed"
-        )
-        for r in counts:
-            print(f"  state_rules_passed={r['state_rules_passed']}: {r['c']} loans")
 
         tcounts = await conn.fetch(
             "SELECT layer, COUNT(*) c FROM vw_regulation_transparency GROUP BY layer ORDER BY layer"
