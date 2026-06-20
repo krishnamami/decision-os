@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 from core.context_store import ContextBundle
@@ -8,6 +9,20 @@ from core.policy_engine import PolicyDecision
 from core.trace import SignalDirection
 
 from .base import LendingPersona, OfflineReasoning, latest_object, make_signal
+
+
+def _as_list(val):
+    """Asset context arrays (asset_accounts / unsourced_deposits) arrive as a
+    JSON list or — depending on the view codec — a JSON string. Normalise to a
+    Python list."""
+    if val is None:
+        return []
+    if isinstance(val, str):
+        try:
+            val = json.loads(val)
+        except (ValueError, TypeError):
+            return []
+    return list(val) if isinstance(val, (list, tuple)) else []
 
 
 class AssetVerificationAgent(LendingPersona):
@@ -136,6 +151,62 @@ class AssetVerificationAgent(LendingPersona):
             conclusion = "no asset flags → allow"
             summary = "No asset issues identified."
 
+        # ── AV-D: AssetResolver + DepositAnalyzer over the entity tables ──
+        # Engages only when the AV-A tables hold accounts for this loan;
+        # otherwise the view returns empty arrays and the outcome is
+        # unchanged. These branches can only escalate to BLOCK / ESCALATE,
+        # never relax an existing outcome.
+        asset_accounts = _as_list(assets.get("asset_accounts"))
+        unsourced_deposits = _as_list(assets.get("unsourced_deposits"))
+        asset_resolver_status = None
+        total_qualifying_assets = None
+        funds_sufficient = None
+        asset_conditions: list[dict] = []
+
+        if asset_accounts:
+            from core.assets.asset_resolver import AssetResolver
+            from core.assets.deposit_analyzer import DepositAnalyzer
+
+            # Funds-to-close inputs aren't in the AssetProfile yet (AV-E
+            # wires them); absent -> 0 -> funds_needed 0 -> sufficient, so
+            # the resolver only blocks once those inputs exist.
+            loan_amount = float(assets.get("loan_amount") or 0)
+            piti_monthly = float(assets.get("proposed_payment") or 0)
+            down_payment = float(assets.get("down_payment") or 0)
+            qualifying_monthly = float(assets.get("qualifying_monthly") or 0)
+
+            asset_result = AssetResolver().resolve_all(
+                asset_accounts,
+                qualifying_monthly=qualifying_monthly,
+                piti_monthly=piti_monthly,
+                loan_amount=loan_amount,
+                down_payment=down_payment,
+            )
+            dep_result = DepositAnalyzer().analyze_deposits(
+                unsourced_deposits,
+                qualifying_monthly=qualifying_monthly,
+            )
+
+            asset_resolver_status = asset_result["overall_status"]
+            total_qualifying_assets = asset_result["total_qualifying"]
+            funds_sufficient = asset_result["funds_sufficient"]
+            asset_conditions = (
+                asset_result["all_conditions"] + dep_result["conditions"]
+            )
+
+            if asset_result["overall_status"] == "block":
+                outcome = DecisionOutcome.BLOCK
+                summary += " Insufficient assets for closing."
+            elif (
+                asset_result["overall_status"] == "escalate"
+                or dep_result["requires_action"]
+            ) and outcome is DecisionOutcome.ALLOW:
+                outcome = DecisionOutcome.ESCALATE
+                summary += (
+                    f" Asset conditions: {len(dep_result['conditions'])} "
+                    "deposit(s) need sourcing."
+                )
+
         return OfflineReasoning(
             output_payload={
                 "large_deposit_amount": round(large_deposit, 2),
@@ -149,6 +220,11 @@ class AssetVerificationAgent(LendingPersona):
                 "deposit_pct_of_liquid_assets": round(deposit_pct_of_liquid, 3),
                 "assets_verified": assets_verified,
                 "assets_clear": assets_clear,
+                # AV-D additions
+                "asset_resolver_status": asset_resolver_status,
+                "total_qualifying_assets": total_qualifying_assets,
+                "funds_sufficient": funds_sufficient,
+                "asset_conditions": asset_conditions,
             },
             proposed_outcome=outcome,
             confidence=confidence,

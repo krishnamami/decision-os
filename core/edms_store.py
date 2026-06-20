@@ -266,6 +266,11 @@ class EdmsContextStore:
                 "gift_funds_documented": "gift_funds_documented",
                 "assets_verified": "assets_verified",
                 "total_liquid_assets": "total_liquid_assets",
+                # AV-D: account + deposit rollups for the resolver path.
+                "asset_accounts": "asset_accounts",
+                "unsourced_deposits": "unsourced_deposits",
+                "total_qualifying_assets": "total_qualifying_assets",
+                "unsourced_deposit_count": "unsourced_deposit_count",
             },
             "id_field": "application_id",
         },
