@@ -456,6 +456,69 @@ Connector layering — push vs pull (STEP 4 design)
 
 ## Session history
 
+### Session 19 — June 20 2026 (cont.)
+
+**Theme:** **Decision Trace — Phase 12 COMPLETE (TR-A → TR-C)**: the immutable,
+regulator-facing record that reconstructs any decision from the trace alone.
+Plus the **title_assessment cron wiring fix** (the IN-D open item from Session
+18) and the stale persona-count test bump. All against the live RDS;
+`decision-os` `main`. Score held **15/16**.
+
+**Commits — decision-os (pushed to `main`):**
+  - `b343721` — feat(trace): decision trace schema + builder (TR-A).
+  - `98b5b22` — fix(cron): add title_assessment to wave 0 in cron runner.
+  - `25e3e06` — test(personas): persona registry count 13 → 15.
+  - `269d415` — feat(trace): policy trace (TR-B).
+  - `c9ef100` — feat(trace): trace API + export endpoints (TR-C).
+
+**1. TR-A — decision trace schema + builder.**
+   - `decision_trace` (immutable per-decision record: input_snapshot,
+     persona_traces, policy_trace, evidence_trace, conditions_snapshot,
+     final_outcome, loan data, audit fields, superseded_by) + `decision_audit_log`
+     (append-only, 12 action types). RLS; partial-unique on decision_id.
+   - `DecisionTraceBuilder` assembles from decision_outputs (per-decision rows —
+     **no `persona_outputs` col, no `context_snapshot` table**), entity_states,
+     fact_nodes, loan_condition_instances, fraud_signals. Headline =
+     `underwriting_decision`. All 16 traced; SC09 captures the fraud signal in
+     input_snapshot; idempotent (one trace per decision generation).
+   - Spec fixes: `final_outcome VARCHAR(20)→(30)` ('approve_with_conditions' is
+     23 chars); reads `confidence`/`reasoning.summary` (no outcome_reason col);
+     property_type from loan_terms.urla.
+   - NB: trace `final_outcome` follows underwriting_decision (block for 13/16) —
+     distinct from the per-scenario KEY decisions the 15/16 evaluate checks.
+
+**2. title_assessment cron wiring (IN-D resolved).**
+   - TL-A..TL-E were built but title_assessment was **never wired into the
+     runner** (0 decision rows). Adding it needed **three** registries, not just
+     WAVE_CONFIG (the other two would crash the runner): WAVE_CONFIG/WAVES[0]/
+     DECISION_DEFAULTS (runner), LENDING_PERSONA_CLASSES (personas/__init__ — else
+     `_get_agent` fails), and VIEW_MAPPINGS['title_assessment'] (edms_store — else
+     `snapshot()` raises). Now 16 decision rows; **SC16 generates
+     [TITLE_IRS_LIEN, TITLE_HOA_LIEN]**. Title is a leaf → 15/16 preserved.
+   - Side note: title escalates on 15/16 (title_clear unset on most loans — data
+     seeding, not wiring). Persona count → 15; the two stale `==13` count tests
+     bumped to 15 (had been red since S16/S18).
+
+**3. TR-B — policy trace.**
+   - `PolicyTraceBuilder` populates the policy_trace JSONB: agency_guidelines
+     (va/fha/fannie/freddie), tenant overlay_rules, 15 platform_guardrails;
+     evaluates dti/ltv/credit against the **effective limit** (stricter of agency
+     baseline + overlay), surfacing both. All 16 updated. SC07 3/3 pass — bound by
+     meridian overlays (dti 43 / ltv 95 / credit 660), not just fannie.
+   - Spec fixes: overlay_rules/platform_guardrails real columns differ from the
+     draft; entity_states.loan_type read from loan_terms.urla; used real overlays
+     for effective limits (more accurate than the draft's hardcoded fannie 97/620).
+
+**4. TR-C — trace API + export.**
+   - 5 endpoints under `/api/accord/trace/` (JWT tenant, _require_db/_get_pool —
+     Accord convention, not the spec's app.state.pool): GET full / summary /
+     export / audit, POST review. Export bundles input + evidence + policy +
+     persona + conditions + fraud + audit (repurchase / CFPB). JSON-safe
+     serialization; review in a txn with 404 pre-check. 15 routers mounted;
+     policy_trace populated 16/16.
+   - **JSON only** (the title said "PDF/JSON" but body specs JSON; a `format`
+     param is echoed in metadata as a hook — no PDF renderer added).
+
 ### Session 18 — June 20 2026
 
 **Theme:** Resolver subsystems end-to-end — finish **Title conditions (TL-E)**,
@@ -3813,4 +3876,4 @@ How to run smoke tests:
 
 ---
 
-*Decision OS · CONTEXT.md · Updated June 20 2026 (Session 18 — five resolver subsystems shipped end-to-end: Title conditions TL-E (Phase 2 COMPLETE) + `conditions_library` 44 rows; Credit Resolver Phase 3 COMPLETE CR-A→CR-E (tradelines/findings, agency waiting periods, 1%-rule/medical/disputed, wired into credit_assessment); Asset Engine Phase 4 COMPLETE AV-A→AV-E (accounts/deposits, qualifying factors + 3 questions, deposit analyzer, funds-to-close + gift chain — SC15 escalate); Fraud Engine Phase 5 COMPLETE FR-A→FR-E (`fraud_signals`, income/employment/occupancy/undisclosed detectors, wired into fraud_screening via automate_if guard — SC09 allow→escalate); Collateral Engine Phase 6 COMPLETE CO-A→CO-C (property eligibility + appraisal gap, wired into product_eligibility, purchase_price/property_type seeded); Conditions Engine Phase 11 COMPLETE CN-A→CN-C (new `loan_condition_instances` + `ConditionEngine`/`ConditionCollector` + views + `/api/accord/conditions` endpoints). Score held 15/16 throughout (SC12 rental income the one miss). Carried open items: title_assessment not in cron WAVES (TL-A..TL-E built, 0 decision rows); collateral/fraud capabilities wired-not-gating on current data; two conditions tables coexist. Next: Phase 12 Decision Trace (TR-A).)*
+*Decision OS · CONTEXT.md · Updated June 20 2026 (Session 19 — Decision Trace Phase 12 COMPLETE TR-A→TR-C: `decision_trace` + `decision_audit_log` (immutable regulator record) + `DecisionTraceBuilder` (all 16 traced), `PolicyTraceBuilder` (agency/overlay/guardrail + effective-limit evals, 16/16 populated), and `/api/accord/trace/` API (full/summary/export/audit/review — JSON regulatory export, no PDF yet). Also: title_assessment finally wired into the cron runner (WAVE_CONFIG + LENDING_PERSONA_CLASSES + VIEW_MAPPINGS) — IN-D resolved, SC16 now generates IRS/HOA title conditions, title is a leaf so 15/16 holds; persona count 13→15 stale tests fixed. Prior Session 18 shipped 5 resolver subsystems (Title TL-E / Credit CR-A..E / Asset AV-A..E / Fraud FR-A..E / Collateral CO-A..C / Conditions CN-A..C). Score 15/16 (SC12 rental income the miss). Open items: title escalates on 15/16 (title_clear unseeded); collateral/fraud wired-not-gating; two conditions tables coexist; trace export JSON-only. Next: Phase 13 Explanation Engine (EX2-A).)*
