@@ -288,6 +288,27 @@ async def get_audit_log(
         }
 
 
+@router.get("/{application_id}/explain")
+async def explain_decision(
+    application_id: str,
+    audience: str = "loan_officer",
+    tenant_id: str = Depends(get_tenant_id),
+) -> dict:
+    """AI explanation of the decision (EX2-A).
+    audience: loan_officer | underwriter | regulator. Falls back to a
+    deterministic template when no Anthropic API key is configured."""
+    _require_db()
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        from core.explanation.explanation_engine import ExplanationEngine
+
+        engine = ExplanationEngine(conn)
+        result = await engine.explain(application_id, tenant_id, audience)
+        if result.get("error"):
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+
+
 @router.post("/{application_id}/review")
 async def attach_review(
     application_id: str,
