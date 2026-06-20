@@ -55,13 +55,15 @@ class IncomeFactResolver:
         self.conn = conn
         self.store = EvidenceStore(conn)
 
-    async def resolve(self, application_id: str, tenant_id: str) -> Optional[FactNode]:
+    async def resolve(self, application_id: str, tenant_id: str) -> dict:
         """Read income docs, build evidence + edges, resolve qualifying_income.
-        Idempotent: clears this application's existing income evidence first so
-        re-runs don't accumulate duplicate nodes (the fact is superseded)."""
+        Returns {"qualifying_income": FactNode} (dict, for parity with the
+        asset/credit/employment resolvers). Idempotent: clears this
+        application's existing income evidence first so re-runs don't
+        accumulate duplicate nodes (the fact is superseded)."""
         docs = await self._load_income_docs(application_id, tenant_id)
         if not docs:
-            return None
+            return {}
 
         # Idempotency: drop prior income evidence (edges cascade) before rebuild.
         await self.conn.execute(
@@ -73,9 +75,11 @@ class IncomeFactResolver:
         nodes = await self._build_evidence_nodes(application_id, tenant_id, docs)
         edges, conflicts = await self._cross_validate(application_id, tenant_id, nodes)
         fact = self._resolve_qualifying_income(application_id, tenant_id, nodes, edges, conflicts)
+        facts: dict = {}
         if fact:
             await self.store.save_fact_node(fact)
-        return fact
+            facts["qualifying_income"] = fact
+        return facts
 
     async def _load_income_docs(self, application_id, tenant_id) -> list:
         rows = await self.conn.fetch(
