@@ -256,6 +256,76 @@ class ThresholdResolver:
             return 580
         return AGENCY_FLOORS["credit.min_score"]
 
+    # Parameters where a tenant overlay may only move the value DOWN (the
+    # platform_ceiling is the hard maximum). credit_floor is the mirror case —
+    # a tenant may only move it UP, never below the agency_floor.
+    _CEILING_PARAMS = frozenset({
+        "dti_back_max", "ltv_max_purchase", "ltv_max_cashout", "ltv_max_refi",
+    })
+
+    async def validate_overlay_within_bounds(
+        self,
+        product_type: str,
+        parameter: str,
+        proposed_value: float,
+    ) -> dict:
+        """Validate that a proposed tenant overlay stays within the platform
+        guardrails for ``(product_type, parameter)``. Called before a tenant
+        overlay rule is saved.
+
+        Returns a dict with:
+          valid:            bool
+          reason:           str (only when invalid, or when no guardrail exists)
+          agency_floor:     float | None
+          platform_ceiling: float | None
+
+        Enforcement is one-sided per parameter:
+          credit_floor      — tenant may only go HIGHER than agency_floor.
+          dti/ltv ceilings  — tenant may only go LOWER than platform_ceiling.
+        """
+        row = await self._conn.fetchrow(
+            "SELECT agency_floor, platform_ceiling, description "
+            "FROM platform_guardrails WHERE product_type = $1 AND parameter = $2",
+            product_type, parameter,
+        )
+        if not row:
+            return {"valid": True, "reason": "no guardrail defined",
+                    "agency_floor": None, "platform_ceiling": None}
+
+        floor = _num(row["agency_floor"]) if row["agency_floor"] is not None else None
+        ceiling = _num(row["platform_ceiling"]) if row["platform_ceiling"] is not None else None
+        proposed = _num(proposed_value)
+
+        # credit_floor: a tenant overlay may require a higher score but never
+        # drop below the agency floor.
+        if parameter == "credit_floor":
+            if floor is not None and proposed is not None and proposed < floor:
+                return {
+                    "valid": False,
+                    "reason": (
+                        f"Below agency floor {floor}. Cannot set {parameter} "
+                        f"below {floor} for {product_type}."
+                    ),
+                    "agency_floor": floor,
+                    "platform_ceiling": ceiling,
+                }
+
+        # dti / ltv maxima: a tenant overlay may tighten (go lower) but never
+        # exceed the platform ceiling.
+        elif parameter in self._CEILING_PARAMS:
+            if ceiling is not None and proposed is not None and proposed > ceiling:
+                return {
+                    "valid": False,
+                    "reason": (
+                        f"Exceeds platform ceiling {ceiling}. Cannot set "
+                        f"{parameter} above {ceiling} for {product_type}."
+                    ),
+                    "agency_floor": floor,
+                    "platform_ceiling": ceiling,
+                }
+
+        return {"valid": True, "agency_floor": floor, "platform_ceiling": ceiling}
+
     async def _get_cached_rules(self, tenant_id: str) -> dict:
         """tenant_rules.rules JSONB for ``tenant_id``, cached per-tenant."""
         if tenant_id in self._rules_cache:
