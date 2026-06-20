@@ -414,11 +414,11 @@ class ListPersonaWorkbenchesTests(unittest.TestCase):
     def setUpClass(cls):
         cls.platform = _PlatformFixture.setup()
 
-    def test_lists_all_13_personas(self):
+    def test_lists_all_15_personas(self):
         rows = list_persona_workbenches(self.platform)
-        self.assertEqual(len(rows), 13)
+        self.assertEqual(len(rows), 15)
         ids = {r["decision_id"] for r in rows}
-        self.assertEqual(len(ids), 13)
+        self.assertEqual(len(ids), 15)
 
 
 class ListWorkbenchesTests(unittest.TestCase):

@@ -422,9 +422,10 @@ class PersonaOfflineHappyPathTests(unittest.IsolatedAsyncioTestCase):
 
 class PersonaRegistryTests(unittest.TestCase):
 
-    def test_registry_has_13_personas(self):
-        # 12 lending decisions + employment_reconciliation (Session 11).
-        self.assertEqual(len(LENDING_PERSONA_CLASSES), 13)
+    def test_registry_has_15_personas(self):
+        # 12 lending decisions + employment_reconciliation (Session 11)
+        # + asset_verification (Session 16) + title_assessment (Session 18).
+        self.assertEqual(len(LENDING_PERSONA_CLASSES), 15)
 
     def test_each_persona_class_has_decision_id_match(self):
         for decision_id, cls in LENDING_PERSONA_CLASSES.items():
