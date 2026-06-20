@@ -41,6 +41,14 @@ class TitleAssessmentAgent(LendingPersona):
 
     DEFAULT_AGENT_ID = "title_assessment_agent_v1"
 
+    # LienResolver (TL-C) emits a couple of condition codes that predate the
+    # conditions_library (TL-E) naming. Map them to the library's canonical
+    # codes so every resolved lien resolves to a seeded row.
+    _CODE_ALIASES = {
+        "TITLE_EASEMENT": "TITLE_EASEMENT_REVIEW",
+        "TITLE_OTHER_LIEN": "TITLE_OTHER_ENCUMBRANCE",
+    }
+
     def __init__(self, *, agent_id: str = DEFAULT_AGENT_ID,
                  use_anthropic: bool = False, **kw):
         super().__init__(
@@ -131,6 +139,49 @@ class TitleAssessmentAgent(LendingPersona):
             ),
             summary=reason,
         )
+
+    async def _get_conditions(self, conn, resolutions: list) -> list:
+        """Fetch condition templates from conditions_library (TL-E) and fill
+        their variables from the resolved lien data.
+
+        ``resolutions`` are LienResolution objects from
+        ``LienResolver.resolve_all(...)["resolutions"]``. This is the
+        DB-backed enrichment path: the offline reasoning hot path stays
+        conn-less and uses the resolver's inline condition_text, while the
+        title context view / EDMS condition generation call this to attach
+        agency citations, SLAs, assignees, and EDMS document types.
+        """
+        filled_conditions = []
+        for res in resolutions:
+            code = self._CODE_ALIASES.get(res.condition_code, res.condition_code)
+            row = await conn.fetchrow(
+                """SELECT template_text, prior_to, sla_hours, assignee,
+                          edms_document_type, agency_citation
+                   FROM conditions_library
+                   WHERE code = $1 AND is_active = true""",
+                code,
+            )
+            if not row:
+                continue
+            text = (
+                row["template_text"]
+                .replace(
+                    "${amount}",
+                    f"${res.lien_amount:,.0f}" if res.lien_amount else "",
+                )
+                .replace("${holder}", res.lien_holder or "unknown")
+            )
+            filled_conditions.append({
+                "code":      code,
+                "text":      text,
+                "prior_to":  row["prior_to"],
+                "sla_hours": row["sla_hours"],
+                "assignee":  row["assignee"],
+                "doc_type":  row["edms_document_type"],
+                "citation":  row["agency_citation"],
+                "blocks":    res.blocks_closing,
+            })
+        return filled_conditions
 
 
 __all__ = ["TitleAssessmentAgent"]
