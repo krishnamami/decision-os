@@ -77,6 +77,11 @@ class EdmsContextStore:
                 "credit_utilization": "credit_utilization",
                 "monthly_obligations": "monthly_obligations",
                 "governing_credit_score": "governing_credit_score",
+                # CR-E: tradeline + findings rollups for the resolver path.
+                "tradelines": "tradelines",
+                "credit_findings": "credit_findings",
+                "derogatory_tradeline_count": "derogatory_tradeline_count",
+                "disputed_derogatory_count": "disputed_derogatory_count",
             },
             "id_field": "applicant_id",
         },

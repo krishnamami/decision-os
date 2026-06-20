@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 from core.context_store import ContextBundle
@@ -8,6 +9,20 @@ from core.policy_engine import PolicyDecision
 from core.trace import SignalDirection
 
 from .base import LendingPersona, OfflineReasoning, latest_object, make_signal
+
+
+def _as_list(val):
+    """Credit context arrays (tradelines / credit_findings) arrive as a JSON
+    list or — depending on the view codec — a JSON string. Normalise to a
+    Python list."""
+    if val is None:
+        return []
+    if isinstance(val, str):
+        try:
+            val = json.loads(val)
+        except (ValueError, TypeError):
+            return []
+    return list(val) if isinstance(val, (list, tuple)) else []
 
 
 _BAND_THRESHOLDS = [
@@ -98,6 +113,54 @@ class CreditRiskAgent(LendingPersona):
         else:
             outcome = DecisionOutcome.ESCALATE
 
+        # ── CR-E: tradeline + findings resolvers ─────────────────────────
+        # Only engages when the CR-A entity tables hold rows for this loan;
+        # otherwise the view returns empty arrays and outcome is unchanged.
+        # These branches can only escalate the outcome to BLOCK, never relax
+        # an existing one.
+        tradelines = _as_list(credit.get("tradelines"))
+        findings = _as_list(credit.get("credit_findings"))
+        conditions: list[dict] = []
+        tradeline_obligations = None
+        extra_reason = ""
+
+        if tradelines:
+            from core.credit.tradeline_analyzer import TradelineAnalyzer
+
+            tl_result = TradelineAnalyzer().analyze_all(tradelines)
+            conditions.extend(tl_result.get("all_conditions", []))
+            if tl_result["total_obligations"] > 0:
+                tradeline_obligations = tl_result["total_obligations"]
+            if tl_result.get("has_disputed_derogatory"):
+                outcome = DecisionOutcome.BLOCK
+                extra_reason += (
+                    " Disputed derogatory account(s) ("
+                    f"{', '.join(tl_result['disputed_accounts'])}) must be "
+                    "resolved before closing."
+                )
+
+        if findings:
+            from core.credit.findings_resolver import CreditFindingsResolver
+
+            fnd_result = CreditFindingsResolver().resolve_all(findings)
+            conditions.extend(fnd_result.get("conditions", []))
+            if fnd_result["overall_status"] == "block":
+                outcome = DecisionOutcome.BLOCK
+                extra_reason += (
+                    " Credit finding blocks: "
+                    f"{fnd_result['blocking_count']} finding(s)."
+                )
+
+        # Independent guard: disputed-derogatory count straight from the view
+        # (covers loans whose tradeline rows weren't expanded above).
+        disputed_count = int(credit.get("disputed_derogatory_count") or 0)
+        if disputed_count > 0 and outcome is not DecisionOutcome.BLOCK:
+            outcome = DecisionOutcome.BLOCK
+            extra_reason += (
+                f" {disputed_count} disputed derogatory account(s) must be "
+                "resolved before closing."
+            )
+
         confidence = 0.95 if score and not thin_file else 0.5
 
         return OfflineReasoning(
@@ -108,6 +171,13 @@ class CreditRiskAgent(LendingPersona):
                 "active_bankruptcy": active_bk,
                 "foreclosure_last_36_months": foreclosure_36,
                 "no_derogatory_last_24_months": no_derog_24,
+                # CR-E additions
+                "conditions": conditions,
+                "tradeline_findings": bool(tradelines),
+                "tradeline_count": len(tradelines),
+                "tradeline_obligations": tradeline_obligations,
+                "credit_findings_count": len(findings),
+                "disputed_derogatory_count": disputed_count,
             },
             proposed_outcome=outcome,
             confidence=confidence,
@@ -128,6 +198,7 @@ class CreditRiskAgent(LendingPersona):
             ),
             summary=(
                 f"Credit score {score} ({band!r}) — proposed {outcome.value}."
+                + extra_reason
             ),
         )
 
