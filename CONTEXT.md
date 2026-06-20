@@ -456,6 +456,198 @@ Connector layering — push vs pull (STEP 4 design)
 
 ## Session history
 
+### Session 18 — June 20 2026
+
+**Theme:** Resolver subsystems end-to-end — finish **Title conditions (TL-E)**,
+build the full **Credit Resolver (Phase 3, CR-A → CR-E)**, **Asset Engine
+(Phase 4, AV-A → AV-E)**, **Fraud Engine (Phase 5, FR-A → FR-E)**, **Collateral
+Engine (Phase 6, CO-A → CO-C)**, and **Conditions Engine (Phase 11, CN-A →
+CN-C)**. All work against the live EDMS RDS; commits to `decision-os` `main`.
+Score held at **15/16** throughout (SC12 the one known miss — rental income /
+Schedule E not built yet). `conditions_library` grew **15 → 44 rows**; new
+`loan_condition_instances` now tracks live conditions (5 across SC07/08/09/15
+after the funds-to-close data cleanup).
+
+**Commits — decision-os (pushed to `main`):**
+  - `1c8bb47` — feat(conditions): `conditions_library` table + 15 title conditions (TL-E).
+  - `ac5ce8f` — feat(credit): `credit_tradelines` + `credit_findings` entity model (CR-A).
+  - `8122fda` — feat(credit): `CreditFindingsResolver` with agency waiting periods (CR-C).
+  - `c561945` — feat(credit): `TradelineAnalyzer` + 12 credit conditions (CR-D).
+  - `51ef023` — feat(credit): wire resolvers into `credit_assessment` persona (CR-E).
+  - `9cade8c` — feat(assets): `asset_accounts` + `asset_deposits` entity model (AV-A).
+  - `0fe706c` — feat(assets): `AssetResolver` + 8 asset conditions (AV-B).
+  - `07c9f91` — feat(assets): `DepositAnalyzer` large-deposit analyzer (AV-C).
+  - `851997c` — feat(assets): wire resolvers into `asset_verification` persona (AV-D).
+  - `cff8b66` — feat(assets): funds-to-close wired + gift chain (3 conds) complete (AV-E).
+  - `0ea055f` — feat(fraud): `fraud_signals` entity model (FR-A).
+  - `686616c` — feat(fraud): `IncomeMismatchDetector` + 6 fraud conditions (FR-B).
+  - `bc80d92` — feat(fraud): `EmploymentFraudDetector` (employment + occupancy) (FR-C).
+  - `84ed793` — feat(fraud): `UndisclosedDebtDetector` (FR-D).
+  - `d887ce7` — feat(fraud): wire detectors into `fraud_screening` persona (FR-E).
+  - `f67c2f7` — feat(collateral): `PropertyEligibilityResolver` + table (CO-A).
+  - `47d197d` — feat(collateral): `AppraisalAnalyzer` gap analysis (CO-B).
+  - `5e4617b` — feat(collateral): wire resolvers into `product_eligibility` persona (CO-C).
+  - `dd970d3` — feat(conditions): `loan_condition_instances` schema + `ConditionEngine` (CN-A).
+  - `349e121` — feat(conditions): `ConditionCollector` from decision outputs (CN-B).
+  - `fce94bd` — feat(conditions): conditions views + API endpoints (CN-C).
+
+(CR-B — credit report tradeline extractor — lives in **edms-simulator**, not here.)
+(After CN-C: a data-cleanup pass waived the SC07/SC15 false-positive
+`ASSET_INSUFFICIENT` conditions and set `purchase_price = 98% of appraised` so
+funds-to-close stops over-counting the down payment — DB-only, no commit.)
+
+**1. Title conditions — TL-E (Phase 2 Title & Liens COMPLETE).**
+   - New `conditions_library` (code unique, category CHECK incl. title/credit/
+     asset/fraud, `template_text`, `agency_citation`, `prior_to`, `sla_hours`,
+     `assignee`, `edms_document_type`, `auto_satisfy`). 15 title conditions seeded.
+   - `TitleAssessmentAgent._get_conditions()` fetches templates from the library
+     and fills `${amount}`/`${holder}`. The `LienResolver` emits two legacy codes
+     (`TITLE_EASEMENT`, `TITLE_OTHER_LIEN`); added a `_CODE_ALIASES` map →
+     `TITLE_EASEMENT_REVIEW` / `TITLE_OTHER_ENCUMBRANCE` so every resolver code
+     resolves to a seeded row.
+   - **Deferred (→ EV-F):** `_get_conditions` is async/conn-bound but
+     `_compute_offline` is sync and conn-less, so it's an enrichment helper for
+     the context view / EDMS — **not yet on the persona hot path**.
+
+**2. Credit Resolver — Phase 3 COMPLETE (CR-A → CR-E).**
+   - **CR-A** `credit_tradelines` (account/balance/payment-status/flags/student-loan)
+     + `credit_findings` (16 finding types, severity, agency wait years, blocks/LOE).
+     RLS + partial derogatory indexes. Seeded SC08 (2 collections + 1 finding).
+   - **CR-C** `CreditFindingsResolver` + `WAITING_PERIODS` for all derogatory types
+     (BK7 4/2/2yr, foreclosure 7/3/2yr, collections 0yr+LOE, mortgage_late_12mo =
+     Fannie HARD BLOCK, etc.). Added a leap-day-safe `_add_years()` (the spec's
+     `date(y+n,m,d)` crashes on Feb-29 refs). SC08 → conditions (Fannie eligible).
+   - **CR-D** `TradelineAnalyzer`: authorized-user flag, disputed-derogatory → block
+     (B3-5.3-09), student-loan 1% deferred rule, ≤10mo excludable, medical-collection
+     excluded. 12 credit conditions seeded. SC08 obligations $0 (medical excluded).
+   - **CR-E** extended `vw_credit_assessment_context` (tradelines[]/credit_findings[]/
+     derogatory + disputed counts — **reproduced all 19 existing cols verbatim then
+     appended**, since `CREATE OR REPLACE VIEW` can't drop/reorder; kept the live
+     top-level `co_borrowers` governing-score expr, not the spec's wrong
+     `borrower->'co_borrowers'`). Mapped 4 cols into `CreditProfile` (edms_store).
+     Persona runs both resolvers; branches **only escalate to BLOCK, never relax**.
+     SC08 still blocks via existing path (governing 578 < 580 FHA floor).
+
+**3. Asset Engine — Phase 4 COMPLETE (AV-A → AV-E).**
+   - **AV-A** `asset_accounts` (17 account types, qualifying_factor, seasoning,
+     gift/business/crypto flags, large-deposit fields) + `asset_deposits` (FK,
+     per-deposit sourcing). RLS. Seeded SC15 ($42K checking + $47K unsourced
+     deposit) and SC07 (clean).
+   - **AV-B** `AssetResolver`: QUALIFYING_FACTORS (liquid 1.0 / stocks 0.70 /
+     retirement 0.60 / crypto 0.0 / business by pct), three questions
+     (sufficient / seasoned / sourced). 8 asset conditions. **Found the prompt's
+     SC15/SC07 fixture was insufficient** ($42K single acct < $63K funds-to-close)
+     → both blocked; resolver itself correct (escalate/allow once funded).
+   - **AV-C** `DepositAnalyzer`: per-deposit, 50%-of-qualifying threshold, skips
+     payroll/sourced, gift track, severity by amount. SC15 → [MAJOR] $47K. (Transfer
+     double-count detection is flagged-only; no active matching loop yet.)
+   - **AV-D** **fixed SC15 seed** (added Chase Savings $30K → $72K total) so it
+     escalates, not blocks. Extended `vw_asset_verification_context`
+     (asset_accounts[]/unsourced_deposits[]/totals; existing 13 cols preserved +
+     appended); mapped into `AssetProfile`; persona runs AssetResolver +
+     DepositAnalyzer (escalate/block only). SC15 → escalate. 15/16.
+   - **AV-E** appended funds-to-close inputs to the view (`loan_amount`,
+     `piti_monthly`, `qualifying_monthly`, `down_payment_computed` =
+     `GREATEST(purchase_price - loan_amount, 0)` off the **top-level
+     `es.purchase_price` column** — the spec's `loan_terms->'urla'->>'purchase_price'`
+     key doesn't exist). Persona now passes real loan data → insufficiency path is
+     live. Gift chain: 3 conds (`ASSET_GIFT_DONOR_BANK_STMT`, `ASSET_GIFT_NO_REPAYMENT`,
+     `ASSET_BRIDGE_LOAN_EXCLUDED`). SC15 funds_needed $18K < $72K → escalate. 15/16.
+   - **purchase_price gap (later resolved in CO-C):** AV-E shipped with
+     `purchase_price` NULL on the Meridian loans, so `down_payment_computed = 0`.
+     CO-C seeded `purchase_price` (= appraised, then the cleanup set it to 98% of
+     appraised), which lit the funds-to-close path up. `conditions_library` **38 rows**
+     here (15 title + 12 credit + 11 asset); reaches **44** after FR-B's 6 fraud rows.
+
+**4. Fraud Engine — Phase 5 COMPLETE (FR-A → FR-E).**
+   - **FR-A** `fraud_signals` (15 signal types, severity, variance, `source_docs[]`,
+     auto_block, resolution fields). RLS read/write + UPDATE restricted to
+     edms_admin/governance_admin (only governance resolves signals). Indexes incl.
+     partial high/critical + auto_block. Seeded SC09 `income_inflation` (URLA $145.6K
+     vs W2 $112K, +30%, high, review).
+   - **FR-B** `IncomeMismatchDetector`: reads income + cross-validation evidence_nodes,
+     compares W2 vs URLA, tiered thresholds (>10% mismatch/medium, >25% inflation/high,
+     >50% inflation/critical→auto_block). Idempotent (dedup on existing income signals;
+     SC09 already seeded → no dup). 6 fraud conditions → `conditions_library` **44 rows**.
+   - **FR-C** `EmploymentFraudDetector`: (1) employer-name mismatch across W2/paystub/
+     URLA (stop-word-normalized key-word intersection) → `employer_inconsistency`;
+     (2) occupancy risk (vacation market HI/FL/NV/AZ/CO as primary, or rental income on
+     primary purchase) → `occupancy_risk`. Both idempotent. **0 new signals on current
+     Meridian data** — employers consistent and URLA extraction lacks occupancy/rental
+     fields (TX etc.), so the occupancy detector is wired but inert until those land.
+     Only 2 of the 4 spec'd occupancy signals implemented (address/distance need
+     unavailable data).
+   - **FR-D** `UndisclosedDebtDetector`: credit obligations vs URLA-stated. Two
+     data-driven fixes vs spec: reads `credit.monthly_obligations` (spec's
+     `total_monthly_obligations` is NULL in every row → dead code), and **abstains
+     when no disclosed baseline exists** (no Meridian URLA carries a liabilities
+     field; treating absent as $0 would false-positive on all 16). 0 signals on
+     current data — correct (no baseline), fires once URLA liability extraction lands.
+   - **FR-E** wired all detectors into `fraud_screening`: extended
+     `vw_fraud_screening_context` (fraud_signal_records[]/high+auto_block counts),
+     persona reads + conditions per signal. **Key:** persona escalate alone was
+     overridden because the **policy engine has the last word** — added
+     `fraud_signal_count == 0` to the `automate_if` boundary in decisions.yaml so a
+     loan with an unresolved signal can't auto-clear and falls to the persona's
+     proposed outcome. **SC09 fraud_screening: allow → escalate.** 15/16.
+   - Detectors are async + DB-bound and run as a batch upstream (they write
+     `fraud_signals`); the sync persona consumes the rollup via the view.
+
+**5. Collateral Engine — Phase 6 COMPLETE (CO-A → CO-C).**
+   - **CO-A** `property_eligibility` table + `PropertyEligibilityResolver`:
+     ineligible types (vacant_land/commercial), special (condo warrantability,
+     multi-unit rents, manufactured, mixed_use, coop), investment→VA ineligible,
+     flood zones A/AE/V/VE→insurance. All 16 → SFR primary eligible. NB: there is
+     **no `property_type`/`property_state` column** (urla JSON only; both NULL), so
+     scenarios fell to defaults until CO-C seeded them.
+   - **CO-B** `AppraisalAnalyzer`: Fannie B4-1.1-01 LTV on lesser-of value/price;
+     at_value / above_purchase / minor_gap(>3%) / major_gap(>10% → block);
+     borrower_must_cover; LTV flags >95/>97. Proven via synthetic tests ($480K vs
+     $535K → $55K major gap).
+   - **CO-C** seeded `purchase_price` (= appraised) + `property_type=sfr` (into
+     `loan_terms.urla` JSONB — no column exists) for all 16; extended
+     `vw_product_eligibility_context` (collateral inputs + LEFT JOIN
+     property_eligibility); persona runs both resolvers (escalate/block only).
+     All SFR/at_value → no collateral conditions fire on clean loans. 15/16
+     (SC13 block / SC14 escalate undisturbed). **Collateral is surfaced in the
+     payload but not yet a boundary gate** (no decisions.yaml clause reads it).
+
+**6. Conditions Engine — Phase 11 COMPLETE (CN-A → CN-C).**
+   - **CN-A** **name clash resolved by user choice:** `loan_conditions` is already
+     the underwriter workbench's table (6 live summit rows + UI/API consumers), so
+     the resolver-driven engine uses **`loan_condition_instances`** (workbench table
+     untouched). Schema: status lifecycle, prior_to, sla_hours+due_date, assignee,
+     blocks_closing, UNIQUE(app,tenant,code), + `condition_documents` (FK cascade).
+     `ConditionEngine`: create/bulk-create (idempotent), get_open, satisfy, summary.
+   - **CN-B** `ConditionCollector`: reads each decision's `context_snapshot`
+     (decision_outputs has **no `persona_outputs` column** — one row per decision_id),
+     extracts conditions per persona, writes to `loan_condition_instances`. Real
+     pipeline output: SC07 ASSET_INSUFFICIENT, SC08 CREDIT_LOE_COLLECTION, SC09
+     FRAUD_INCOME_MISMATCH, SC15 ASSET_LARGE_DEPOSIT+INSUFFICIENT.
+   - **CN-C** `vw_loan_condition_summary` (days_until_due/is_overdue/docs count) +
+     `vw_loan_conditions_aggregate`; API under **`/api/accord/conditions`** (JWT
+     tenant, `_require_db`/`_get_pool` — matches Accord convention, not the spec's
+     `app.state.pool`): GET list, GET summary, PATCH satisfy, PATCH waive (both
+     PATCH tenant-guarded — closed a cross-tenant write hole in the spec). Router
+     registered in `api/accord/__init__.py`.
+   - **Data cleanup (post-CN-C, DB-only):** waived SC07/SC15 false-positive
+     `ASSET_INSUFFICIENT` (from CO-C's `purchase_price = appraised` overstating
+     funds-to-close) and set `purchase_price = 98% of appraised`. Verified durable —
+     re-run asset_verification reports `funds_sufficient=True`, no longer generates
+     ASSET_INSUFFICIENT. SC07 clean (0 open), SC15 escalate on ASSET_LARGE_DEPOSIT
+     only. 15/16.
+
+**Cross-cutting open items (carried forward):**
+   - **`title_assessment` is NOT in the cron WAVES** — TL-A..TL-E built but the
+     persona has **0 decision_outputs rows**, so title conditions never reach the
+     pipeline/collector. Needs a WAVES-config add before title conditions flow.
+   - Collateral (CO-A/B/C) and the FR detectors surface signals/conditions but
+     several are **wired-not-gating** or **inert until data lands** (occupancy
+     fields, undisclosed-debt baseline). Capabilities exist; they don't yet change
+     outcomes on current Meridian data beyond SC09 (fraud) and SC15 (assets).
+   - Two conditions tables now coexist (workbench `loan_conditions` vs resolver
+     `loan_condition_instances`) — convergence is a future refactor.
+
 ### Session 17 — June 19 2026
 
 **Theme:** Close out the three diagnosed scenario failures from Session 16
@@ -3621,4 +3813,4 @@ How to run smoke tests:
 
 ---
 
-*Decision OS · CONTEXT.md · Updated June 19 2026 (Session 17 — SC14/SC16 fixed → meridian 15/16 (DTI→42%, systemic fraud/identity-doc fix, closing persona reads mapped fields); P0 pricing/catalogue foundation (platform_guardrails + overlay validation, overlay_rules seeded, 57-row LLPA grid + pipeline_math, catalogue_staging + FHFA/LLPA refresh scripts); Evidence Graph Phase 1 COMPLETE EV-A→EV-E (evidence/fact nodes + edges, 4 fact resolvers ×16 scenarios, cross-doc validation caught SC09 +30% income inflation, evidence_trace on decision_outputs, parallel context enricher + SC08 confidence backfill); Title subsystem started TL-A (encumbrances/findings/ownership) + TL-C (lien resolver). Personas do not yet consume the evidence layer — that migration + TL-B/TL-D are next.)*
+*Decision OS · CONTEXT.md · Updated June 20 2026 (Session 18 — five resolver subsystems shipped end-to-end: Title conditions TL-E (Phase 2 COMPLETE) + `conditions_library` 44 rows; Credit Resolver Phase 3 COMPLETE CR-A→CR-E (tradelines/findings, agency waiting periods, 1%-rule/medical/disputed, wired into credit_assessment); Asset Engine Phase 4 COMPLETE AV-A→AV-E (accounts/deposits, qualifying factors + 3 questions, deposit analyzer, funds-to-close + gift chain — SC15 escalate); Fraud Engine Phase 5 COMPLETE FR-A→FR-E (`fraud_signals`, income/employment/occupancy/undisclosed detectors, wired into fraud_screening via automate_if guard — SC09 allow→escalate); Collateral Engine Phase 6 COMPLETE CO-A→CO-C (property eligibility + appraisal gap, wired into product_eligibility, purchase_price/property_type seeded); Conditions Engine Phase 11 COMPLETE CN-A→CN-C (new `loan_condition_instances` + `ConditionEngine`/`ConditionCollector` + views + `/api/accord/conditions` endpoints). Score held 15/16 throughout (SC12 rental income the one miss). Carried open items: title_assessment not in cron WAVES (TL-A..TL-E built, 0 decision rows); collateral/fraud capabilities wired-not-gating on current data; two conditions tables coexist. Next: Phase 12 Decision Trace (TR-A).)*
