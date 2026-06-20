@@ -1,0 +1,107 @@
+{# EX2-B — AI explanation panel (loan officer / underwriter / regulator).
+   Fetches the workbench-local endpoint /workbench/api/explain/{app}?audience=…
+   (session-scoped, same-origin) which calls the EX2-A ExplanationEngine. #}
+<div class="bg-white border border-slate-200 rounded-lg p-5" id="explanation-panel">
+  <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
+    AI Explanation
+  </div>
+
+  <div class="border-b border-slate-200 mb-3">
+    <nav class="-mb-px flex gap-6 text-sm font-medium">
+      <button type="button" onclick="showExplanation('loan_officer')" id="tab-loan_officer"
+              class="explanation-tab pb-2 border-b-2 border-emerald-500 text-emerald-600">
+        Loan Officer Summary
+      </button>
+      <button type="button" onclick="showExplanation('underwriter')" id="tab-underwriter"
+              class="explanation-tab pb-2 text-slate-500 hover:text-slate-700">
+        Underwriter Analysis
+      </button>
+      <button type="button" onclick="showExplanation('regulator')" id="tab-regulator"
+              class="explanation-tab pb-2 text-slate-500 hover:text-slate-700">
+        Audit Narrative
+      </button>
+    </nav>
+  </div>
+
+  <div id="explanation-loading" class="hidden text-center py-4 text-slate-500 text-sm">
+    <svg class="animate-spin h-5 w-5 mx-auto mb-2 text-emerald-500" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+    </svg>
+    Generating explanation…
+  </div>
+  <div id="explanation-text" class="text-sm text-slate-700 leading-relaxed whitespace-pre-line"></div>
+  <div id="explanation-meta" class="mt-3 text-xs text-slate-400"></div>
+
+  {% if conditions %}
+  <div class="mt-4">
+    <h4 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
+      Open Conditions ({{ conditions|length }})
+    </h4>
+    <div class="space-y-2">
+      {% for c in conditions %}
+      <div class="flex items-start gap-2 p-3 rounded-lg text-xs
+                  {% if c.blocks_closing %}bg-red-50 border border-red-200
+                  {% else %}bg-amber-50 border border-amber-200{% endif %}">
+        <span class="mono font-semibold min-w-fit">{{ c.condition_code }}</span>
+        <span class="text-slate-600">{{ (c.condition_text or '')[:120] }}{% if (c.condition_text or '')|length > 120 %}…{% endif %}</span>
+        <span class="ml-auto min-w-fit
+                     {% if c.blocks_closing %}text-red-600 font-semibold{% else %}text-amber-600{% endif %}">
+          {{ 'BLOCKS' if c.blocks_closing else c.prior_to }}
+        </span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+(function () {
+  const appId = {{ application_id | tojson }};
+  const cache = {};
+
+  window.showExplanation = async function (audience) {
+    document.querySelectorAll('.explanation-tab').forEach(function (t) {
+      t.classList.remove('border-b-2', 'border-emerald-500', 'text-emerald-600');
+      t.classList.add('text-slate-500');
+    });
+    const active = document.getElementById('tab-' + audience);
+    if (active) {
+      active.classList.add('border-b-2', 'border-emerald-500', 'text-emerald-600');
+      active.classList.remove('text-slate-500');
+    }
+
+    const textEl = document.getElementById('explanation-text');
+    const metaEl = document.getElementById('explanation-meta');
+    const loadEl = document.getElementById('explanation-loading');
+
+    if (cache[audience]) { render(cache[audience]); return; }
+
+    loadEl.classList.remove('hidden');
+    textEl.textContent = '';
+    metaEl.textContent = '';
+    try {
+      const resp = await fetch('/workbench/api/explain/' + encodeURIComponent(appId)
+        + '?audience=' + encodeURIComponent(audience));
+      const data = await resp.json();
+      cache[audience] = data;
+      render(data);
+    } catch (e) {
+      loadEl.classList.add('hidden');
+      textEl.textContent = 'Unable to generate explanation.';
+    }
+  };
+
+  function render(data) {
+    document.getElementById('explanation-loading').classList.add('hidden');
+    document.getElementById('explanation-text').textContent = data.narrative || data.error || '';
+    const ts = (data.generated_at || '').slice(0, 19);
+    const via = data.model ? ' · ' + data.model : '';
+    document.getElementById('explanation-meta').textContent =
+      data.audience ? ('Generated for: ' + data.audience + (ts ? ' · ' + ts : '') + via) : '';
+  }
+
+  document.addEventListener('DOMContentLoaded', function () { showExplanation('loan_officer'); });
+})();
+</script>

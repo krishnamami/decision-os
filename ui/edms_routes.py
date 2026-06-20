@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Form, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 from ui.explanations import (
@@ -2042,6 +2042,32 @@ async def _persona_kpi_window(
 # ─────────────────────────────────────────────────────────────────────
 
 
+@router.get("/workbench/api/explain/{application_id}")
+async def workbench_explain(
+    application_id: str, audience: str = "loan_officer"
+):
+    """EX2-B — AI explanation JSON for the workbench detail page.
+    Same-origin endpoint (session-scoped workbench, no JWT). Resolves the
+    tenant from entity_states and calls the explanation engine; the path is
+    /workbench/api/explain/... so it can't collide with /workbench/{slug}."""
+    if not DATABASE_URL:
+        return JSONResponse({"error": "not configured"}, status_code=503)
+    if audience not in ("loan_officer", "underwriter", "regulator"):
+        audience = "loan_officer"
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        tenant_id = await conn.fetchval(
+            "SELECT tenant_id FROM entity_states WHERE application_id = $1 LIMIT 1",
+            application_id,
+        ) or "meridian"
+        from core.explanation.explanation_engine import ExplanationEngine
+
+        engine = ExplanationEngine(conn)
+        result = await engine.explain(application_id, tenant_id, audience)
+    status = 404 if result.get("error") else 200
+    return JSONResponse(result, status_code=status)
+
+
 @router.get(
     "/workbench/{persona_slug}/review/{application_id}",
     response_class=HTMLResponse,
@@ -2114,6 +2140,22 @@ async def _render_review(
             """,
             application_id,
         )
+        # EX2-B: open conditions for the explanation panel (loan_condition_instances).
+        _tenant = (entity["tenant_id"] if entity and "tenant_id" in entity
+                   else None) or "meridian"
+        cond_rows = await conn.fetch(
+            """
+            SELECT condition_code, condition_text, status, prior_to,
+                   blocks_closing, assignee
+            FROM loan_condition_instances
+            WHERE application_id = $1 AND tenant_id = $2
+              AND status IN ('open','submitted','in_review')
+            ORDER BY blocks_closing DESC, condition_code
+            """,
+            application_id,
+            _tenant,
+        )
+        conditions = [dict(r) for r in cond_rows]
         upstreams = UPSTREAM.get(decision_id, [])
         upstream_rows: list[dict[str, Any]] = []
         if upstreams:
@@ -2336,6 +2378,7 @@ async def _render_review(
             "persona": persona,
             "application_id": application_id,
             "decision": decision_dict,
+            "conditions": conditions,
             "can_act": can_act,
             "revert_info": revert_info,
             "explanation": explanation,
