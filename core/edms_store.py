@@ -101,6 +101,19 @@ class EdmsContextStore:
             },
             "id_field": "applicant_id",
         },
+        "title_assessment": {
+            "view": "vw_title_assessment_context",
+            "object_type": "TitleProfile",
+            "field_map": {
+                "title_clear": "title_clear",
+                "encumbrances": "encumbrances",
+                "non_borrower_owners": "non_borrower_owners",
+                "title_findings": "title_findings",
+                "blocking_lien_count": "blocking_lien_count",
+                "total_payoff_required": "total_payoff_required",
+            },
+            "id_field": "application_id",
+        },
         "compliance_check": {
             "view": "vw_compliance_check_context",
             "object_type": "ComplianceRecord",

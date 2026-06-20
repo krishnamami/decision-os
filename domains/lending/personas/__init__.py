@@ -18,6 +18,7 @@ from .lead_scoring import LeadQualificationAgent
 from .ltv_assessment import LTVAssessmentAgent
 from .product_eligibility import ProductEligibilityAgent
 from .rate_pricing import PricingAgent
+from .title_assessment import TitleAssessmentAgent
 from .underwriting_decision import SeniorUnderwritingAgent
 
 
@@ -38,6 +39,7 @@ LENDING_PERSONA_CLASSES: dict[str, type[LendingPersona]] = {
     "approval_routing":          WorkflowRoutingAgent,
     "closing_readiness":         ClosingAgent,
     "asset_verification":        AssetVerificationAgent,
+    "title_assessment":          TitleAssessmentAgent,
 }
 
 
@@ -93,5 +95,6 @@ __all__ = [
     "PricingAgent",
     "ProductEligibilityAgent",
     "SeniorUnderwritingAgent",
+    "TitleAssessmentAgent",
     "WorkflowRoutingAgent",
 ]

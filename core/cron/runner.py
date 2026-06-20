@@ -74,6 +74,7 @@ WAVE_CONFIG: dict[str, dict[str, Any]] = {
     "compliance_check":          {"wave": 1, "upstream": []},
     "employment_reconciliation": {"wave": 1, "upstream": []},
     "asset_verification":        {"wave": 1, "upstream": []},
+    "title_assessment":          {"wave": 1, "upstream": []},
     "income_verification":       {"wave": 2, "upstream": ["employment_reconciliation"]},
     "dti_calculation":           {"wave": 2, "upstream": ["income_verification"]},
     "ltv_assessment":            {"wave": 2, "upstream": ["credit_assessment"]},
@@ -88,7 +89,7 @@ WAVE_CONFIG: dict[str, dict[str, Any]] = {
 }
 
 WAVES: tuple[tuple[str, ...], ...] = (
-    ("credit_assessment", "fraud_screening", "compliance_check", "employment_reconciliation", "asset_verification"),
+    ("credit_assessment", "fraud_screening", "compliance_check", "employment_reconciliation", "asset_verification", "title_assessment"),
     ("income_verification", "dti_calculation", "ltv_assessment"),
     ("product_eligibility", "rate_pricing"),
     ("underwriting_decision",),
@@ -105,6 +106,7 @@ DECISION_DEFAULTS: dict[str, dict[str, Any]] = {
     "compliance_check":          {"sla_seconds": 60,  "risk_level": "high",   "mode": "human_approval"},
     "employment_reconciliation": {"sla_seconds": 60,  "risk_level": "medium", "mode": "recommend"},
     "asset_verification":        {"sla_seconds": 30,  "risk_level": "medium", "mode": "recommend"},
+    "title_assessment":          {"sla_seconds": 30,  "risk_level": "medium", "mode": "recommend"},
     "income_verification":       {"sla_seconds": 60,  "risk_level": "medium", "mode": "recommend"},
     "dti_calculation":           {"sla_seconds": 10,  "risk_level": "low",    "mode": "auto_execute"},
     "ltv_assessment":            {"sla_seconds": 10,  "risk_level": "low",    "mode": "auto_execute"},
