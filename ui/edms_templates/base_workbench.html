@@ -31,6 +31,7 @@
             <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700">{{ active_loan_count }}</span>
           {% endif %}
         </a>
+        <a href="/workbench/reviews" class="{% if active_nav == 'reviews' %}text-slate-900 font-medium{% else %}text-slate-500 hover:text-slate-900{% endif %}">Reviews</a>
         <a href="/workbench/audit" class="{% if active_nav == 'audit' %}text-slate-900 font-medium{% else %}text-slate-500 hover:text-slate-900{% endif %}">Audit</a>
         <a href="/workbench/governance" class="{% if active_nav == 'governance' %}text-slate-900 font-medium{% else %}text-slate-500 hover:text-slate-900{% endif %}">Governance</a>
       </nav>

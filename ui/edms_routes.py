@@ -939,6 +939,80 @@ async def pipeline_app(request: Request, application_id: str):
     )
 
 
+# ── 8b) UW REVIEW QUEUE — escalated loans awaiting a senior underwriter ──
+
+
+@router.get("/workbench/reviews", response_class=HTMLResponse)
+async def review_queue(request: Request):
+    """PL-B — cross-persona escalation queue for the senior underwriter.
+    Loans with at least one latest decision still pending human review,
+    oldest escalation first, with fraud/blocking-condition risk indicators."""
+    if not DATABASE_URL:
+        return _not_configured(request)
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            WITH latest AS (
+                SELECT * FROM decision_outputs
+                WHERE version = (
+                    SELECT MAX(version) FROM decision_outputs d2
+                    WHERE d2.application_id = decision_outputs.application_id
+                      AND d2.decision_id = decision_outputs.decision_id
+                )
+            ),
+            pending AS (
+                SELECT application_id,
+                       MIN(decided_at) FILTER (
+                           WHERE mode IN ('human_approval','recommend')
+                             AND human_action IS NULL
+                       ) AS oldest_escalation,
+                       COUNT(*) FILTER (
+                           WHERE mode IN ('human_approval','recommend')
+                             AND human_action IS NULL
+                       ) AS pending_count,
+                       MIN(confidence) FILTER (
+                           WHERE mode IN ('human_approval','recommend')
+                             AND human_action IS NULL
+                       ) AS min_conf,
+                       BOOL_OR(outcome = 'block') AS has_block,
+                       BOOL_OR(outcome = 'escalate') AS has_escalate
+                FROM latest
+                GROUP BY application_id
+                HAVING COUNT(*) FILTER (
+                    WHERE mode IN ('human_approval','recommend')
+                      AND human_action IS NULL
+                ) > 0
+            )
+            SELECT p.application_id, p.oldest_escalation, p.pending_count,
+                   p.min_conf, p.has_block, p.has_escalate,
+                   es.loan_amount, es.ltv, es.dti_back, es.mid_credit_score,
+                   (SELECT COUNT(*) FROM fraud_signals f
+                      WHERE f.application_id = p.application_id
+                        AND f.resolved = false) AS fraud_count,
+                   (SELECT COUNT(*) FROM loan_condition_instances c
+                      WHERE c.application_id = p.application_id
+                        AND c.blocks_closing = true
+                        AND c.status IN ('open','submitted','in_review')
+                   ) AS blocking_conditions
+            FROM pending p
+            LEFT JOIN entity_states es ON es.application_id = p.application_id
+            ORDER BY p.oldest_escalation ASC NULLS LAST
+            LIMIT 100
+            """
+        )
+    return templates.TemplateResponse(
+        "review_queue.html",
+        {
+            "request": request,
+            **(await _base_ctx(None)),
+            "active_nav": "reviews",
+            "reviews": [dict(r) for r in rows],
+            "total_decisions": await _total_decisions(),
+        },
+    )
+
+
 # ── 9) AUDIT DASHBOARD ───────────────────────────────────────────────
 
 
@@ -2142,6 +2216,34 @@ async def workbench_explain(
     return JSONResponse(result, status_code=status)
 
 
+@router.post("/workbench/api/conditions/{condition_id}/satisfy")
+async def workbench_satisfy_condition(
+    condition_id: str,
+    reviewer: str = Form(""),
+    redirect: str = Form("/workbench"),
+):
+    """PL-B — UW marks a condition satisfied (writes via ConditionEngine,
+    which records a condition_documents row + flips status to approved)."""
+    if not DATABASE_URL:
+        return RedirectResponse("/workbench", status_code=303)
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        from core.conditions.condition_engine import ConditionEngine
+
+        engine = ConditionEngine(conn)
+        try:
+            await engine.satisfy_condition(
+                condition_id=condition_id,
+                document_id="UW_MANUAL",
+                reviewed_by=reviewer or "underwriter",
+                review_notes="Marked satisfied in workbench.",
+            )
+        except Exception:  # noqa: BLE001 — never 500 the workbench on a bad id
+            pass
+    dest = redirect if redirect.startswith("/workbench") else "/workbench"
+    return RedirectResponse(dest, status_code=303)
+
+
 @router.get(
     "/workbench/{persona_slug}/review/{application_id}",
     response_class=HTMLResponse,
@@ -2219,17 +2321,59 @@ async def _render_review(
                    else None) or "meridian"
         cond_rows = await conn.fetch(
             """
-            SELECT condition_code, condition_text, status, prior_to,
-                   blocks_closing, assignee
+            SELECT id, condition_code, condition_text, status, prior_to,
+                   blocks_closing, assignee, cleared_at, satisfying_doc_id,
+                   notes
             FROM loan_condition_instances
             WHERE application_id = $1 AND tenant_id = $2
-              AND status IN ('open','submitted','in_review')
-            ORDER BY blocks_closing DESC, condition_code
+            ORDER BY (status IN ('open','submitted','in_review')) DESC,
+                     blocks_closing DESC, condition_code
             """,
             application_id,
             _tenant,
         )
         conditions = [dict(r) for r in cond_rows]
+        # PL-B — evidence panel inputs: rolled-up facts, granular evidence
+        # nodes (per document), and fraud signals.
+        fact_rows = await conn.fetch(
+            """
+            SELECT fact_type, fact_value, fact_text, confidence,
+                   resolution_method, conflicts_found, resolution_notes
+            FROM fact_nodes
+            WHERE application_id = $1 AND tenant_id = $2
+              AND superseded_by IS NULL
+            """,
+            application_id, _tenant,
+        )
+        facts = {r["fact_type"]: dict(r) for r in fact_rows}
+        ev_node_rows = await conn.fetch(
+            """
+            SELECT evidence_category, field_name, raw_value, numeric_value,
+                   source_document_type, confidence
+            FROM evidence_nodes
+            WHERE application_id = $1 AND tenant_id = $2
+              AND node_type = 'document_field'
+            ORDER BY evidence_category, source_document_type, field_name
+            """,
+            application_id, _tenant,
+        )
+        evidence_by_cat: dict[str, list[dict[str, Any]]] = {}
+        for r in ev_node_rows:
+            evidence_by_cat.setdefault(
+                r["evidence_category"] or "other", []
+            ).append(dict(r))
+        fraud_rows = await conn.fetch(
+            """
+            SELECT signal_type, severity, description, detected_value,
+                   expected_value, variance_pct, auto_block, resolved
+            FROM fraud_signals
+            WHERE application_id = $1 AND tenant_id = $2
+              AND resolved = false
+            ORDER BY severity DESC
+            """,
+            application_id, _tenant,
+        )
+        fraud_signals = [dict(r) for r in fraud_rows]
         upstreams = UPSTREAM.get(decision_id, [])
         upstream_rows: list[dict[str, Any]] = []
         if upstreams:
@@ -2453,6 +2597,9 @@ async def _render_review(
             "application_id": application_id,
             "decision": decision_dict,
             "conditions": conditions,
+            "facts": facts,
+            "evidence_by_cat": evidence_by_cat,
+            "fraud_signals": fraud_signals,
             "can_act": can_act,
             "revert_info": revert_info,
             "explanation": explanation,

@@ -1,0 +1,66 @@
+{# PL-B — UW evidence panel. Expandable income/credit/asset/employment
+   sections (rolled-up fact + granular evidence_nodes + citation) and a fraud
+   signals block. Read-only; data from fact_nodes / evidence_nodes /
+   fraud_signals. #}
+<div class="bg-white border border-slate-200 rounded-lg p-5" id="evidence-panel">
+  <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Evidence</div>
+
+  {% macro section(title, cat, fact, accent) %}
+    {% set rows = evidence_by_cat.get(cat, []) %}
+    <details class="border border-slate-200 rounded-lg mb-2 group" {% if fact and fact.conflicts_found %}open{% endif %}>
+      <summary class="cursor-pointer select-none px-3 py-2 flex items-center gap-2 text-sm">
+        <i class="ti ti-chevron-right transition-transform group-open:rotate-90 text-slate-400"></i>
+        <span class="font-medium text-slate-800">{{ title }}</span>
+        {% if fact %}
+          <span class="ml-auto text-xs text-{{ accent }}-700">{{ fact.fact_text or fact.fact_value }}</span>
+          {% if fact.conflicts_found %}<span class="text-[11px] px-1.5 py-0.5 rounded bg-rose-100 text-rose-700">conflict</span>{% endif %}
+        {% endif %}
+      </summary>
+      <div class="px-4 pb-3 pt-1 text-xs space-y-1.5">
+        {% for r in rows %}
+          <div class="flex items-center gap-2">
+            <span class="text-emerald-500"><i class="ti ti-check"></i></span>
+            <span class="text-slate-600">{{ r.field_name | replace('_',' ') }}</span>
+            <span class="font-medium text-slate-900">{{ r.numeric_value | fmt_value if r.numeric_value is not none else (r.raw_value or '') }}</span>
+            {% if r.source_document_type %}<span class="text-slate-400 mono text-[10px] ml-1">{{ r.source_document_type }}</span>{% endif %}
+          </div>
+        {% else %}
+          <div class="text-slate-400">No document-level evidence indexed.</div>
+        {% endfor %}
+        {% if fact %}
+          <div class="pt-1.5 mt-1.5 border-t border-slate-100 flex items-center gap-3 text-[11px] text-slate-500">
+            {% if fact.resolution_method %}<span>Method: <span class="text-slate-700">{{ fact.resolution_method }}</span></span>{% endif %}
+            {% if fact.confidence is not none %}<span class="ml-auto">Confidence <span class="font-semibold text-slate-700">{{ (fact.confidence * 100) | round(0) | int }}%</span></span>{% endif %}
+          </div>
+        {% endif %}
+      </div>
+    </details>
+  {% endmacro %}
+
+  {{ section('Income evidence', 'income', facts.get('qualifying_income'), 'emerald') }}
+  {{ section('Credit evidence', 'credit', facts.get('governing_credit_score'), 'blue') }}
+  {{ section('Asset evidence', 'asset', facts.get('verified_assets'), 'emerald') }}
+  {{ section('Employment evidence', 'employment', facts.get('employment_continuity'), 'slate') }}
+
+  {% if fraud_signals %}
+    <div class="mt-3 pt-3 border-t border-slate-100">
+      <div class="text-xs font-semibold uppercase tracking-wider text-rose-500 mb-2">Fraud signals ({{ fraud_signals | length }})</div>
+      <div class="space-y-2">
+        {% for f in fraud_signals %}
+          {% set sc = 'rose' if f.severity in ('high','critical') else ('amber' if f.severity == 'medium' else 'slate') %}
+          <div class="p-3 rounded-lg bg-{{ sc }}-50 border border-{{ sc }}-200 text-xs">
+            <div class="flex items-center gap-2">
+              <span class="font-semibold text-{{ sc }}-800">{{ f.signal_type | replace('_',' ') }}</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded bg-{{ sc }}-100 text-{{ sc }}-700 uppercase">{{ f.severity }}</span>
+              {% if f.auto_block %}<span class="text-[10px] px-1.5 py-0.5 rounded bg-rose-600 text-white">auto-block</span>{% endif %}
+            </div>
+            <div class="text-slate-600 mt-1">{{ f.description }}</div>
+            {% if f.detected_value and f.expected_value %}
+              <div class="text-slate-500 mt-1 mono text-[10px]">{{ f.detected_value }} vs {{ f.expected_value }}{% if f.variance_pct %} ({{ f.variance_pct }}%){% endif %}</div>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+</div>

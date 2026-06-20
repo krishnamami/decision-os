@@ -1,0 +1,72 @@
+{% extends "base_workbench.html" %}
+{% block title %}Review Queue{% endblock %}
+{% block content %}
+<header class="mb-5 flex items-end justify-between">
+  <div>
+    <h1 class="text-2xl font-semibold tracking-tight">Underwriter Review Queue</h1>
+    <p class="text-sm text-slate-500 mt-1">Escalated loans awaiting a senior underwriter, oldest first.</p>
+  </div>
+  <div class="text-xs text-slate-400">{{ reviews | length }} awaiting review</div>
+</header>
+
+<section class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+  <table class="min-w-full text-sm">
+    <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+      <tr>
+        <th class="text-left px-4 py-2.5">Priority</th>
+        <th class="text-left px-4 py-2.5">Application</th>
+        <th class="text-right px-4 py-2.5">Loan</th>
+        <th class="text-left px-4 py-2.5">LTV / DTI</th>
+        <th class="text-left px-4 py-2.5">Credit</th>
+        <th class="text-left px-4 py-2.5">Risk</th>
+        <th class="text-left px-4 py-2.5">Confidence</th>
+        <th class="text-left px-4 py-2.5">Escalated</th>
+        <th class="text-left px-4 py-2.5">Assignee</th>
+        <th class="px-4 py-2.5"></th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-100">
+      {% for r in reviews %}
+        <tr class="hover:bg-slate-50 cursor-pointer"
+            onclick="window.location='/workbench/senior_underwriter/review/{{ r.application_id }}'">
+          <td class="px-4 py-2.5">
+            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full text-[11px] font-semibold
+              {% if loop.index == 1 %}bg-rose-100 text-rose-700{% elif loop.index <= 3 %}bg-amber-100 text-amber-700{% else %}bg-slate-100 text-slate-500{% endif %}">
+              {{ loop.index }}
+            </span>
+          </td>
+          <td class="px-4 py-2.5 mono text-xs text-slate-700">{{ r.application_id }}</td>
+          <td class="px-4 py-2.5 text-right font-medium text-slate-900">{{ r.loan_amount | fmt_money }}</td>
+          <td class="px-4 py-2.5 text-xs text-slate-600">{{ r.ltv | fmt_pct }} / {{ r.dti_back | fmt_pct }}</td>
+          <td class="px-4 py-2.5">
+            {% set cc = r.mid_credit_score | credit_color %}
+            <span class="font-semibold text-{{ cc }}-700">{{ r.mid_credit_score | fmt_value }}</span>
+          </td>
+          <td class="px-4 py-2.5">
+            <div class="flex items-center gap-1.5">
+              {% if r.has_block %}<span class="text-[11px] px-1.5 py-0.5 rounded bg-rose-100 text-rose-700">block</span>{% endif %}
+              {% if r.fraud_count and r.fraud_count > 0 %}<span class="text-[11px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-700">⚠ {{ r.fraud_count }} fraud</span>{% endif %}
+              {% if r.blocking_conditions and r.blocking_conditions > 0 %}<span class="text-[11px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">{{ r.blocking_conditions }} blocking</span>{% endif %}
+              {% if not r.has_block and not r.fraud_count and not r.blocking_conditions %}<span class="text-slate-300 text-xs">clean</span>{% endif %}
+            </div>
+          </td>
+          <td class="px-4 py-2.5">
+            {% set conf = (r.min_conf or 0) %}
+            <div class="flex items-center gap-2">
+              <div class="w-16 bg-slate-200 rounded-full h-1.5"><div class="h-1.5 rounded-full {% if conf < 0.6 %}bg-rose-500{% elif conf < 0.8 %}bg-amber-500{% else %}bg-emerald-500{% endif %}" style="width: {{ (conf * 100) | round(0) | int }}%"></div></div>
+              <span class="text-xs text-slate-500 tabular-nums">{{ (conf * 100) | round(0) | int }}%</span>
+            </div>
+          </td>
+          <td class="px-4 py-2.5 text-xs text-slate-500">{{ r.oldest_escalation | humanize_age }}</td>
+          <td class="px-4 py-2.5"><span class="text-xs text-slate-400">Unassigned</span></td>
+          <td class="px-4 py-2.5 text-right">
+            <span class="text-xs bg-blue-600 text-white px-2.5 py-1 rounded font-medium">Take Review</span>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="10" class="px-4 py-10 text-center text-slate-400">No loans awaiting review. Queue is clear.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

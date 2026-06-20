@@ -1,0 +1,60 @@
+{# PL-B — conditions management. Open conditions get a "Mark satisfied"
+   action (UW, when can_act); cleared conditions render as history with who/
+   when. Single source of conditions on the detail page. #}
+{% if conditions %}
+{% set open_conds = conditions | selectattr('status', 'in', ['open','submitted','in_review']) | list %}
+{% set done_conds = conditions | rejectattr('status', 'in', ['open','submitted','in_review']) | list %}
+<div class="bg-white border border-slate-200 rounded-lg p-5" id="conditions-panel">
+  <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
+    Conditions ({{ open_conds | length }} open{% if done_conds %} · {{ done_conds | length }} cleared{% endif %})
+  </div>
+
+  <div class="space-y-2">
+    {% for c in open_conds %}
+      <div class="p-3 rounded-lg text-xs {% if c.blocks_closing %}bg-rose-50 border border-rose-200{% else %}bg-amber-50 border border-amber-200{% endif %}">
+        <div class="flex items-start gap-2">
+          <span class="mono font-semibold text-slate-800 min-w-fit">{{ c.condition_code }}</span>
+          <span class="ml-auto min-w-fit {% if c.blocks_closing %}text-rose-600 font-semibold{% else %}text-amber-600{% endif %}">
+            {{ 'BLOCKS CLOSING' if c.blocks_closing else ('prior to ' + (c.prior_to or 'docs')) }}
+          </span>
+        </div>
+        <div class="text-slate-600 mt-1">{{ c.condition_text }}</div>
+        <div class="mt-1.5 flex items-center gap-3 text-[11px] text-slate-500">
+          <span>Assignee: <span class="text-slate-700">{{ c.assignee or 'borrower' }}</span></span>
+          <span>·</span>
+          <span class="uppercase tracking-wide">{{ c.status }}</span>
+          {% if can_act %}
+          <form method="post" action="/workbench/api/conditions/{{ c.id }}/satisfy" class="ml-auto flex items-center gap-1.5">
+            <input type="hidden" name="redirect" value="{{ request.url.path }}" />
+            <input name="reviewer" type="text" required placeholder="your name"
+                   class="text-[11px] border border-slate-300 rounded px-1.5 py-0.5 w-24" />
+            <button type="submit"
+                    class="text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white px-2 py-0.5 rounded font-medium">
+              Mark satisfied
+            </button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+    {% else %}
+      <div class="text-xs text-slate-400">No open conditions.</div>
+    {% endfor %}
+  </div>
+
+  {% if done_conds %}
+  <div class="mt-3 pt-3 border-t border-slate-100">
+    <div class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">Condition history</div>
+    <div class="space-y-1">
+      {% for c in done_conds %}
+        <div class="flex items-center gap-2 text-[11px] text-slate-500">
+          <span class="text-emerald-500"><i class="ti ti-check"></i></span>
+          <span class="mono text-slate-600">{{ c.condition_code }}</span>
+          <span class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 uppercase">{{ c.status }}</span>
+          {% if c.cleared_at %}<span class="ml-auto">{{ c.cleared_at | humanize_age }}</span>{% endif %}
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
