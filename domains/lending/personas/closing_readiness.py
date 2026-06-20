@@ -40,8 +40,18 @@ class ClosingAgent(LendingPersona):
         underwriting_payload = upstream_payload(bundle, "underwriting_decision")
         prop = first_object(bundle, "Property") or {}
 
+        # Prefer the mapped ComplianceRecord field the EDMS view provides
+        # (vw_closing_readiness_context.title_clear); fall back to the legacy
+        # Property.title_status read when the bundle carries a Property object
+        # instead. title_defect stays tied to an *explicit* defect signal so a
+        # title that is merely "not yet confirmed clear" escalates for review
+        # rather than hard-blocking on a missing-data default.
         title_status = (prop.get("title_status") or "clear").lower()
-        title_clear = title_status == "clear"
+        view_title_clear = compliance_record.get("title_clear")
+        title_clear = (
+            bool(view_title_clear) if view_title_clear is not None
+            else title_status == "clear"
+        )
         title_defect = title_status == "defect"
 
         # CD-timing violation is an authoritative loan fact (TRID 3-business-day
@@ -62,7 +72,15 @@ class ClosingAgent(LendingPersona):
 
         # Own-data: final conditions checklist + insurance binder.
         conditions = compliance_record.get("final_conditions_checklist") or {}
-        all_conditions_cleared = bool(conditions.get("all_cleared", True))
+        # Prefer the mapped view field; only fall back to the nested checklist
+        # (legacy / non-EDMS bundles) when the view didn't supply it. Reading
+        # the real value means an un-cleared file no longer auto-allows via
+        # automate_if — it falls through to the escalate safe-default.
+        view_all_cleared = compliance_record.get("all_conditions_cleared")
+        all_conditions_cleared = (
+            bool(view_all_cleared) if view_all_cleared is not None
+            else bool(conditions.get("all_cleared", True))
+        )
         minor_conditions_outstanding = bool(
             conditions.get("minor_outstanding") or False
         )
