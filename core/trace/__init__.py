@@ -27,6 +27,7 @@ from .outcome_tracker import (
     correlate,
 )
 from .trace_writer import InMemoryTraceWriter, TraceWriter
+from .decision_trace_builder import DecisionTraceBuilder, OUTCOME_MAP
 
 __all__ = [
     "AgentLearning",
@@ -34,6 +35,8 @@ __all__ = [
     "Contradiction",
     "CriticAgent",
     "CriticReview",
+    "DecisionTraceBuilder",
+    "OUTCOME_MAP",
     "CriticVerdict",
     "DEFAULT_RETENTION_DAYS",
     "DecisionOutcomeCorrelation",
