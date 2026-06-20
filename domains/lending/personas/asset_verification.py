@@ -167,12 +167,13 @@ class AssetVerificationAgent(LendingPersona):
             from core.assets.asset_resolver import AssetResolver
             from core.assets.deposit_analyzer import DepositAnalyzer
 
-            # Funds-to-close inputs aren't in the AssetProfile yet (AV-E
-            # wires them); absent -> 0 -> funds_needed 0 -> sufficient, so
-            # the resolver only blocks once those inputs exist.
+            # Funds-to-close inputs from the view (AV-E). down_payment uses
+            # purchase_price - loan_amount; while purchase_price is unseeded
+            # it resolves to 0, so funds_needed reflects closing + prepaids +
+            # reserves until the purchase price lands.
             loan_amount = float(assets.get("loan_amount") or 0)
-            piti_monthly = float(assets.get("proposed_payment") or 0)
-            down_payment = float(assets.get("down_payment") or 0)
+            piti_monthly = float(assets.get("piti_monthly") or 0)
+            down_payment = float(assets.get("down_payment_computed") or 0)
             qualifying_monthly = float(assets.get("qualifying_monthly") or 0)
 
             asset_result = AssetResolver().resolve_all(

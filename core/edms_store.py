@@ -271,6 +271,11 @@ class EdmsContextStore:
                 "unsourced_deposits": "unsourced_deposits",
                 "total_qualifying_assets": "total_qualifying_assets",
                 "unsourced_deposit_count": "unsourced_deposit_count",
+                # AV-E: funds-to-close loan inputs.
+                "loan_amount": "loan_amount",
+                "piti_monthly": "piti_monthly",
+                "qualifying_monthly": "qualifying_monthly",
+                "down_payment_computed": "down_payment_computed",
             },
             "id_field": "application_id",
         },

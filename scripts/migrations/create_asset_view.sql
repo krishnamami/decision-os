@@ -1,8 +1,15 @@
--- scripts/migrations/create_asset_view.sql  (AV-D)
+-- scripts/migrations/create_asset_view.sql  (AV-D + AV-E)
 -- Extends vw_asset_verification_context with account/deposit rollups from the
--- AV-A entity tables. All pre-existing columns are preserved verbatim and in
--- their original order (CREATE OR REPLACE VIEW can only APPEND columns), so the
--- asset_verification field_map keeps working; the 4 new columns are appended.
+-- AV-A entity tables (AV-D) and funds-to-close loan inputs (AV-E). All
+-- pre-existing columns are preserved verbatim and in their original order
+-- (CREATE OR REPLACE VIEW can only APPEND columns), so the asset_verification
+-- field_map keeps working; new columns are appended.
+--
+-- AV-E note: down_payment_computed uses the top-level es.purchase_price column
+-- (the loan_terms->'urla' JSON has no purchase_price key). purchase_price is
+-- currently unseeded for the Meridian loans, so down_payment resolves to 0
+-- until it is populated; the rest of funds-to-close (closing/prepaids/reserves)
+-- computes from loan_amount + piti_monthly today.
 
 CREATE OR REPLACE VIEW vw_asset_verification_context AS
 SELECT
@@ -78,6 +85,12 @@ SELECT
         WHERE ad.application_id = es.application_id
           AND ad.tenant_id = es.tenant_id
           AND ad.is_sourced = false
-    ), 0)                                                                AS unsourced_deposit_count
+    ), 0)                                                                AS unsourced_deposit_count,
+
+    -- ── NEW (AV-E): funds-to-close loan inputs ────────────────────────
+    es.loan_amount                                                       AS loan_amount,
+    es.piti_monthly                                                      AS piti_monthly,
+    es.qualifying_monthly                                                AS qualifying_monthly,
+    GREATEST(es.purchase_price - es.loan_amount, 0)                      AS down_payment_computed
 
 FROM entity_states es;
