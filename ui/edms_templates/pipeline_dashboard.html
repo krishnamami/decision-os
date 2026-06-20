@@ -1,9 +1,12 @@
 {% extends "base_workbench.html" %}
-{% block title %}Pipeline{% endblock %}
+{% block title %}Loan Pipeline{% endblock %}
 {% block content %}
-<header class="mb-5">
-  <h1 class="text-2xl font-semibold tracking-tight">Pipeline</h1>
-  <p class="text-sm text-slate-500 mt-1">Top 100 applications by completion. Click a row to see the journey.</p>
+<header class="mb-5 flex items-end justify-between">
+  <div>
+    <h1 class="text-2xl font-semibold tracking-tight">Loan Pipeline</h1>
+    <p class="text-sm text-slate-500 mt-1">Your submitted loans and where each one stands. Click a loan to see the full decision.</p>
+  </div>
+  <div class="text-xs text-slate-400">{{ applications | length }} loans</div>
 </header>
 
 <section class="bg-white border border-slate-200 rounded-lg overflow-hidden">
@@ -11,40 +14,47 @@
     <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
       <tr>
         <th class="text-left px-4 py-2.5">Application</th>
-        <th class="text-left px-4 py-2.5">Wave</th>
-        <th class="text-left px-4 py-2.5">Decisions</th>
-        <th class="text-left px-4 py-2.5">Pipeline</th>
-        <th class="text-left px-4 py-2.5">Block</th>
-        <th class="text-left px-4 py-2.5">Pending</th>
-        <th class="text-left px-4 py-2.5">Escalate</th>
-        <th class="text-left px-4 py-2.5">Started</th>
-        <th class="text-left px-4 py-2.5">Last update</th>
+        <th class="text-left px-4 py-2.5">Borrower</th>
+        <th class="text-right px-4 py-2.5">Loan amount</th>
+        <th class="text-left px-4 py-2.5">Outcome</th>
+        <th class="text-left px-4 py-2.5">Progress</th>
+        <th class="text-center px-4 py-2.5">Conditions</th>
+        <th class="text-left px-4 py-2.5">Submitted</th>
+        <th class="px-4 py-2.5"></th>
       </tr>
     </thead>
     <tbody class="divide-y divide-slate-100">
       {% for app in applications %}
-        {% if app.has_block %}{% set rowbg = 'bg-rose-50/30 hover:bg-rose-50' %}
-        {% elif app.pending_human_review and app.pending_human_review > 0 %}{% set rowbg = 'bg-amber-50/30 hover:bg-amber-50' %}
-        {% elif app.decisions_complete == app.decisions_total %}{% set rowbg = 'bg-emerald-50/30 hover:bg-emerald-50' %}
-        {% else %}{% set rowbg = 'hover:bg-slate-50' %}{% endif %}
-        <tr class="{{ rowbg }} cursor-pointer" onclick="window.location='/workbench/pipeline/{{ app.application_id }}'">
-          <td class="px-4 py-2 mono text-xs">{{ app.application_id }}</td>
-          <td class="px-4 py-2">Wave {{ app.current_wave or '?' }}</td>
-          <td class="px-4 py-2">{{ app.decisions_complete }}/{{ app.decisions_total }}</td>
-          <td class="px-4 py-2">
+        <tr class="hover:bg-slate-50 cursor-pointer" onclick="window.location='/workbench/pipeline/{{ app.application_id }}'">
+          <td class="px-4 py-2.5">
+            <span class="mono text-xs text-slate-700">{{ app.application_id }}</span>
+            <button type="button" title="Copy"
+                    onclick="event.stopPropagation();navigator.clipboard.writeText('{{ app.application_id }}')"
+                    class="ml-1 text-slate-300 hover:text-slate-500 align-middle"><i class="ti ti-copy"></i></button>
+          </td>
+          <td class="px-4 py-2.5 text-slate-600 mono text-xs">{{ app.applicant_id or '—' }}</td>
+          <td class="px-4 py-2.5 text-right font-medium text-slate-900">{{ app.loan_amount | fmt_money }}</td>
+          <td class="px-4 py-2.5">
+            <span class="text-xs px-2 py-0.5 rounded-full bg-{{ app.outcome_color }}-100 text-{{ app.outcome_color }}-700 font-medium">{{ app.outcome_label }}</span>
+          </td>
+          <td class="px-4 py-2.5">
             <div class="flex items-center gap-2">
-              <div class="w-24 bg-slate-200 rounded h-1.5"><div class="h-1.5 bg-blue-600 rounded" style="width: {{ app.pipeline_pct or 0 }}%"></div></div>
-              <span class="text-xs text-slate-600">{{ app.pipeline_pct or 0 }}%</span>
+              <div class="w-24 bg-slate-200 rounded-full h-1.5"><div class="h-1.5 bg-blue-600 rounded-full" style="width: {{ app.pipeline_pct or 0 }}%"></div></div>
+              <span class="text-xs text-slate-500 tabular-nums">{{ app.pipeline_pct or 0 }}%</span>
             </div>
           </td>
-          <td class="px-4 py-2">{% if app.has_block %}<span class="text-xs px-2 py-0.5 rounded bg-rose-100 text-rose-700">block</span>{% else %}<span class="text-slate-300">—</span>{% endif %}</td>
-          <td class="px-4 py-2">{% if app.pending_human_review and app.pending_human_review > 0 %}<span class="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800">{{ app.pending_human_review }}</span>{% else %}<span class="text-slate-300">—</span>{% endif %}</td>
-          <td class="px-4 py-2">{% if app.escalate_count and app.escalate_count > 0 %}<span class="text-xs px-2 py-0.5 rounded bg-orange-100 text-orange-800">{{ app.escalate_count }}</span>{% else %}<span class="text-slate-300">—</span>{% endif %}</td>
-          <td class="px-4 py-2 text-xs text-slate-500">{{ app.pipeline_started | humanize_age }}</td>
-          <td class="px-4 py-2 text-xs text-slate-500">{{ app.last_decision_at | humanize_age }}</td>
+          <td class="px-4 py-2.5 text-center">
+            {% if app.open_conditions and app.open_conditions > 0 %}
+              <span class="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-medium">{{ app.open_conditions }}</span>
+            {% else %}<span class="text-slate-300">—</span>{% endif %}
+          </td>
+          <td class="px-4 py-2.5 text-xs text-slate-500">{{ app.pipeline_started | humanize_age }}</td>
+          <td class="px-4 py-2.5 text-right">
+            <span class="text-xs text-blue-600 hover:text-blue-800 font-medium">View →</span>
+          </td>
         </tr>
       {% else %}
-        <tr><td colspan="9" class="px-4 py-10 text-center text-slate-400">vw_pipeline_status is empty.</td></tr>
+        <tr><td colspan="8" class="px-4 py-10 text-center text-slate-400">No loans in the pipeline yet.</td></tr>
       {% endfor %}
     </tbody>
   </table>

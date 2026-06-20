@@ -627,7 +627,29 @@ async def _base_ctx(active_persona_slug: Optional[str]) -> dict[str, Any]:
         "personas_sidebar": sidebar,
         "stages": STAGES,
         "active_persona": active_persona_slug,
+        # PL-A — nav chrome (camera-ready). Demo identity; the workbench is an
+        # internal tool with no per-user login, so role is fixed.
+        "lender_name": "Meridian Lending",
+        "user_name": "Avery Chen",
+        "user_role": "Loan Officer",
+        "active_loan_count": await _active_loan_count() if DATABASE_URL else 0,
     }
+
+
+async def _active_loan_count() -> int:
+    """Loans still in flight (not all decisions complete) — nav badge."""
+    if not DATABASE_URL:
+        return 0
+    try:
+        pool = await _get_pool()
+        async with pool.acquire() as conn:
+            n = await conn.fetchval(
+                "SELECT COUNT(*) FROM vw_pipeline_status "
+                "WHERE decisions_complete < decisions_total"
+            )
+        return int(n or 0)
+    except Exception:
+        return 0
 
 
 async def _total_decisions() -> int:
@@ -769,23 +791,52 @@ async def pipeline_dashboard(request: Request):
     async with pool.acquire() as conn:
         apps = await conn.fetch(
             """
-            SELECT application_id, decisions_complete, decisions_total,
-                   pipeline_pct, current_wave, has_block,
-                   pending_human_review, escalate_count,
-                   pipeline_started, last_decision_at,
-                   pipeline_elapsed_seconds
-            FROM vw_pipeline_status
-            ORDER BY pipeline_pct DESC, last_decision_at DESC NULLS LAST
+            SELECT vps.application_id, vps.decisions_complete,
+                   vps.decisions_total, vps.pipeline_pct, vps.current_wave,
+                   vps.has_block, vps.pending_human_review,
+                   vps.escalate_count, vps.pipeline_started,
+                   vps.last_decision_at, vps.pipeline_elapsed_seconds,
+                   es.loan_amount,
+                   es.borrower->>'applicant_id' AS applicant_id,
+                   (SELECT COUNT(*) FROM loan_condition_instances lci
+                      WHERE lci.application_id = vps.application_id
+                        AND lci.status IN ('open','submitted','in_review')
+                   ) AS open_conditions
+            FROM vw_pipeline_status vps
+            LEFT JOIN entity_states es
+              ON es.application_id = vps.application_id
+            ORDER BY vps.pipeline_pct DESC, vps.last_decision_at DESC NULLS LAST
             LIMIT 100
             """
         )
+
+    # PL-A — derive a single LO-facing outcome badge per loan.
+    def _row_outcome(a: dict) -> tuple[str, str]:
+        if a.get("has_block"):
+            return "Declined", "rose"
+        if (a.get("pending_human_review") or 0) > 0:
+            return "In review", "amber"
+        if (a.get("escalate_count") or 0) > 0:
+            return "Escalated", "orange"
+        if a.get("decisions_complete") == a.get("decisions_total"):
+            return "Approved", "emerald"
+        return "In progress", "slate"
+
+    applications = []
+    for a in apps:
+        d = dict(a)
+        label, color = _row_outcome(d)
+        d["outcome_label"] = label
+        d["outcome_color"] = color
+        applications.append(d)
+
     return templates.TemplateResponse(
         "pipeline_dashboard.html",
         {
             "request": request,
             **(await _base_ctx(None)),
             "active_nav": "pipeline",
-            "applications": [dict(a) for a in apps],
+            "applications": applications,
             "total_decisions": await _total_decisions(),
         },
     )
@@ -833,6 +884,28 @@ async def pipeline_app(request: Request, application_id: str):
             """,
             application_id,
         )
+        # PL-A — decision trace for the hero outcome + evidence summary card.
+        trace_row = await conn.fetchrow(
+            """
+            SELECT final_outcome, outcome_reason, confidence_score,
+                   evidence_trace, decided_at
+            FROM decision_trace
+            WHERE application_id = $1 AND superseded_by IS NULL
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            application_id,
+        )
+
+    trace = None
+    if trace_row:
+        trace = dict(trace_row)
+        ev = trace.get("evidence_trace")
+        if isinstance(ev, str):
+            try:
+                ev = json.loads(ev)
+            except (ValueError, TypeError):
+                ev = {}
+        trace["evidence"] = ev or {}
 
     by_wave: dict[int, list] = {}
     for d in decisions:
@@ -858,6 +931,7 @@ async def pipeline_app(request: Request, application_id: str):
             "active_nav": "pipeline",
             "application_id": application_id,
             "entity": _entity_summary(entity),
+            "trace": trace,
             "waves": waves,
             "timeline": [dict(t) for t in timeline],
             "total_decisions": await _total_decisions(),

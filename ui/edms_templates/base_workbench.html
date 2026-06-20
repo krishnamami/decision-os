@@ -18,15 +18,32 @@
     <div class="max-w-screen-2xl mx-auto px-6 py-3 flex items-center gap-8">
       <a href="/workbench" class="flex items-center gap-2 font-semibold text-slate-900">
         <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-        Decision OS · Lending
+        Accord
       </a>
+      {% if lender_name %}
+        <span class="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">{{ lender_name }}</span>
+      {% endif %}
       <nav class="flex items-center gap-6 text-sm">
         <a href="/workbench" class="{% if active_nav == 'home' %}text-slate-900 font-medium{% else %}text-slate-500 hover:text-slate-900{% endif %}">Home</a>
-        <a href="/workbench/pipeline" class="{% if active_nav == 'pipeline' %}text-slate-900 font-medium{% else %}text-slate-500 hover:text-slate-900{% endif %}">Pipeline</a>
+        <a href="/workbench/pipeline" class="flex items-center gap-1.5 {% if active_nav == 'pipeline' %}text-slate-900 font-medium{% else %}text-slate-500 hover:text-slate-900{% endif %}">
+          Pipeline
+          {% if active_loan_count and active_loan_count > 0 %}
+            <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700">{{ active_loan_count }}</span>
+          {% endif %}
+        </a>
         <a href="/workbench/audit" class="{% if active_nav == 'audit' %}text-slate-900 font-medium{% else %}text-slate-500 hover:text-slate-900{% endif %}">Audit</a>
         <a href="/workbench/governance" class="{% if active_nav == 'governance' %}text-slate-900 font-medium{% else %}text-slate-500 hover:text-slate-900{% endif %}">Governance</a>
       </nav>
-      <div class="ml-auto text-xs text-slate-400 mono">EDMS Postgres</div>
+      <div class="ml-auto flex items-center gap-3">
+        <div class="text-right leading-tight">
+          <div class="text-xs font-medium text-slate-700">{{ user_name or 'User' }}</div>
+          <div class="text-[10px] text-slate-400">{{ user_role or '' }}</div>
+        </div>
+        <span class="inline-flex items-center justify-center w-8 h-8 rounded-full bg-slate-200 text-slate-600 text-xs font-semibold">
+          {{ (user_name or 'U')[:1] }}
+        </span>
+        <a href="/" class="text-xs text-slate-400 hover:text-slate-700">Sign out</a>
+      </div>
     </div>
   </header>
 

@@ -7,19 +7,78 @@
   <span class="text-slate-900 mono">{{ application_id }}</span>
 </nav>
 
-<header class="mb-5">
-  <h1 class="text-2xl font-semibold tracking-tight mono">{{ application_id }}</h1>
+{% set omap = {
+  'approve': ('Approved', 'emerald'),
+  'approve_with_conditions': ('Approved with conditions', 'emerald'),
+  'escalate': ('Escalated to underwriter', 'amber'),
+  'block': ('Declined', 'rose'),
+  'refer': ('Referred', 'slate'),
+  'incomplete': ('In progress', 'slate')
+} %}
+{% set olabel, ocolor = omap.get(trace.final_outcome if trace else None, ('In progress', 'slate')) %}
+
+<!-- Hero -->
+<section class="bg-white border border-slate-200 rounded-lg p-5 mb-5">
+  <div class="flex items-start justify-between gap-4">
+    <div>
+      <div class="text-xs text-slate-400 mono">{{ application_id }}</div>
+      <div class="mt-1 flex items-center gap-3">
+        <span class="inline-flex items-center gap-2 text-lg font-semibold px-3 py-1 rounded-lg bg-{{ ocolor }}-100 text-{{ ocolor }}-800">
+          <span class="w-2 h-2 rounded-full bg-{{ ocolor }}-500"></span>{{ olabel }}
+        </span>
+        <span class="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full bg-slate-100 text-slate-500 border border-slate-200">
+          <i class="ti ti-sparkles"></i> Explained by Accord AI
+        </span>
+      </div>
+      {% if trace and trace.outcome_reason %}
+        <p class="mt-2 text-sm text-slate-500 max-w-2xl">{{ trace.outcome_reason }}</p>
+      {% endif %}
+    </div>
+    {% if trace and trace.confidence_score is not none %}
+      <div class="text-right">
+        <div class="text-[10px] uppercase tracking-wider text-slate-400">Confidence</div>
+        <div class="text-2xl font-semibold text-slate-900 tabular-nums">{{ (trace.confidence_score * 100) | round(0) | int }}%</div>
+      </div>
+    {% endif %}
+  </div>
+
   {% if entity %}
-    <div class="mt-3 grid grid-cols-6 gap-3 text-xs">
-      <div class="bg-white border border-slate-200 rounded p-3"><div class="text-slate-500">Status</div><div class="font-semibold text-slate-900 mt-0.5">{{ entity.status or '—' }}</div></div>
-      <div class="bg-white border border-slate-200 rounded p-3"><div class="text-slate-500">Mid credit</div>{% set cc = entity.mid_credit_score | credit_color %}<div class="font-semibold text-{{ cc }}-700 mt-0.5">{{ entity.mid_credit_score | fmt_value }}</div></div>
-      <div class="bg-white border border-slate-200 rounded p-3"><div class="text-slate-500">LTV</div><div class="font-semibold text-slate-900 mt-0.5">{{ entity.ltv | fmt_pct }}</div></div>
-      <div class="bg-white border border-slate-200 rounded p-3"><div class="text-slate-500">DTI</div><div class="font-semibold text-slate-900 mt-0.5">{{ entity.dti_back | fmt_pct }}</div></div>
-      <div class="bg-white border border-slate-200 rounded p-3"><div class="text-slate-500">Loan</div><div class="font-semibold text-slate-900 mt-0.5">{{ entity.loan_amount | fmt_money }}</div></div>
-      <div class="bg-white border border-slate-200 rounded p-3"><div class="text-slate-500">Completeness</div><div class="font-semibold text-slate-900 mt-0.5">{{ entity.completeness_pct | fmt_pct }}</div></div>
+    <div class="mt-4 grid grid-cols-6 gap-3 text-xs">
+      <div class="rounded p-3 bg-slate-50"><div class="text-slate-500">Loan</div><div class="font-semibold text-slate-900 mt-0.5">{{ entity.loan_amount | fmt_money }}</div></div>
+      <div class="rounded p-3 bg-slate-50"><div class="text-slate-500">LTV</div><div class="font-semibold text-slate-900 mt-0.5">{{ entity.ltv | fmt_pct }}</div></div>
+      <div class="rounded p-3 bg-slate-50"><div class="text-slate-500">DTI</div><div class="font-semibold text-slate-900 mt-0.5">{{ entity.dti_back | fmt_pct }}</div></div>
+      <div class="rounded p-3 bg-slate-50"><div class="text-slate-500">Mid credit</div>{% set cc = entity.mid_credit_score | credit_color %}<div class="font-semibold text-{{ cc }}-700 mt-0.5">{{ entity.mid_credit_score | fmt_value }}</div></div>
+      <div class="rounded p-3 bg-slate-50"><div class="text-slate-500">Status</div><div class="font-semibold text-slate-900 mt-0.5">{{ entity.status or '—' }}</div></div>
+      <div class="rounded p-3 bg-slate-50"><div class="text-slate-500">Completeness</div><div class="font-semibold text-slate-900 mt-0.5">{{ entity.completeness_pct | fmt_pct }}</div></div>
     </div>
   {% endif %}
-</header>
+</section>
+
+<!-- Evidence summary -->
+{% if trace and trace.evidence %}
+  {% set ev = trace.evidence %}
+  <section class="bg-white border border-slate-200 rounded-lg p-5 mb-5">
+    <div class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Evidence summary</div>
+    <div class="grid grid-cols-4 gap-4 text-sm">
+      <div>
+        <div class="text-xs text-slate-500">Income</div>
+        <div class="font-medium text-slate-900 mt-0.5">{{ ev.qualifying_income.text if ev.qualifying_income else '—' }}</div>
+      </div>
+      <div>
+        <div class="text-xs text-slate-500">Credit (governing)</div>
+        <div class="font-medium text-slate-900 mt-0.5">{{ ev.governing_credit_score.value | int if ev.governing_credit_score and ev.governing_credit_score.value else '—' }}</div>
+      </div>
+      <div>
+        <div class="text-xs text-slate-500">Assets verified</div>
+        <div class="font-medium text-slate-900 mt-0.5">{{ ev.verified_assets.text if ev.verified_assets else '—' }}</div>
+      </div>
+      <div>
+        <div class="text-xs text-slate-500">Employment</div>
+        <div class="font-medium text-slate-900 mt-0.5">{{ ev.employment_continuity.text if ev.employment_continuity else '—' }}</div>
+      </div>
+    </div>
+  </section>
+{% endif %}
 
 <section class="space-y-6 mb-8">
   {% for w in waves %}
