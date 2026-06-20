@@ -547,6 +547,9 @@ decisions:
       - decision: product_eligibility
         required_output: eligible_products
         inherit_context: true
+      - decision: title_assessment
+        required_output: title_disposition
+        inherit_context: true
     description: >
       Master underwriting decision — synthesises all upstream
       context to produce approve, conditional approve, or decline.
@@ -700,6 +703,42 @@ decisions:
     sla_seconds: 30
     trace_required: true
 
+  - id: title_assessment
+    name: Title assessment
+    atomic_tool: title_assessment_tool
+    context_window_days: 90
+    type: independent
+    description: >
+      Reviews the title commitment Schedule B — liens / encumbrances
+      (property_encumbrances), title-search findings (title_findings),
+      and vesting (ownership_chain). Runs LienResolver to classify each
+      lien (priority, resolvability, required action, agency treatment)
+      and rolls them up to a single title_disposition. Auto-block liens
+      (IRS / state / property tax, judgment, mechanics, child support,
+      lis pendens) block; resolvable liens (HOA), an easement affecting
+      use, a non-borrower owner who must sign, or a title not yet cleared
+      escalate; an otherwise clear title allows. Wave 0 independent leaf —
+      runs in parallel with fraud_screening; underwriting_decision reads it.
+    own_data:
+      - property_encumbrances
+      - title_findings
+      - ownership_chain
+    shared_data:
+      - application_record
+    persona: title_assessment_agent
+    mode: human_approval
+    risk_level: high
+    owner_team: title_ops
+    boundary:
+      automate_if:
+        - title_disposition == clear
+      block_if:
+        - title_disposition in [block, fatal_block]
+      escalate_if:
+        - title_disposition == conditions
+    sla_seconds: 60
+    trace_required: true
+
 # ─────────────────────────────────────────────
 # DECISION EXECUTION ORDER
 # ─────────────────────────────────────────────
@@ -711,6 +750,7 @@ execution_order:
     - fraud_screening
     - compliance_check
     - asset_verification
+    - title_assessment
   sequential_dependent:
     - [income_verification]       # needs: employment_reconciliation
     - [dti_calculation]           # needs: income_verification
