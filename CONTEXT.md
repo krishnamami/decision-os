@@ -456,6 +456,39 @@ Connector layering — push vs pull (STEP 4 design)
 
 ## Session history
 
+### Session 20 — June 20 2026 (cont.)
+
+**Theme:** Start **Phase 13 Explanation Engine (EX2-A)** — turn the decision
+trace into audience-specific human-readable narratives. `decision-os` `main`.
+
+**Commits — decision-os (pushed to `main`):**
+  - `b0117ac` — feat(explanation): AI explanation engine (EX2-A).
+
+**1. EX2-A — AI explanation engine.**
+   - `core/explanation/ExplanationEngine.explain(app_id, tenant_id, audience)`:
+     loads `decision_trace` (TR-A/TR-B) + open conditions + fraud_signals, builds
+     a structured summary, calls Claude with an audience-specific prompt
+     (loan_officer / underwriter / regulator), and falls back to a deterministic
+     template. AsyncAnthropic, awaited; model from `CLAUDE_MODEL_ID` (default
+     `claude-sonnet-4-6`, the codebase persona convention).
+   - API: `GET /api/accord/trace/{app_id}/explain?audience=...` (Accord
+     convention: JWT tenant, _require_db/_get_pool).
+   - **Consulted the claude-api skill before writing** (LLM-shaped Anthropic code).
+   - Deviations from spec (runtime/data-driven, all flagged):
+     - Client is **lazy + key-gated** — the spec's `Anthropic(api_key=None)` raises
+       in __init__ with no key, breaking even the fallback. Local-first: with no
+       `ANTHROPIC_API_KEY` the engine returns template narratives.
+     - `evidence_trace` is **flat by fact_type** (qualifying_income /
+       verified_assets / governing_credit_score / employment_continuity), not
+       nested by income/assets/credit → `_build_summary` adapted.
+     - **Omitted** the `decision_reviewed` audit write the spec did on every
+       render — an AI explanation isn't a human review; logging it would corrupt
+       the regulator audit trail.
+   - **Local verification = template path only** (no API key in env): SC07
+     escalate, SC09 block; loan_officer + regulator narratives render. The Claude
+     path is wired per the SDK reference but unexercised until a key is set.
+   Next: **EX2-B** (explanation workbench UI).
+
 ### Session 19 — June 20 2026 (cont.)
 
 **Theme:** **Decision Trace — Phase 12 COMPLETE (TR-A → TR-C)**: the immutable,
@@ -3876,4 +3909,4 @@ How to run smoke tests:
 
 ---
 
-*Decision OS · CONTEXT.md · Updated June 20 2026 (Session 19 — Decision Trace Phase 12 COMPLETE TR-A→TR-C: `decision_trace` + `decision_audit_log` (immutable regulator record) + `DecisionTraceBuilder` (all 16 traced), `PolicyTraceBuilder` (agency/overlay/guardrail + effective-limit evals, 16/16 populated), and `/api/accord/trace/` API (full/summary/export/audit/review — JSON regulatory export, no PDF yet). Also: title_assessment finally wired into the cron runner (WAVE_CONFIG + LENDING_PERSONA_CLASSES + VIEW_MAPPINGS) — IN-D resolved, SC16 now generates IRS/HOA title conditions, title is a leaf so 15/16 holds; persona count 13→15 stale tests fixed. Prior Session 18 shipped 5 resolver subsystems (Title TL-E / Credit CR-A..E / Asset AV-A..E / Fraud FR-A..E / Collateral CO-A..C / Conditions CN-A..C). Score 15/16 (SC12 rental income the miss). Open items: title escalates on 15/16 (title_clear unseeded); collateral/fraud wired-not-gating; two conditions tables coexist; trace export JSON-only. Next: Phase 13 Explanation Engine (EX2-A).)*
+*Decision OS · CONTEXT.md · Updated June 20 2026 (Session 20 — Phase 13 Explanation Engine started EX2-A: `core/explanation/ExplanationEngine` turns the decision trace into loan_officer/underwriter/regulator narratives via Claude (env `CLAUDE_MODEL_ID`, default sonnet-4-6) with a deterministic template fallback; `GET /api/accord/trace/{app}/explain`. Lazy key-gated client (works offline → templates), evidence_trace read flat by fact_type, no misleading audit write. Local verify = template path only (no API key set). Prior Session 19 completed Decision Trace Phase 12 TR-A→TR-C + wired title_assessment into the cron runner (IN-D) + persona count tests 13→15; Session 18 shipped 5 resolver subsystems (Title/Credit/Asset/Fraud/Collateral/Conditions). Score 15/16 (SC12 rental income the miss). Open items: Claude explanation path unexercised until ANTHROPIC_API_KEY set; trace export JSON-only; title escalates on 15/16 (title_clear unseeded); collateral/fraud wired-not-gating; two conditions tables coexist. Next: EX2-B (explanation workbench UI).)*
