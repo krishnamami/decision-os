@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 from core.context_store import ContextBundle
@@ -8,6 +9,19 @@ from core.policy_engine import PolicyDecision
 from core.trace import SignalDirection
 
 from .base import LendingPersona, OfflineReasoning, latest_object, make_signal
+
+
+def _as_list(val):
+    """fraud_signal_records arrives as a JSON list or — depending on the view
+    codec — a JSON string. Normalise to a Python list."""
+    if val is None:
+        return []
+    if isinstance(val, str):
+        try:
+            val = json.loads(val)
+        except (ValueError, TypeError):
+            return []
+    return list(val) if isinstance(val, (list, tuple)) else []
 
 
 class FraudDetectionAgent(LendingPersona):
@@ -98,6 +112,58 @@ class FraudDetectionAgent(LendingPersona):
             outcome = DecisionOutcome.ESCALATE
             confidence = 0.6
 
+        # ── FR-E: fraud_signals rollup from the detectors (FR-B/C/D) ─────
+        # The detectors are async + DB-bound and run as a batch upstream
+        # (they write to fraud_signals); this sync, conn-less persona path
+        # consumes their output via vw_fraud_screening_context. Branches
+        # only escalate to BLOCK/ESCALATE, never relax an existing outcome.
+        fraud_signals = _as_list(fraud.get("fraud_signal_records"))
+        high_count = int(fraud.get("high_severity_signal_count") or 0)
+        auto_block_count = int(fraud.get("auto_block_signal_count") or 0)
+
+        fraud_conditions = []
+        for sig in fraud_signals:
+            if sig.get("resolved"):
+                continue
+            code = sig.get("condition_code")
+            if code:
+                fraud_conditions.append({
+                    "code":        code,
+                    "text":        sig.get("description", ""),
+                    "severity":    sig.get("severity", "medium"),
+                    "blocks":      sig.get("auto_block", False),
+                    "signal_type": sig.get("signal_type"),
+                })
+
+        extra_reason = ""
+        if auto_block_count > 0:
+            outcome = DecisionOutcome.BLOCK
+            confidence = max(confidence, 0.9)
+            extra_reason = (
+                f" {auto_block_count} auto-block fraud signal(s)."
+            )
+        elif fraud_signals and outcome in (
+            DecisionOutcome.ALLOW, DecisionOutcome.RECOMMEND
+        ):
+            outcome = DecisionOutcome.ESCALATE
+            confidence = max(confidence, 0.7)
+            extra_reason = (
+                f" {len(fraud_signals)} fraud signal(s) require review "
+                f"({high_count} high/critical)."
+            )
+
+        if fraud_signals:
+            signals.append(
+                make_signal(
+                    "fraud_signal_count",
+                    len(fraud_signals),
+                    direction=SignalDirection.CONTRADICTS,
+                    weight=2.0,
+                    notes=f"{high_count} high/critical, "
+                          f"{auto_block_count} auto-block",
+                )
+            )
+
         return OfflineReasoning(
             output_payload={
                 "fraud_score": round(score, 3),
@@ -106,6 +172,11 @@ class FraudDetectionAgent(LendingPersona):
                 "document_authenticity_score": round(doc_auth, 3),
                 "watchlist_match": watchlist,
                 "synthetic_identity_flag": synthetic,
+                # FR-E additions
+                "fraud_conditions": fraud_conditions,
+                "fraud_signal_count": len(fraud_signals),
+                "high_severity_count": high_count,
+                "auto_block_signal_count": auto_block_count,
             },
             proposed_outcome=outcome,
             confidence=confidence,
@@ -117,7 +188,8 @@ class FraudDetectionAgent(LendingPersona):
             ),
             conclusion=(
                 f"fraud_score={score:.2f}, watchlist={watchlist}, "
-                f"synthetic={synthetic} → {outcome.value}"
+                f"synthetic={synthetic}, signals={len(fraud_signals)} "
+                f"→ {outcome.value}"
             ),
             confidence_basis=(
                 "High confidence in BLOCK on watchlist/synthetic hits — "
@@ -127,6 +199,7 @@ class FraudDetectionAgent(LendingPersona):
             ),
             summary=(
                 f"Fraud score {score:.2f}; proposed {outcome.value}."
+                + extra_reason
             ),
         )
 

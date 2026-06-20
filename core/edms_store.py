@@ -94,6 +94,10 @@ class EdmsContextStore:
                 "document_authenticity_score": "document_authenticity_score",
                 "watchlist_match": "watchlist_match",
                 "synthetic_identity_flag": "synthetic_identity_flag",
+                # FR-E: fraud_signals rollup for the detector-driven path.
+                "fraud_signal_records": "fraud_signal_records",
+                "high_severity_signal_count": "high_severity_signal_count",
+                "auto_block_signal_count": "auto_block_signal_count",
             },
             "id_field": "applicant_id",
         },

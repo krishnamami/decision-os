@@ -247,6 +247,10 @@ decisions:
       automate_if:
         - fraud_score < 0.2
         - identity_match_confidence >= 0.95
+        # FR-E: never auto-clear when a detector (FR-B/C/D) has raised an
+        # unresolved fraud signal — fall through to the persona's proposed
+        # outcome (escalate on high/any signal, block on auto_block).
+        - fraud_signal_count == 0
       recommend_if:
         - fraud_score >= 0.2
         - fraud_score < 0.5
