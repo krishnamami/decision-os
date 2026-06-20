@@ -48,10 +48,14 @@ EXPECTED_OUTCOMES = {
     'APP-MRID-SC09': ('income_verification',       'escalate'),
     'APP-MRID-SC03': ('income_verification',       'recommend'),
 
+    # RESOLVED via INC-B — rental income (Schedule E) now resolved, so the
+    # income is verifiable and income_verification recommends (was the deferred
+    # 'block' placeholder before the rental resolver existed).
+    'APP-MRID-SC12': ('income_verification',       'recommend'),
+
     # DEFERRED — needs Decision OS code changes
     'APP-MRID-SC05': ('compliance_check',          'block'),
     'APP-MRID-SC08': ('credit_assessment',         'block'),
-    'APP-MRID-SC12': ('income_verification',       'block'),
     'APP-MRID-SC14': ('product_eligibility',       'escalate'),
     'APP-MRID-SC16': ('closing_readiness',         'escalate'),
 
@@ -70,6 +74,11 @@ SCENARIO_NOTES = {
         'DTI 44% flagged for review under current rules. Rain check badge shows '
         'the loan is rate-locked. UW confirms DTI was within v1 cap at lock date. '
         'Override documented with rain check reasoning.'
+    ),
+    'APP-MRID-SC12': (
+        'Rental income resolved from Schedule E (gross $24,000 - expenses '
+        '$8,400 + depreciation $4,200 = $19,800/yr = $1,650/mo, Fannie Mae '
+        'B3-3.1-08). Income is verifiable -> income_verification recommends.'
     ),
 }
 
