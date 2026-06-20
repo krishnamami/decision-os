@@ -17,9 +17,10 @@ from api.accord.onboarding import router as onboarding_router
 from api.accord.examiner import router as examiner_router
 from api.accord.health import router as health_router
 from api.accord.workbench import router as workbench_router
+from api.accord.conditions import router as conditions_router
 
 # Every Accord router — api.main includes them all.
 # auth_router is public for /login + /signup; all other routers enforce a JWT.
-routers = [auth_router, router, mirofish_router, analytics_router, audit_router, rules_router, documents_router, validation_router, comparison_router, onboarding_router, examiner_router, health_router, workbench_router]
+routers = [auth_router, router, mirofish_router, analytics_router, audit_router, rules_router, documents_router, validation_router, comparison_router, onboarding_router, examiner_router, health_router, workbench_router, conditions_router]
 
-__all__ = ["router", "mirofish_router", "analytics_router", "audit_router", "auth_router", "rules_router", "documents_router", "validation_router", "comparison_router", "onboarding_router", "examiner_router", "health_router", "workbench_router", "routers"]
+__all__ = ["router", "mirofish_router", "analytics_router", "audit_router", "auth_router", "rules_router", "documents_router", "validation_router", "comparison_router", "onboarding_router", "examiner_router", "health_router", "workbench_router", "conditions_router", "routers"]
