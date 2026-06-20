@@ -204,6 +204,13 @@ class EdmsContextStore:
                 "loan_purpose": "loan_purpose",
                 "va_entitlement_used": "va_entitlement_used",
                 "va_entitlement_remaining": "va_entitlement_remaining",
+                # CO-C: collateral inputs for the property/appraisal resolvers.
+                "property_type": "property_type",
+                "usage_type": "usage_type",
+                "purchase_price": "purchase_price",
+                "appraised_value": "appraised_value",
+                "prop_fannie_eligible": "prop_fannie_eligible",
+                "prop_eligibility_status": "prop_eligibility_status",
             },
             "id_field": "application_id",
         },

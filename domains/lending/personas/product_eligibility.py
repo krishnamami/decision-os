@@ -7,6 +7,11 @@ from core.normalizer.models import DecisionOutcome
 from core.policy_engine import PolicyDecision
 from core.trace import SignalDirection
 
+from core.collateral.appraisal_analyzer import AppraisalAnalyzer
+from core.collateral.property_eligibility_resolver import (
+    PropertyEligibilityResolver,
+)
+
 from .base import LendingPersona, OfflineReasoning, first_object, make_signal, upstream_payload
 
 
@@ -170,6 +175,48 @@ class ProductEligibilityAgent(LendingPersona):
 
         confidence = 0.85 if eligible else 0.6
 
+        # ── CO-C: collateral resolvers (CO-A property + CO-B appraisal) ──
+        # Reads property_type/usage/purchase_price/appraised_value from the
+        # Application object. Branches only escalate to BLOCK/ESCALATE, never
+        # relax. (Policy engine still has the last word on outcome.)
+        app = first_object(bundle, "Application") or {}
+
+        def _f(x):
+            try:
+                return float(x)
+            except (TypeError, ValueError):
+                return 0.0
+
+        prop_result = PropertyEligibilityResolver().resolve(
+            property_type=app.get("property_type") or "sfr",
+            usage_type=app.get("usage_type") or "primary",
+        )
+        appr_result = AppraisalAnalyzer().analyze(
+            appraised_value=_f(app.get("appraised_value")),
+            purchase_price=_f(app.get("purchase_price")),
+            loan_amount=_f(app.get("loan_amount")),
+        )
+
+        collateral_conditions = (
+            prop_result.conditions + appr_result.conditions
+        )
+        collateral_reason = ""
+
+        if not prop_result.fannie_eligible:
+            outcome = DecisionOutcome.BLOCK
+            collateral_reason = (
+                " Property ineligible: "
+                + "; ".join(prop_result.ineligibility_reasons)
+            )
+        elif appr_result.status == "major_gap" and outcome in (
+            DecisionOutcome.ALLOW, DecisionOutcome.RECOMMEND
+        ):
+            outcome = DecisionOutcome.ESCALATE
+            collateral_reason = (
+                f" Appraisal gap: ${appr_result.gap_amount:,.0f} "
+                f"({appr_result.gap_pct:.1f}%)."
+            )
+
         return OfflineReasoning(
             output_payload={
                 "eligible_products": eligible,
@@ -178,6 +225,11 @@ class ProductEligibilityAgent(LendingPersona):
                 "no_guideline_exceptions_required": not exceptions_required,
                 "eligible_with_exceptions": bool(exceptions_required),
                 "guideline_exception_required": bool(exceptions_required),
+                # CO-C additions
+                "collateral_conditions": collateral_conditions,
+                "appraisal_status": appr_result.status,
+                "property_eligible": prop_result.fannie_eligible,
+                "appraisal_gap": appr_result.gap_amount,
             },
             proposed_outcome=outcome,
             confidence=confidence,
@@ -199,6 +251,7 @@ class ProductEligibilityAgent(LendingPersona):
                 f"{len(eligible)} eligible products"
                 f"{(' (' + str(len(exceptions_required)) + ' with exceptions)' if exceptions_required else '')}; "
                 f"proposed {outcome.value}."
+                + collateral_reason
             ),
         )
 
