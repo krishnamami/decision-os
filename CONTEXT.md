@@ -456,6 +456,113 @@ Connector layering — push vs pull (STEP 4 design)
 
 ## Session history
 
+### Session 17 — June 19 2026
+
+**Theme:** Close out the three diagnosed scenario failures from Session 16
+(→ **15/16**), lay the **P0 pricing/catalogue foundation**, build **Phase 1 of
+the Evidence Graph end-to-end** (EV-A → EV-E), and start the **title
+subsystem** (TL-A, TL-C). All work against the live EDMS RDS; commits to both
+`decision-os` and `edms-simulator` `main`.
+
+**Commits — decision-os (pushed to `main`):**
+  - `429c1de` — fix(closing): read mapped `all_conditions_cleared`/`title_clear`
+    from the bundle → SC16 escalates → **15/16**.
+  - `de89bf1` — feat(guardrails): `platform_guardrails` table (15 rows) +
+    `ThresholdResolver.validate_overlay_within_bounds()` (P0-B).
+  - `b2a1e80` — feat(overlays): seed `overlay_rules` for Meridian + Summit (P0-C).
+  - `033094c` — feat(llpa): `llpa_adjustments` grid (57 rows) + `scripts/pipeline_math.py` (P0-E).
+  - `75cce81` — feat(catalogue): `catalogue_staging` + `refresh_county_limits.py` / `refresh_llpa_grid.py`.
+  - `79f56f1` — feat(evidence-graph): EV-A schema (`evidence_nodes`/`evidence_edges`/`fact_nodes`).
+  - `d02ec22` / `459db78` / `eaab1e3` / `0865244` — EV-B1..B4 fact resolvers
+    (income / asset / credit / employment).
+  - `06bb92d` — feat(evidence-graph): EV-C cross-document validator (SC09 fraud caught).
+  - `6b0f164` — feat(evidence-graph): EV-D evidence trace builder + `decision_outputs.evidence_trace`.
+  - `f7b2fd9` — feat(evidence-graph): EV-E context enricher + SC08 confidence backfill.
+  - `a883b2a` — feat(title): TL-A entity model (`property_encumbrances`/`title_findings`/`ownership_chain`).
+  - `36addad` — feat(title): TL-C lien resolver per type.
+
+**Commits — edms-simulator (pushed to `main`):**
+  - `efdfd88` — fix(identity): emit `DRIVERS_LICENSE`/`SSN_VALIDATION`/`OFAC_REPORT`
+    for SC02–SC16 (SC01 excluded → stays fraud BLOCK).
+  - `483cb00` — fix(scenarios): SC14/SC16 DTI obligations corrected (both → 42%).
+
+**1. SC14 + SC16 fixed → 15/16.** Root causes were a *chain*, not the cascade
+   logic: (a) **DTI** — SC14/SC16 obligations were calibrated to 43% (= tenant
+   cap) and intermittently blocked; recomputed via `pipeline_math.py` to **42%**
+   so `dti_calculation=recommend`. (b) **Fraud was systemic** — the generator
+   emitted **no identity docs**, so `_derive_identity_enrichment` scored
+   `fraud_score≈0.8` / `identity_match_confidence=0.0` for **all 16**;
+   fraud_screening BLOCK cascaded through `underwriting_decision` into
+   closing/product. Fixed at the source (generator emits the 3 identity docs;
+   SC01 excluded by design). (c) **closing_readiness persona** defaulted
+   `all_conditions_cleared`/`title_clear` to `True` (read a nested checklist /
+   absent Property instead of the mapped `ComplianceRecord` fields) → `automate_if`
+   wrongly matched → `allow`; now reads the mapped fields → SC16 falls through to
+   the safe-default **escalate**. Did **not** add `escalate_if` OR-semantics — the
+   evaluator AND-s clause items (`if all_ok`), so the spec's "separate items = OR"
+   was wrong; the persona fix alone reaches escalate. SC12 remains the one fail
+   (data: stated == verified income).
+
+**2. P0 pricing/catalogue foundation.**
+   - **P0-B** `platform_guardrails`: two-sided outer bounds (agency_floor /
+     platform_ceiling) per (product, parameter); `validate_overlay_within_bounds()`
+     on `ThresholdResolver` (not the `SemanticResolver` the prompt named — that
+     has no DB conn). All 7 validation tests pass.
+   - **P0-C** `overlay_rules` seeded (Meridian 660/43/95 + fha 50; Summit 680/43);
+     `resolve_credit_floor()` now returns the overlay (660/680), not the agency
+     floor. Each overlay validated against the guardrails before seeding.
+   - **P0-E** `llpa_adjustments` (57-row Fannie FICO×LTV grid) + `pipeline_math.py`
+     (`get_llpa_adjustment` / `get_total_rate` / provisional `get_rate_for_product`
+     off `rate_sheet_entry`). SC07 (712, 90% LTV) → base 6.75 + LLPA 1.00 = **7.75%**.
+     NB: the live `rate_pricing` persona still uses a hardcoded LLPA formula —
+     swapping it to this table is **P0-D** (not done).
+   - **Catalogue staging**: `catalogue_staging` (download → pending →
+     governance_admin approve → promote) + FHFA county-limits and Fannie-LLPA
+     refresh scripts. FHFA auto-download 404s (URL changed; 2026 limits publish
+     in Nov) — documented manual `--from-file` path.
+
+**3. Evidence Graph — Phase 1 COMPLETE (EV-A → EV-E).**
+   - **EV-A** schema: `evidence_nodes`, `evidence_edges`, `fact_nodes` (RLS;
+     FK → `document_index`; partial unique index = one current fact per
+     `(app,tenant,fact_type)`; **deferrable** `superseded_by` self-FK so
+     supersede+insert runs in one txn).
+   - **EV-B** four fact resolvers, run across all 16: `qualifying_income`
+     (box1/12; paystub YTD **annualized** before cross-validate — the spec compared
+     YTD to the annual W2, a false conflict on every borrower), `verified_assets`
+     (honors `large_deposit_documented`; SC15 flags the $47K undoc deposit),
+     `governing_credit_score` (`min(primary,co)` via the **borrower_role column**;
+     fixed the spec's class-level-indentation `return` SyntaxError + `derogatory_count`
+     int handling; SC08 → 578), `employment_continuity` (sourced from the
+     `entity_states` reconciliation block since document_index has no tenure/status;
+     SC03 → self_employed via box1=0).
+   - **EV-C** cross-document validator: income (W2 vs URLA `monthly_income_stated`×12),
+     employer, property value. **SC09 caught**: URLA $145,600 vs W2 $112,000 = +30%
+     → `income_inflation` fraud signal. URLA has no employer field and no
+     purchase_price exists, so those checks are partial (flagged).
+   - **EV-D** trace builder: assembles the evidence chain into
+     `decision_outputs.evidence_trace` JSONB for the AI explanation engine; fixed
+     case-sensitive fraud detection ("FRAUD SIGNAL" uppercase) + Decimal/UUID JSON
+     serialization.
+   - **EV-E** context enricher (parallel, non-destructive layer over the persona
+     context) + **SC08 confidence backfill** (docs were `NULL` not `0` — spec's
+     `WHERE confidence_score=0` matched nothing; backfilled `0 OR NULL → 0.97`).
+     `IncomeFactResolver.resolve()` now returns a dict for parity with the other
+     three. Evaluate still **15/16** (parallel layer; personas don't READ evidence yet).
+   **Still open (persona migration):** personas don't consume the evidence layer
+   yet, so SC09's fraud signal is *available* but the fraud persona doesn't act on
+   it; SC15 `verified_assets` $42K (ending_balance) vs $52K entity_states
+   `liquid_assets_total`; SC04 `stable` fact vs `escalate` persona.
+
+**4. Title subsystem — start.**
+   - **TL-A** entity model: `property_encumbrances` (13 lien types), `title_findings`
+     (severity clear→fatal), `ownership_chain` (vesting). RLS + FK → document_index.
+     Seeded SC16 (IRS $28,400 blocks + HOA $4,200 resolvable) and SC10 (clear).
+   - **TL-C** `LienResolver` + `LIEN_RULES` (priority, blocks_closing,
+     resolution_method, condition_code/text, required_docs, Fannie/FHA/VA
+     treatment). SC16 → `block` ($28,400 payoff); lis_pendens → `fatal_block`;
+     fixed the easement `priority: None` sort crash (None → 999).
+   Next: **TL-B** (commitment extractor), **TL-D** (title_assessment persona).
+
 ### Session 16 — June 18–19 2026
 
 **Theme:** Harden transaction-data security (Phase 1, non-breaking) on the live
@@ -3514,4 +3621,4 @@ How to run smoke tests:
 
 ---
 
-*Decision OS · CONTEXT.md · Updated June 15 2026 (Session 24 — underwriter workbench redesign + full marketing landing rebuild (logo matches app nav), and the governance/audit claims stack [Prompts A–F]: rule_version_id on every decision, rain-check rate-lock pinning, state rules per property_state + /regulation-transparency, decisions.yaml governed_by citations + ThresholdResolver (tenant→agency→default w/ floor enforcement), and Policy Studio backend (floor-enforced overlay, preview-impact, rate-sheet upload). Backfilled 2,482 rule versions / 27,295 governed_by / 8,896 application_dates. Deployed to the accord ALB at frontend+api task-def rev :58. Domain + SSL still pending.)*
+*Decision OS · CONTEXT.md · Updated June 19 2026 (Session 17 — SC14/SC16 fixed → meridian 15/16 (DTI→42%, systemic fraud/identity-doc fix, closing persona reads mapped fields); P0 pricing/catalogue foundation (platform_guardrails + overlay validation, overlay_rules seeded, 57-row LLPA grid + pipeline_math, catalogue_staging + FHFA/LLPA refresh scripts); Evidence Graph Phase 1 COMPLETE EV-A→EV-E (evidence/fact nodes + edges, 4 fact resolvers ×16 scenarios, cross-doc validation caught SC09 +30% income inflation, evidence_trace on decision_outputs, parallel context enricher + SC08 confidence backfill); Title subsystem started TL-A (encumbrances/findings/ownership) + TL-C (lien resolver). Personas do not yet consume the evidence layer — that migration + TL-B/TL-D are next.)*
