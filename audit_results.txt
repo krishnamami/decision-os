@@ -1131,9 +1131,7 @@ APPLICATION: APP-MRID-SC08
        detail:   Needed for complete income/credit analysis
 
     ✅ APPRAISAL_URAR: key field = 595000
-    🔴 [CRITICAL][P1-EXTRACT] APP-MRID-SC08: BANK_STATEMENT_M1: critical fields not extracted
-       detail:   Looked for: ['checking_balance', 'account_balance', 'ending_balance']. Got: ['bank_name', 'account_holder', 'closing_balance', 'opening_balance', 'statement_end_date']
-       fix:      Fix extraction prompt or re-upload document
+    ✅ BANK_STATEMENT_M1: key field = 76000
     ✅ PAYSTUB_CURRENT: key field = 56250
     ✅ URLA_1003: key field = 535500
     ✅ W2_CURRENT: key field = 135000
@@ -1155,24 +1153,27 @@ APPLICATION: APP-MRID-SC08
     Paystub corroboration:     10.5% ✅
 
   ── PHASE 3: Asset Analysis ──
-    Checking:  $         0 × 100% = $         0
+    Checking:  $    76,000 × 100% = $    76,000
     Savings:   $         0 × 100% = $         0
     Retirement:$         0 × 60% = $         0
     Stocks:    $         0 × 70% = $         0
     ─────────────────────────────
-    Qualifying:          0
+    Qualifying:     76,000
     PITI est:  $     4,187/mo
     Req res:   $     8,374 (2mo PITI)
     Down pmt:  $    47,600
     Closing:   $    16,065
     Prepaids:  $     8,374
     Cash-to-close:$  72,039
-    After close:$  -72,039
+    After close:$    3,961
     Need:      $     8,374
-    🔴 [CRITICAL][P3-ASSETS] APP-MRID-SC08: Insufficient funds to close: $0 available vs $72,039 needed
-       detail:   Borrower cannot close this loan
-       citation: Fannie B3-4.3-01
-       fix:      Request additional asset documentation
+    🔴 [CRITICAL][P3-ASSETS] APP-MRID-SC08: Insufficient reserves after closing: $3,961 vs $8,374 needed
+       detail:   2 months PITI required
+       citation: Fannie B3-4.3-04
+       fix:      Request gift funds or additional assets
+    ℹ️  [INFO][P3-ASSETS] APP-MRID-SC08: Large deposit threshold: $5,625 (50% of $11,250/mo)
+       detail:   Manual review: check bank statements for deposits > $5,625
+       citation: Fannie B3-4.3-04
 
   ── PHASE 4: Liability Analysis ──
     URLA stated:     $      0.00/mo
@@ -2099,9 +2100,7 @@ APPLICATION: APP-MRID-SC14
        detail:   Needed for complete income/credit analysis
 
     ✅ APPRAISAL_URAR: key field = 420000
-    🔴 [CRITICAL][P1-EXTRACT] APP-MRID-SC14: BANK_STATEMENT_M1: critical fields not extracted
-       detail:   Looked for: ['checking_balance', 'account_balance', 'ending_balance']. Got: ['bank_name', 'gift_funds', 'account_holder', 'closing_balance', 'opening_balance']
-       fix:      Fix extraction prompt or re-upload document
+    ✅ BANK_STATEMENT_M1: key field = 37500
     ✅ PAYSTUB_CURRENT: key field = 36667
     ✅ URLA_1003: key field = 378000
     ✅ W2_CURRENT: key field = 88000
@@ -2124,24 +2123,27 @@ APPLICATION: APP-MRID-SC14
     Paystub corroboration:     10.5% ✅
 
   ── PHASE 3: Asset Analysis ──
-    Checking:  $         0 × 100% = $         0
+    Checking:  $    37,500 × 100% = $    37,500
     Savings:   $         0 × 100% = $         0
     Retirement:$         0 × 60% = $         0
     Stocks:    $         0 × 70% = $         0
     ─────────────────────────────
-    Qualifying:          0
+    Qualifying:     37,500
     PITI est:  $     2,956/mo
     Req res:   $     5,911 (2mo PITI)
     Down pmt:  $    33,600
     Closing:   $    11,340
     Prepaids:  $     5,911
     Cash-to-close:$  50,851
-    After close:$  -50,851
+    After close:$  -13,351
     Need:      $     5,911
-    🔴 [CRITICAL][P3-ASSETS] APP-MRID-SC14: Insufficient funds to close: $0 available vs $50,851 needed
+    🔴 [CRITICAL][P3-ASSETS] APP-MRID-SC14: Insufficient funds to close: $37,500 available vs $50,851 needed
        detail:   Borrower cannot close this loan
        citation: Fannie B3-4.3-01
        fix:      Request additional asset documentation
+    ℹ️  [INFO][P3-ASSETS] APP-MRID-SC14: Large deposit threshold: $3,667 (50% of $7,333/mo)
+       detail:   Manual review: check bank statements for deposits > $3,667
+       citation: Fannie B3-4.3-04
 
   ── PHASE 4: Liability Analysis ──
     URLA stated:     $      0.00/mo
@@ -2412,9 +2414,7 @@ APPLICATION: APP-MRID-SC16
        detail:   Needed for complete income/credit analysis
 
     ✅ APPRAISAL_URAR: key field = 440000
-    🔴 [CRITICAL][P1-EXTRACT] APP-MRID-SC16: BANK_STATEMENT_M1: critical fields not extracted
-       detail:   Looked for: ['checking_balance', 'account_balance', 'ending_balance']. Got: ['bank_name', 'gift_funds', 'account_holder', 'closing_balance', 'opening_balance']
-       fix:      Fix extraction prompt or re-upload document
+    ✅ BANK_STATEMENT_M1: key field = 41500
     ✅ PAYSTUB_CURRENT: key field = 40000
     ✅ URLA_1003: key field = 374000
     ✅ W2_CURRENT: key field = 96000
@@ -2437,24 +2437,27 @@ APPLICATION: APP-MRID-SC16
     Paystub corroboration:     10.5% ✅
 
   ── PHASE 3: Asset Analysis ──
-    Checking:  $         0 × 100% = $         0
+    Checking:  $    41,500 × 100% = $    41,500
     Savings:   $         0 × 100% = $         0
     Retirement:$         0 × 60% = $         0
     Stocks:    $         0 × 70% = $         0
     ─────────────────────────────
-    Qualifying:          0
+    Qualifying:     41,500
     PITI est:  $     2,924/mo
     Req res:   $     5,849 (2mo PITI)
     Down pmt:  $    57,200
     Closing:   $    11,220
     Prepaids:  $     5,849
     Cash-to-close:$  74,269
-    After close:$  -74,269
+    After close:$  -32,769
     Need:      $     5,849
-    🔴 [CRITICAL][P3-ASSETS] APP-MRID-SC16: Insufficient funds to close: $0 available vs $74,269 needed
+    🔴 [CRITICAL][P3-ASSETS] APP-MRID-SC16: Insufficient funds to close: $41,500 available vs $74,269 needed
        detail:   Borrower cannot close this loan
        citation: Fannie B3-4.3-01
        fix:      Request additional asset documentation
+    ℹ️  [INFO][P3-ASSETS] APP-MRID-SC16: Large deposit threshold: $4,000 (50% of $8,000/mo)
+       detail:   Manual review: check bank statements for deposits > $4,000
+       citation: Fannie B3-4.3-04
 
   ── PHASE 4: Liability Analysis ──
     URLA stated:     $      0.00/mo
@@ -2556,10 +2559,10 @@ core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
 AUDIT FINDINGS SUMMARY
 ============================================================
 Total findings: 178
-🔴 CRITICAL: 23
+🔴 CRITICAL: 20
 🟠 HIGH: 120
 🟡 MEDIUM: 22
-ℹ️  INFO: 13
+ℹ️  INFO: 16
 
 🔴 CRITICAL FINDINGS:
   [P3-ASSETS] APP-MRID-SC01: Insufficient funds to close: $24,500 available vs $51,457 needed
@@ -2596,13 +2599,10 @@ Total findings: 178
     detail: Borrower cannot close this loan
     cite:   Fannie B3-4.3-01
     fix:    Request additional asset documentation
-  [P1-EXTRACT] APP-MRID-SC08: BANK_STATEMENT_M1: critical fields not extracted
-    detail: Looked for: ['checking_balance', 'account_balance', 'ending_balance']. Got: ['bank_name', 'account_holder', 'closing_balance', 'opening_balance', 'statement_end_date']
-    fix:    Fix extraction prompt or re-upload document
-  [P3-ASSETS] APP-MRID-SC08: Insufficient funds to close: $0 available vs $72,039 needed
-    detail: Borrower cannot close this loan
-    cite:   Fannie B3-4.3-01
-    fix:    Request additional asset documentation
+  [P3-ASSETS] APP-MRID-SC08: Insufficient reserves after closing: $3,961 vs $8,374 needed
+    detail: 2 months PITI required
+    cite:   Fannie B3-4.3-04
+    fix:    Request gift funds or additional assets
   [P6-CREDIT] APP-MRID-SC08: Mid score wrong: stored 578 vs correct 760
     detail: Scores: [758.0, 760.0, 763.0]. Middle = 760
     cite:   Fannie B3-5.1-01
@@ -2631,10 +2631,7 @@ Total findings: 178
     detail: 2 months PITI required
     cite:   Fannie B3-4.3-04
     fix:    Request gift funds or additional assets
-  [P1-EXTRACT] APP-MRID-SC14: BANK_STATEMENT_M1: critical fields not extracted
-    detail: Looked for: ['checking_balance', 'account_balance', 'ending_balance']. Got: ['bank_name', 'gift_funds', 'account_holder', 'closing_balance', 'opening_balance']
-    fix:    Fix extraction prompt or re-upload document
-  [P3-ASSETS] APP-MRID-SC14: Insufficient funds to close: $0 available vs $50,851 needed
+  [P3-ASSETS] APP-MRID-SC14: Insufficient funds to close: $37,500 available vs $50,851 needed
     detail: Borrower cannot close this loan
     cite:   Fannie B3-4.3-01
     fix:    Request additional asset documentation
@@ -2642,10 +2639,7 @@ Total findings: 178
     detail: Borrower cannot close this loan
     cite:   Fannie B3-4.3-01
     fix:    Request additional asset documentation
-  [P1-EXTRACT] APP-MRID-SC16: BANK_STATEMENT_M1: critical fields not extracted
-    detail: Looked for: ['checking_balance', 'account_balance', 'ending_balance']. Got: ['bank_name', 'gift_funds', 'account_holder', 'closing_balance', 'opening_balance']
-    fix:    Fix extraction prompt or re-upload document
-  [P3-ASSETS] APP-MRID-SC16: Insufficient funds to close: $0 available vs $74,269 needed
+  [P3-ASSETS] APP-MRID-SC16: Insufficient funds to close: $41,500 available vs $74,269 needed
     detail: Borrower cannot close this loan
     cite:   Fannie B3-4.3-01
     fix:    Request additional asset documentation
@@ -3182,6 +3176,9 @@ core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
   [P3-ASSETS] APP-MRID-SC07: Large deposit threshold: $4,250 (50% of $8,500/mo)
     detail: Manual review: check bank statements for deposits > $4,250
     cite:   Fannie B3-4.3-04
+  [P3-ASSETS] APP-MRID-SC08: Large deposit threshold: $5,625 (50% of $11,250/mo)
+    detail: Manual review: check bank statements for deposits > $5,625
+    cite:   Fannie B3-4.3-04
   [P3-ASSETS] APP-MRID-SC09: Large deposit threshold: $4,667 (50% of $9,333/mo)
     detail: Manual review: check bank statements for deposits > $4,667
     cite:   Fannie B3-4.3-04
@@ -3197,8 +3194,14 @@ core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
   [P3-ASSETS] APP-MRID-SC13: Large deposit threshold: $3,833 (50% of $7,667/mo)
     detail: Manual review: check bank statements for deposits > $3,833
     cite:   Fannie B3-4.3-04
+  [P3-ASSETS] APP-MRID-SC14: Large deposit threshold: $3,667 (50% of $7,333/mo)
+    detail: Manual review: check bank statements for deposits > $3,667
+    cite:   Fannie B3-4.3-04
   [P3-ASSETS] APP-MRID-SC15: Large deposit threshold: $3,500 (50% of $7,000/mo)
     detail: Manual review: check bank statements for deposits > $3,500
+    cite:   Fannie B3-4.3-04
+  [P3-ASSETS] APP-MRID-SC16: Large deposit threshold: $4,000 (50% of $8,000/mo)
+    detail: Manual review: check bank statements for deposits > $4,000
     cite:   Fannie B3-4.3-04
 
 ============================================================
@@ -3240,14 +3243,8 @@ P1-DOCS (33 issues):
   🟠 APP-MRID-SC16: Recommended missing: Tax return (TAX_RETURN_1040)
   🟠 APP-MRID-SC16: Recommended missing: Employment verification (VOE)
 
-P1-EXTRACT (4 issues):
+P1-EXTRACT (1 issues):
   🔴 APP-MRID-SC03: W2_CURRENT: critical fields not extracted
-    → Fix extraction prompt or re-upload document
-  🔴 APP-MRID-SC08: BANK_STATEMENT_M1: critical fields not extracted
-    → Fix extraction prompt or re-upload document
-  🔴 APP-MRID-SC14: BANK_STATEMENT_M1: critical fields not extracted
-    → Fix extraction prompt or re-upload document
-  🔴 APP-MRID-SC16: BANK_STATEMENT_M1: critical fields not extracted
     → Fix extraction prompt or re-upload document
 
 P1-NULL (1 issues):
@@ -3265,8 +3262,8 @@ P3-ASSETS (14 issues):
     → Request additional asset documentation
   🔴 APP-MRID-SC07: Insufficient funds to close: $41,000 available vs $53,878 needed
     → Request additional asset documentation
-  🔴 APP-MRID-SC08: Insufficient funds to close: $0 available vs $72,039 needed
-    → Request additional asset documentation
+  🔴 APP-MRID-SC08: Insufficient reserves after closing: $3,961 vs $8,374 needed
+    → Request gift funds or additional assets
   🔴 APP-MRID-SC09: Insufficient funds to close: $31,000 available vs $59,327 needed
     → Request additional asset documentation
   🔴 APP-MRID-SC10: Insufficient funds to close: $59,000 available vs $110,421 needed
@@ -3277,11 +3274,11 @@ P3-ASSETS (14 issues):
     → Request additional asset documentation
   🔴 APP-MRID-SC13: Insufficient reserves after closing: $2,729 vs $4,856 needed
     → Request gift funds or additional assets
-  🔴 APP-MRID-SC14: Insufficient funds to close: $0 available vs $50,851 needed
+  🔴 APP-MRID-SC14: Insufficient funds to close: $37,500 available vs $50,851 needed
     → Request additional asset documentation
   🔴 APP-MRID-SC15: Insufficient funds to close: $42,000 available vs $62,453 needed
     → Request additional asset documentation
-  🔴 APP-MRID-SC16: Insufficient funds to close: $0 available vs $74,269 needed
+  🔴 APP-MRID-SC16: Insufficient funds to close: $41,500 available vs $74,269 needed
     → Request additional asset documentation
 
 P5-DTI (14 issues):

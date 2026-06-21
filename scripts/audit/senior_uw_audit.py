@@ -247,6 +247,7 @@ async def phase1_file_assembly(conn, app_id, docs):
             'checking_balance',
             'account_balance',
             'ending_balance',
+            'closing_balance',
         ],
         'PAYSTUB_CURRENT': [
             'ytd_gross', 'ytd_income',
@@ -784,6 +785,7 @@ async def phase3_assets(
                 'checking_balance',
                 'account_balance',
                 'ending_balance',
+                'closing_balance',
                 'available_balance',
             ]) or 0
         )
