@@ -244,10 +244,12 @@ async def phase1_file_assembly(conn, app_id, docs):
             'market_value',
         ],
         'BANK_STATEMENT_M1': [
+            'closing_balance',
             'checking_balance',
             'account_balance',
             'ending_balance',
-            'closing_balance',
+            'available_balance',
+            'gift_funds',
         ],
         'PAYSTUB_CURRENT': [
             'ytd_gross', 'ytd_income',
@@ -782,16 +784,20 @@ async def phase3_assets(
         bf = doc_map['BANK_STATEMENT_M1']
         checking = parse_amount(
             first_val(bf, [
+                'closing_balance',
                 'checking_balance',
                 'account_balance',
                 'ending_balance',
-                'closing_balance',
                 'available_balance',
+                'current_balance',
+                'ledger_balance',
+                'gift_funds',
             ]) or 0
         )
         savings = parse_amount(
             first_val(bf, [
                 'savings_balance',
+                'savings_account_balance',
             ]) or 0
         )
 
