@@ -48,66 +48,72 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+# NOTE: Fannie restructured the Selling Guide — the old slash paths
+# (/sel/b3/4.3/04) now 404 / redirect to a "content has moved" wall. The live
+# format is /sel/{section-id}/{slug}. URLs below are the verified live pages,
+# with descriptions corrected to the actual section titles.
 SECTIONS = {
     'B3-4.3-04': {
         'url': 'https://selling-guide.fanniemae.com'
-               '/sel/b3/4.3/04',
+               '/sel/b3-4.3-04/personal-gifts',
         'category': 'asset',
-        'desc': 'Asset qualification factors',
+        'desc': 'Personal gifts (asset sourcing)',
     },
     'B3-5.3-07': {
         'url': 'https://selling-guide.fanniemae.com'
-               '/sel/b3/5.3/07',
+               '/sel/b3-5.3-07/significant-derogatory-credit'
+               '-events-waiting-periods-and-re-establishing-credit',
         'category': 'credit',
-        'desc': 'Credit waiting periods',
+        'desc': 'Derogatory credit waiting periods',
     },
     'B3-6-05': {
         'url': 'https://selling-guide.fanniemae.com'
-               '/sel/b3/6/05',
+               '/sel/b3-6-05/monthly-debt-obligations',
         'category': 'income',
-        'desc': 'Student loan treatment',
+        'desc': 'Monthly debt obligations',
     },
     'B3-3.1-08': {
         'url': 'https://selling-guide.fanniemae.com'
-               '/sel/b3/3.1/08',
+               '/sel/b3-3.1-08/rental-income',
         'category': 'income',
         'desc': 'Rental income / vacancy factor',
     },
     'B3-3.4-01': {
         'url': 'https://selling-guide.fanniemae.com'
-               '/sel/b3/3.4/01',
+               '/sel/b3-3.4-01/general-requirements-other-sources-income',
         'category': 'income',
-        'desc': 'Self-employed income',
+        'desc': 'General requirements, other income sources',
     },
     'B2-1.3-01': {
         'url': 'https://selling-guide.fanniemae.com'
-               '/sel/b2/1.3/01',
+               '/sel/b2-1.3-01/purchase-transactions',
         'category': 'property',
-        'desc': 'Ineligible property types',
+        'desc': 'Purchase transactions',
     },
     'B7-3-02': {
         'url': 'https://selling-guide.fanniemae.com'
-               '/sel/b7/3/02',
+               '/sel/b7-3-02/property-insurance-requirements'
+               '-one-four-unit-properties',
         'category': 'property',
-        'desc': 'Flood zone insurance',
+        'desc': 'Property insurance (1-4 unit)',
     },
     'B3-3.1-01': {
         'url': 'https://selling-guide.fanniemae.com'
-               '/sel/b3/3.1/01',
+               '/sel/b3-3.1-01/general-income-information',
         'category': 'income',
-        'desc': 'Income / DTI requirements',
+        'desc': 'General income information',
     },
     'B4-2.1-01': {
         'url': 'https://selling-guide.fanniemae.com'
-               '/sel/b4/2.1/01',
+               '/sel/b4-2.1-01/general-information-project-standards',
         'category': 'property',
-        'desc': 'Condo warrantability',
+        'desc': 'Condo/PUD project standards',
     },
     'B4-1.1-01': {
         'url': 'https://selling-guide.fanniemae.com'
-               '/sel/b4/1.1/01',
+               '/sel/b4-1.1-01/definition-market-value',
         'category': 'property',
-        'desc': 'Appraisal and LTV',
+        'desc': 'Definition of market value (appraisal)',
     },
 }
 
@@ -178,39 +184,98 @@ async def fetch_section(
     section_id: str,
     info: dict,
 ) -> Optional[str]:
-    """Download and clean a Selling Guide section."""
-    print(f'  Fetching {section_id}: {info["url"]}')
+    """
+    Fetch Fannie Selling Guide section.
+    Uses Playwright headless browser because
+    the Selling Guide is a client-rendered SPA.
+    Plain HTTP GET returns 404.
+    """
+    url  = info['url']
+    print(f'  Fetching {section_id}: {url}')
+
     try:
-        async with httpx.AsyncClient(
-            timeout=30,
-            follow_redirects=True,
-            headers={
-                'User-Agent': 'AccordRulesBot/1.0'
-            }
-        ) as client:
-            r = await client.get(info['url'])
-            r.raise_for_status()
-            text = r.text
-            # Strip scripts and styles
-            text = re.sub(
-                r'<script[^>]*>.*?</script>',
-                '', text, flags=re.DOTALL
+        from playwright.async_api import (
+            async_playwright
+        )
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(
+                headless=True
             )
-            text = re.sub(
-                r'<style[^>]*>.*?</style>',
-                '', text, flags=re.DOTALL
+            page = await browser.new_page()
+
+            # Block images/fonts to speed up
+            await page.route(
+                '**/*.{png,jpg,jpeg,gif,svg,'
+                'woff,woff2,ttf,eot}',
+                lambda r: r.abort()
             )
-            # Strip HTML tags
-            text = re.sub(r'<[^>]+>', ' ', text)
-            # Normalize whitespace
-            text = re.sub(
-                r'\s+', ' ', text
-            ).strip()
+
+            await page.goto(
+                url,
+                wait_until='networkidle',
+                timeout=30000,
+            )
+
+            # Wait for main content to render
+            try:
+                await page.wait_for_selector(
+                    'main, article, .content,'
+                    ' .sg-content, [role=main]',
+                    timeout=10000,
+                )
+            except Exception:
+                # Page loaded but no selector —
+                # still try to get content
+                pass
+
+            # Get rendered text
+            text = await page.inner_text('body')
+            await browser.close()
+
+            # Clean whitespace
+            text = re.sub(r'\s+', ' ', text).strip()
             print(f'  Got {len(text)} chars')
             return text[:8000]
+
     except Exception as e:
-        print(f'  FETCH ERROR: {type(e).__name__}: {e!r}')
-        return None
+        print(f'  PLAYWRIGHT ERROR: {e}')
+        # Fallback: try plain HTTP
+        print(f'  Trying plain HTTP fallback...')
+        try:
+            async with httpx.AsyncClient(
+                timeout=30,
+                follow_redirects=True,
+                headers={
+                    'User-Agent':
+                    'Mozilla/5.0 (Windows NT 10.0;'
+                    ' Win64; x64) AppleWebKit/537.36'
+                }
+            ) as client:
+                r = await client.get(url)
+                r.raise_for_status()
+                text = r.text
+                text = re.sub(
+                    r'<script[^>]*>.*?</script>',
+                    '', text, flags=re.DOTALL
+                )
+                text = re.sub(
+                    r'<style[^>]*>.*?</style>',
+                    '', text, flags=re.DOTALL
+                )
+                text = re.sub(
+                    r'<[^>]+>', ' ', text
+                )
+                text = re.sub(
+                    r'\s+', ' ', text
+                ).strip()
+                print(
+                    f'  HTTP fallback: '
+                    f'{len(text)} chars'
+                )
+                return text[:8000] if text else None
+        except Exception as e2:
+            print(f'  HTTP fallback failed: {e2}')
+            return None
 
 
 def extract_rules(
