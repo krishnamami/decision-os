@@ -336,6 +336,23 @@ class PersonaRunner:
             decision_id=decision_id,
             upstream_decision_ids=upstream or None,
         )
+
+        # EV-F (RA-3B): enrich the context with evidence facts from
+        # fact_nodes BEFORE any persona reads the bundle. Non-destructive
+        # (adds an "evidence" object alongside the entity_states-derived
+        # objects), best-effort (never breaks a decision). No persona/policy
+        # logic reads these yet — that's RA-3D.
+        try:
+            from core.evidence.context_enricher import ContextEnricher
+            pool = await self.decision_store._get_pool()
+            async with pool.acquire() as conn:
+                facts = await ContextEnricher(conn).evidence_facts(
+                    app_id, tenant_id
+                )
+            snapshot.context["evidence"] = {app_id: facts}
+        except Exception:  # noqa: BLE001 — enrichment must never break a decision
+            pass
+
         bundle = ContextBundle(
             decision_id=decision_id,
             application_id=app_id,
