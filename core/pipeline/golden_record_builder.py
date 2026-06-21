@@ -227,6 +227,161 @@ def extract_purchase_price(
     return val if val > 0 else None
 
 
+# ── ADD 1 — occupancy_type from URLA ─────────
+def extract_occupancy_type(
+    doc_map: dict
+) -> Optional[str]:
+    """
+    Extract occupancy type from URLA.
+    Normalizes to canonical form.
+    primary / second_home / investment
+    Citation: Fannie Mae B2-1.1-01
+    """
+    if 'URLA_1003' not in doc_map:
+        return None
+    raw = first_val(
+        get_fields(doc_map['URLA_1003']),
+        ['occupancy_type', 'occupancy',
+         'property_use', 'intended_occupancy',
+         'subject_property_occupancy']
+    )
+    if not raw:
+        return None
+    normalized = str(raw).lower().strip()
+    return {
+        'primary':            'primary',
+        'primary residence':  'primary',
+        'owner occupied':     'primary',
+        'owner-occupied':     'primary',
+        'second home':        'second_home',
+        'second':             'second_home',
+        'vacation':           'second_home',
+        'investment':         'investment',
+        'investment property': 'investment',
+        'non-owner':          'investment',
+        'rental':             'investment',
+    }.get(normalized, normalized)
+
+
+# ── ADD 2 — loan_purpose from URLA ───────────
+def extract_loan_purpose(
+    doc_map: dict
+) -> Optional[str]:
+    """
+    Extract loan purpose from URLA.
+    purchase / refinance / cash_out
+    Citation: Fannie Mae B2-1.3-02
+    """
+    if 'URLA_1003' not in doc_map:
+        return None
+    raw = first_val(
+        get_fields(doc_map['URLA_1003']),
+        ['loan_purpose', 'purpose',
+         'transaction_type',
+         'purpose_of_loan']
+    )
+    if not raw:
+        return None
+    normalized = str(raw).lower().strip()
+    return {
+        'purchase':       'purchase',
+        'refinance':      'refinance',
+        'refi':           'refinance',
+        'rate/term':      'refinance',
+        'rate and term':  'refinance',
+        'cash-out':       'cash_out',
+        'cash out':       'cash_out',
+        'cashout':        'cash_out',
+    }.get(normalized, normalized)
+
+
+# ── ADD 3 — verified monthly obligations ─────
+def extract_monthly_obligations(
+    doc_map: dict,
+    student_loan_rate_pct: float = 1.0,
+    exclude_medical: bool = True,
+) -> dict:
+    """
+    Extract verified monthly obligations
+    from credit report.
+    Applies Fannie rules:
+      Student loan deferred: 1% of balance
+      Medical collections: excluded
+    Returns dict with breakdown.
+    Citation: Fannie B3-6-02, B3-6-05,
+              LL-2023-02
+    """
+    result = {
+        'total_monthly_obligations': 0.0,
+        'credit_report_obligations': 0.0,
+        'student_loan_1pct':        0.0,
+        'medical_excluded':         0.0,
+        'source': 'none',
+    }
+
+    if 'CREDIT_REPORT' not in doc_map:
+        # Fall back to URLA stated
+        if 'URLA_1003' in doc_map:
+            uf = get_fields(doc_map['URLA_1003'])
+            stated = parse_amount(
+                first_val(uf, [
+                    'monthly_obligations',
+                    'total_monthly_payments',
+                    'monthly_debts',
+                ])
+            )
+            result['total_monthly_obligations']\
+                = stated
+            result['source'] = 'urla_stated'
+        return result
+
+    cf = get_fields(doc_map['CREDIT_REPORT'])
+
+    # Total from credit report. NOTE: the live
+    # CREDIT_REPORT stores this as
+    # total_monthly_obligations (checked first).
+    cr_total = parse_amount(
+        first_val(cf, [
+            'total_monthly_obligations',
+            'total_monthly_payments',
+            'monthly_obligations',
+            'minimum_payments',
+            'total_minimum_payments',
+        ])
+    )
+
+    # Student loan 1% rule
+    sl_balance = parse_amount(
+        first_val(cf, [
+            'student_loan_balance',
+            'deferred_student_loans',
+            'student_loan_outstanding',
+        ])
+    )
+    sl_1pct = round(
+        sl_balance * student_loan_rate_pct / 100,
+        2
+    ) if sl_balance > 0 else 0.0
+
+    # Medical collections excluded
+    medical = parse_amount(
+        first_val(cf, [
+            'medical_collection_balance',
+            'medical_collections',
+        ])
+    ) if exclude_medical else 0.0
+
+    result['credit_report_obligations'] = cr_total
+    result['student_loan_1pct']         = sl_1pct
+    result['medical_excluded']          = medical
+    result['total_monthly_obligations'] = round(
+        cr_total + sl_1pct, 2
+    )
+    result['source'] = 'credit_report'
+
+    return result
+
+
 # ── Unit tests ───────────────────────────────
 def _unit_test():
     """
@@ -356,8 +511,49 @@ def _unit_test():
     assert abs(pp - 549000) < 0.01
     print(f'  ✅ Purchase price: ${pp:,.0f}')
 
+    # Test 13: occupancy_type
+    doc_primary = {
+        'URLA_1003': {
+            'extracted_fields': {
+                'occupancy_type': 'Primary Residence'
+            }
+        }
+    }
+    occ = extract_occupancy_type(doc_primary)
+    assert occ == 'primary', \
+        f'Occupancy: got {occ}'
+    print(f'  ✅ Occupancy type: {occ}')
+
+    # Test 14: loan_purpose
+    doc_purchase = {
+        'URLA_1003': {
+            'extracted_fields': {
+                'loan_purpose': 'Purchase'
+            }
+        }
+    }
+    purpose = extract_loan_purpose(doc_purchase)
+    assert purpose == 'purchase'
+    print(f'  ✅ Loan purpose: {purpose}')
+
+    # Test 15: monthly obligations
+    doc_cr = {
+        'CREDIT_REPORT': {
+            'extracted_fields': {
+                'total_monthly_payments': 575,
+                'student_loan_balance': 35000,
+            }
+        }
+    }
+    oblig = extract_monthly_obligations(doc_cr)
+    assert oblig['credit_report_obligations'] == 575
+    assert oblig['student_loan_1pct'] == 350
+    assert oblig['total_monthly_obligations'] == 925
+    print(f'  ✅ Monthly obligations: '
+          f'${oblig["total_monthly_obligations"]:,.0f}/mo')
+
     print(f'\n✅ All unit tests passed.')
-    print(f'   12/12 assertions correct.')
+    print(f'   15/15 assertions correct.')
     return True
 
 
