@@ -1015,9 +1015,11 @@ async def phase4_liabilities(
 
         cr_obligations = parse_amount(
             first_val(cf, [
+                'total_monthly_obligations',
                 'total_monthly_payments',
                 'monthly_obligations',
                 'minimum_payments',
+                'total_minimum_payments',
             ]) or 0
         )
 
@@ -1025,6 +1027,7 @@ async def phase4_liabilities(
         cr_student_bal = parse_amount(
             first_val(cf, [
                 'student_loan_balance',
+                'student_loans',
                 'deferred_student_loans',
                 'student_loan_outstanding',
             ]) or 0
