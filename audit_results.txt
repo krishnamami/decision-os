@@ -1,0 +1,3474 @@
+============================================================
+SENIOR UNDERWRITER AUDIT
+ACCORD Decision OS — Critical Phase
+Tenant: meridian
+Date:   2026-06-20
+============================================================
+
+Persona: Senior UW / 20yr experience
+Standard: Fannie Mae Selling Guide
+Purpose: Repurchase defense audit
+============================================================
+
+Auditing 16 applications
+
+
+════════════════════════════════════════════════════════════
+APPLICATION: APP-MRID-SC01
+════════════════════════════════════════════════════════════
+
+  ── PHASE 1: File Assembly ──
+    ✅ URLA_1003
+    ✅ W2_CURRENT
+    ✅ PAYSTUB_CURRENT
+    ✅ BANK_STATEMENT_M1
+    ✅ APPRAISAL_URAR
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC01: Recommended missing: Tax return (TAX_RETURN_1040)
+       detail:   Needed for complete income/credit analysis
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC01: Recommended missing: Employment verification (VOE)
+       detail:   Needed for complete income/credit analysis
+
+    ✅ APPRAISAL_URAR: key field = 425000.0
+    ✅ BANK_STATEMENT_M1: key field = 24500.0
+    ✅ PAYSTUB_CURRENT: key field = 40000.0
+    ✅ URLA_1003: key field = 382500
+    ✅ W2_CURRENT: key field = 96000.0
+    🟡 [MEDIUM][P1-EXTRACT] APP-MRID-SC01: property_type not in appraisal extracted_fields
+       detail:   Cannot corroborate URLA-stated property_type
+       fix:      Add property_type to appraisal extraction prompt
+
+  ── PHASE 2: Income Analysis ──
+    URLA stated:        $  8,000.00/mo
+    W2 current:         $  8,000.00/mo
+    W2 prior:           $  8,000.00/mo
+    Paystub YTD:        $  7,156.86/mo
+    SE (Schedule C):    $      0.00/mo
+    Rental (Schedule E):$      0.00/mo
+    ─────────────────────────────
+    Total verified:     $  8,000.00/mo
+    entity_states:      $  8,000.00/mo
+    Stated vs W2:              0.0%
+    Income trend:             +0.0% YoY ✅
+    Paystub corroboration:     10.5% ✅
+
+  ── PHASE 3: Asset Analysis ──
+    Checking:  $    24,500 × 100% = $    24,500
+    Savings:   $         0 × 100% = $         0
+    Retirement:$         0 × 60% = $         0
+    Stocks:    $         0 × 70% = $         0
+    ─────────────────────────────
+    Qualifying:     24,500
+    PITI est:  $     2,991/mo
+    Req res:   $     5,982 (2mo PITI)
+    Down pmt:  $    34,000
+    Closing:   $    11,475
+    Prepaids:  $     5,982
+    Cash-to-close:$  51,457
+    After close:$  -26,957
+    Need:      $     5,982
+    🔴 [CRITICAL][P3-ASSETS] APP-MRID-SC01: Insufficient funds to close: $24,500 available vs $51,457 needed
+       detail:   Borrower cannot close this loan
+       citation: Fannie B3-4.3-01
+       fix:      Request additional asset documentation
+    ℹ️  [INFO][P3-ASSETS] APP-MRID-SC01: Large deposit threshold: $4,000 (50% of $8,000/mo)
+       detail:   Manual review: check bank statements for deposits > $4,000
+       citation: Fannie B3-4.3-04
+
+  ── PHASE 4: Liability Analysis ──
+    URLA stated:     $      0.00/mo
+    Credit report:   $      0.00/mo
+    Student loan 1%: $      0.00/mo
+    Medical excl:    $      0.00/mo
+    PITI (est):      $  2,990.88/mo
+    ─────────────────────────────
+    Total oblig:     $  2,990.88/mo
+
+  ── PHASE 5: Ratio Analysis ──
+    Front-end DTI:       37.386%
+    Back-end stored:     55.981%
+    Back-end recalc:     37.386%
+    🟠 [HIGH][P5-DTI] APP-MRID-SC01: DTI mismatch: stored 56.0% vs recomputed 37.4%
+       detail:   Delta: 18.6%
+       fix:      Fix DTI calculation in golden_record_builder
+    DTI limit:             43.0%
+    ✅ DTI within limit
+
+    Appraised:       $   425,000
+    Purchase:        $   416,500
+    Lesser of:       $   416,500
+    Loan amount:     $   382,500
+    LTV stored:          90.000%
+    LTV correct:         91.837%
+    🟠 [HIGH][P5-LTV] APP-MRID-SC01: LTV wrong: stored 90.000% vs correct 91.837%
+       detail:   Lesser-of rule not applied. Should use $416,500 not $425,000
+       citation: Fannie B4-1.1-01
+       fix:      Fix LTV calc: use min(appraised, purchase)
+    LTV limit:             95.0%
+    ✅ LTV within limit
+
+  ── PHASE 6: Credit Analysis ──
+    Mid score stored: 720
+    Bureau scores:    EQ=720 EXP=718 TU=724
+    Mid correct:      720
+    ✅ Mid score correct
+    ✅ Score 720 >= floor 660
+
+  ── PHASE 7: Property Analysis ──
+    property_type: sfr
+    flood_zone:    None
+    year_built:    None
+    appr property_type: None
+    appr condition:     C3
+    appr date:          2026-05-15
+    ✅ Appraisal age: 36 days
+    ✅ Condition: C3
+    🟠 [HIGH][P7-PROPERTY] APP-MRID-SC01: flood_zone not in entity_states
+       detail:   Cannot determine flood insurance requirement
+       citation: Fannie B7-3-02
+       fix:      Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+    ✅ Property type sfr eligible
+
+  ── PHASE 8: Evidence Chain ──
+    evidence_nodes: 21
+    fact_nodes:     4
+    employment_continuity: conf=1.00 conflict=False
+    governing_credit_score: conf=1.00 conflict=False
+    qualifying_income: conf=1.00 conflict=False
+    verified_assets: conf=1.00 conflict=False
+    ✅ Decision output exists
+    ✅ Decision trace exists
+
+  ── PHASE 9: Decision Quality ──
+    🟠 [HIGH][P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+       detail:   Personas read raw entity_states. Decisions not evidence-based.
+       citation: EV-F
+       fix:      Wire fact_nodes into vw_*_context views
+    🟠 [HIGH][P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+       detail:   core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+       fix:      Phase RA-4: rewrite resolvers to use rule_loader
+    Decision outputs: 11452 across 16 apps
+    APP-MRID-SC01: allow, block, escalate, recommend
+    APP-MRID-SC02: allow, block, escalate, recommend
+    APP-MRID-SC03: allow, block, escalate, recommend
+    APP-MRID-SC04: allow, block, escalate, recommend
+    APP-MRID-SC05: allow, block, escalate, recommend
+    APP-MRID-SC06: allow, block, escalate, recommend
+    APP-MRID-SC07: allow, block, escalate, recommend
+    APP-MRID-SC08: allow, block, escalate, recommend
+    APP-MRID-SC09: allow, block, escalate, recommend
+    APP-MRID-SC10: allow, block, escalate, recommend
+    APP-MRID-SC11: allow, block, escalate, recommend
+    APP-MRID-SC12: allow, block, escalate, recommend
+    APP-MRID-SC13: allow, block, escalate, recommend
+    APP-MRID-SC14: allow, block, escalate, recommend
+    APP-MRID-SC15: allow, block, escalate, recommend
+    APP-MRID-SC16: allow, block, escalate, recommend
+
+════════════════════════════════════════════════════════════
+APPLICATION: APP-MRID-SC02
+════════════════════════════════════════════════════════════
+
+  ── PHASE 1: File Assembly ──
+    ✅ URLA_1003
+    ✅ W2_CURRENT
+    ✅ PAYSTUB_CURRENT
+    ✅ BANK_STATEMENT_M1
+    ✅ APPRAISAL_URAR
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC02: Recommended missing: Tax return (TAX_RETURN_1040)
+       detail:   Needed for complete income/credit analysis
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC02: Recommended missing: Employment verification (VOE)
+       detail:   Needed for complete income/credit analysis
+
+    ✅ APPRAISAL_URAR: key field = 520000.0
+    ✅ BANK_STATEMENT_M1: key field = 91000.0
+    ✅ PAYSTUB_CURRENT: key field = 45000.0
+    ✅ URLA_1003: key field = 468000
+    ✅ W2_CURRENT: key field = 108000.0
+    🟡 [MEDIUM][P1-EXTRACT] APP-MRID-SC02: property_type not in appraisal extracted_fields
+       detail:   Cannot corroborate URLA-stated property_type
+       fix:      Add property_type to appraisal extraction prompt
+
+  ── PHASE 2: Income Analysis ──
+    URLA stated:        $  9,000.00/mo
+    W2 current:         $  9,000.00/mo
+    W2 prior:           $  9,000.00/mo
+    Paystub YTD:        $  8,051.47/mo
+    SE (Schedule C):    $      0.00/mo
+    Rental (Schedule E):$      0.00/mo
+    ─────────────────────────────
+    Total verified:     $  9,000.00/mo
+    entity_states:      $  9,000.00/mo
+    Stated vs W2:              0.0%
+    Income trend:             +0.0% YoY ✅
+    Paystub corroboration:     10.5% ✅
+
+  ── PHASE 3: Asset Analysis ──
+    Checking:  $    91,000 × 100% = $    91,000
+    Savings:   $         0 × 100% = $         0
+    Retirement:$         0 × 60% = $         0
+    Stocks:    $         0 × 70% = $         0
+    ─────────────────────────────
+    Qualifying:     91,000
+    PITI est:  $     3,659/mo
+    Req res:   $     7,319 (2mo PITI)
+    Down pmt:  $    41,600
+    Closing:   $    14,040
+    Prepaids:  $     7,319
+    Cash-to-close:$  62,959
+    After close:$   28,041
+    Need:      $     7,319
+    ✅ Assets sufficient to close
+    ✅ Reserves met after close
+    ℹ️  [INFO][P3-ASSETS] APP-MRID-SC02: Large deposit threshold: $4,500 (50% of $9,000/mo)
+       detail:   Manual review: check bank statements for deposits > $4,500
+       citation: Fannie B3-4.3-04
+
+  ── PHASE 4: Liability Analysis ──
+    URLA stated:     $      0.00/mo
+    Credit report:   $      0.00/mo
+    Student loan 1%: $      0.00/mo
+    Medical excl:    $      0.00/mo
+    PITI (est):      $  3,659.43/mo
+    ─────────────────────────────
+    Total oblig:     $  3,659.43/mo
+
+  ── PHASE 5: Ratio Analysis ──
+    Front-end DTI:       40.660%
+    Back-end stored:     80.214%
+    Back-end recalc:     40.660%
+    🟠 [HIGH][P5-DTI] APP-MRID-SC02: DTI mismatch: stored 80.2% vs recomputed 40.7%
+       detail:   Delta: 39.6%
+       fix:      Fix DTI calculation in golden_record_builder
+    DTI limit:             43.0%
+    ✅ DTI within limit
+
+    Appraised:       $   520,000
+    Purchase:        $   509,600
+    Lesser of:       $   509,600
+    Loan amount:     $   468,000
+    LTV stored:          90.000%
+    LTV correct:         91.837%
+    🟠 [HIGH][P5-LTV] APP-MRID-SC02: LTV wrong: stored 90.000% vs correct 91.837%
+       detail:   Lesser-of rule not applied. Should use $509,600 not $520,000
+       citation: Fannie B4-1.1-01
+       fix:      Fix LTV calc: use min(appraised, purchase)
+    LTV limit:             95.0%
+    ✅ LTV within limit
+
+  ── PHASE 6: Credit Analysis ──
+    Mid score stored: 742
+    Bureau scores:    EQ=742 EXP=740 TU=745
+    Mid correct:      742
+    ✅ Mid score correct
+    ✅ Score 742 >= floor 660
+
+  ── PHASE 7: Property Analysis ──
+    property_type: sfr
+    flood_zone:    None
+    year_built:    None
+    appr property_type: None
+    appr condition:     C2
+    appr date:          2026-05-15
+    ✅ Appraisal age: 36 days
+    ✅ Condition: C2
+    🟠 [HIGH][P7-PROPERTY] APP-MRID-SC02: flood_zone not in entity_states
+       detail:   Cannot determine flood insurance requirement
+       citation: Fannie B7-3-02
+       fix:      Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+    ✅ Property type sfr eligible
+
+  ── PHASE 8: Evidence Chain ──
+    evidence_nodes: 21
+    fact_nodes:     4
+    employment_continuity: conf=1.00 conflict=False
+    governing_credit_score: conf=1.00 conflict=False
+    qualifying_income: conf=1.00 conflict=False
+    verified_assets: conf=1.00 conflict=False
+    ✅ Decision output exists
+    ✅ Decision trace exists
+
+  ── PHASE 9: Decision Quality ──
+    🟠 [HIGH][P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+       detail:   Personas read raw entity_states. Decisions not evidence-based.
+       citation: EV-F
+       fix:      Wire fact_nodes into vw_*_context views
+    🟠 [HIGH][P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+       detail:   core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+       fix:      Phase RA-4: rewrite resolvers to use rule_loader
+    Decision outputs: 11452 across 16 apps
+    APP-MRID-SC01: allow, block, escalate, recommend
+    APP-MRID-SC02: allow, block, escalate, recommend
+    APP-MRID-SC03: allow, block, escalate, recommend
+    APP-MRID-SC04: allow, block, escalate, recommend
+    APP-MRID-SC05: allow, block, escalate, recommend
+    APP-MRID-SC06: allow, block, escalate, recommend
+    APP-MRID-SC07: allow, block, escalate, recommend
+    APP-MRID-SC08: allow, block, escalate, recommend
+    APP-MRID-SC09: allow, block, escalate, recommend
+    APP-MRID-SC10: allow, block, escalate, recommend
+    APP-MRID-SC11: allow, block, escalate, recommend
+    APP-MRID-SC12: allow, block, escalate, recommend
+    APP-MRID-SC13: allow, block, escalate, recommend
+    APP-MRID-SC14: allow, block, escalate, recommend
+    APP-MRID-SC15: allow, block, escalate, recommend
+    APP-MRID-SC16: allow, block, escalate, recommend
+
+════════════════════════════════════════════════════════════
+APPLICATION: APP-MRID-SC03
+════════════════════════════════════════════════════════════
+
+  ── PHASE 1: File Assembly ──
+    ✅ URLA_1003
+    ✅ W2_CURRENT
+    ✅ PAYSTUB_CURRENT
+    ✅ BANK_STATEMENT_M1
+    ✅ APPRAISAL_URAR
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC03: Recommended missing: Tax return (TAX_RETURN_1040)
+       detail:   Needed for complete income/credit analysis
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC03: Recommended missing: Employment verification (VOE)
+       detail:   Needed for complete income/credit analysis
+
+    ✅ APPRAISAL_URAR: key field = 615000.0
+    ✅ BANK_STATEMENT_M1: key field = 52000.0
+    ✅ PAYSTUB_CURRENT: key field = 57500.0
+    ✅ URLA_1003: key field = 492000
+    🔴 [CRITICAL][P1-EXTRACT] APP-MRID-SC03: W2_CURRENT: critical fields not extracted
+       detail:   Looked for: ['box1_wages', 'wages', 'gross_wages', 'total_wages']. Got: ['tax_year', 'ssn_last4', 'box1_wages', 'employer_ein', 'employee_name']
+       fix:      Fix extraction prompt or re-upload document
+    🔴 [CRITICAL][P1-NULL] APP-MRID-SC03: entity_states.dti_back is NULL
+       detail:   Field not populated from document extraction
+       fix:      Fix golden_record_builder mapping for dti_back
+    🟡 [MEDIUM][P1-EXTRACT] APP-MRID-SC03: property_type not in appraisal extracted_fields
+       detail:   Cannot corroborate URLA-stated property_type
+       fix:      Add property_type to appraisal extraction prompt
+
+  ── PHASE 2: Income Analysis ──
+    URLA stated:        $ 11,500.00/mo
+    W2 current:         $      0.00/mo
+    W2 prior:           $      0.00/mo
+    Paystub YTD:        $ 10,287.99/mo
+    SE (Schedule C):    $  9,937.50/mo
+    Rental (Schedule E):$      0.00/mo
+    ─────────────────────────────
+    Total verified:     $  9,937.50/mo
+    entity_states:      $  9,937.50/mo
+
+  ── PHASE 3: Asset Analysis ──
+    Checking:  $    52,000 × 100% = $    52,000
+    Savings:   $         0 × 100% = $         0
+    Retirement:$         0 × 60% = $         0
+    Stocks:    $         0 × 70% = $         0
+    ─────────────────────────────
+    Qualifying:     52,000
+    PITI est:  $     3,847/mo
+    Req res:   $     7,694 (2mo PITI)
+    Down pmt:  $   110,700
+    Closing:   $    14,760
+    Prepaids:  $     7,694
+    Cash-to-close:$ 133,154
+    After close:$  -81,154
+    Need:      $     7,694
+    🔴 [CRITICAL][P3-ASSETS] APP-MRID-SC03: Insufficient funds to close: $52,000 available vs $133,154 needed
+       detail:   Borrower cannot close this loan
+       citation: Fannie B3-4.3-01
+       fix:      Request additional asset documentation
+    ℹ️  [INFO][P3-ASSETS] APP-MRID-SC03: Large deposit threshold: $4,969 (50% of $9,938/mo)
+       detail:   Manual review: check bank statements for deposits > $4,969
+       citation: Fannie B3-4.3-04
+
+  ── PHASE 4: Liability Analysis ──
+    URLA stated:     $      0.00/mo
+    Credit report:   $      0.00/mo
+    Student loan 1%: $      0.00/mo
+    Medical excl:    $      0.00/mo
+    PITI (est):      $  3,847.09/mo
+    ─────────────────────────────
+    Total oblig:     $  3,847.09/mo
+
+  ── PHASE 5: Ratio Analysis ──
+    Front-end DTI:       38.713%
+    Back-end stored:      0.000%
+    Back-end recalc:     38.713%
+    DTI limit:             43.0%
+    ✅ DTI within limit
+
+    Appraised:       $   615,000
+    Purchase:        $   602,700
+    Lesser of:       $   602,700
+    Loan amount:     $   492,000
+    LTV stored:          80.000%
+    LTV correct:         81.633%
+    🟠 [HIGH][P5-LTV] APP-MRID-SC03: LTV wrong: stored 80.000% vs correct 81.633%
+       detail:   Lesser-of rule not applied. Should use $602,700 not $615,000
+       citation: Fannie B4-1.1-01
+       fix:      Fix LTV calc: use min(appraised, purchase)
+    LTV limit:             95.0%
+    ✅ LTV within limit
+
+  ── PHASE 6: Credit Analysis ──
+    Mid score stored: 718
+    Bureau scores:    EQ=718 EXP=715 TU=722
+    Mid correct:      718
+    ✅ Mid score correct
+    ✅ Score 718 >= floor 660
+
+  ── PHASE 7: Property Analysis ──
+    property_type: sfr
+    flood_zone:    None
+    year_built:    None
+    appr property_type: None
+    appr condition:     C2
+    appr date:          2026-05-15
+    ✅ Appraisal age: 36 days
+    ✅ Condition: C2
+    🟠 [HIGH][P7-PROPERTY] APP-MRID-SC03: flood_zone not in entity_states
+       detail:   Cannot determine flood insurance requirement
+       citation: Fannie B7-3-02
+       fix:      Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+    ✅ Property type sfr eligible
+
+  ── PHASE 8: Evidence Chain ──
+    evidence_nodes: 21
+    fact_nodes:     5
+    employment_continuity: conf=1.00 conflict=True
+    🟠 [HIGH][P8-EVIDENCE] APP-MRID-SC03: Conflict detected: employment_continuity
+       detail:   Multiple sources disagree. Use conservative value.
+    employment_continuity: conf=1.00 conflict=True
+    🟠 [HIGH][P8-EVIDENCE] APP-MRID-SC03: Conflict detected: employment_continuity
+       detail:   Multiple sources disagree. Use conservative value.
+    governing_credit_score: conf=1.00 conflict=False
+    qualifying_income: conf=0.85 conflict=False
+    verified_assets: conf=1.00 conflict=False
+    ✅ Decision output exists
+    ✅ Decision trace exists
+
+  ── PHASE 9: Decision Quality ──
+    🟠 [HIGH][P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+       detail:   Personas read raw entity_states. Decisions not evidence-based.
+       citation: EV-F
+       fix:      Wire fact_nodes into vw_*_context views
+    🟠 [HIGH][P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+       detail:   core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+       fix:      Phase RA-4: rewrite resolvers to use rule_loader
+    Decision outputs: 11452 across 16 apps
+    APP-MRID-SC01: allow, block, escalate, recommend
+    APP-MRID-SC02: allow, block, escalate, recommend
+    APP-MRID-SC03: allow, block, escalate, recommend
+    APP-MRID-SC04: allow, block, escalate, recommend
+    APP-MRID-SC05: allow, block, escalate, recommend
+    APP-MRID-SC06: allow, block, escalate, recommend
+    APP-MRID-SC07: allow, block, escalate, recommend
+    APP-MRID-SC08: allow, block, escalate, recommend
+    APP-MRID-SC09: allow, block, escalate, recommend
+    APP-MRID-SC10: allow, block, escalate, recommend
+    APP-MRID-SC11: allow, block, escalate, recommend
+    APP-MRID-SC12: allow, block, escalate, recommend
+    APP-MRID-SC13: allow, block, escalate, recommend
+    APP-MRID-SC14: allow, block, escalate, recommend
+    APP-MRID-SC15: allow, block, escalate, recommend
+    APP-MRID-SC16: allow, block, escalate, recommend
+
+════════════════════════════════════════════════════════════
+APPLICATION: APP-MRID-SC04
+════════════════════════════════════════════════════════════
+
+  ── PHASE 1: File Assembly ──
+    ✅ URLA_1003
+    ✅ W2_CURRENT
+    ✅ PAYSTUB_CURRENT
+    ✅ BANK_STATEMENT_M1
+    ✅ APPRAISAL_URAR
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC04: Recommended missing: Tax return (TAX_RETURN_1040)
+       detail:   Needed for complete income/credit analysis
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC04: Recommended missing: Employment verification (VOE)
+       detail:   Needed for complete income/credit analysis
+
+    ✅ APPRAISAL_URAR: key field = 385000.0
+    ✅ BANK_STATEMENT_M1: key field = 34500.0
+    ✅ PAYSTUB_CURRENT: key field = 36667.0
+    ✅ URLA_1003: key field = 308000
+    ✅ W2_CURRENT: key field = 88000.0
+    🟡 [MEDIUM][P1-EXTRACT] APP-MRID-SC04: property_type not in appraisal extracted_fields
+       detail:   Cannot corroborate URLA-stated property_type
+       fix:      Add property_type to appraisal extraction prompt
+
+  ── PHASE 2: Income Analysis ──
+    URLA stated:        $  7,333.00/mo
+    W2 current:         $  7,333.33/mo
+    W2 prior:           $  7,333.33/mo
+    Paystub YTD:        $  6,560.52/mo
+    SE (Schedule C):    $      0.00/mo
+    Rental (Schedule E):$      0.00/mo
+    ─────────────────────────────
+    Total verified:     $  7,333.33/mo
+    entity_states:      $  7,333.33/mo
+    Stated vs W2:              0.0%
+    Income trend:             +0.0% YoY ✅
+    Paystub corroboration:     10.5% ✅
+
+  ── PHASE 3: Asset Analysis ──
+    Checking:  $    34,500 × 100% = $    34,500
+    Savings:   $         0 × 100% = $         0
+    Retirement:$         0 × 60% = $         0
+    Stocks:    $         0 × 70% = $         0
+    ─────────────────────────────
+    Qualifying:     34,500
+    PITI est:  $     2,408/mo
+    Req res:   $     4,817 (2mo PITI)
+    Down pmt:  $    69,300
+    Closing:   $     9,240
+    Prepaids:  $     4,817
+    Cash-to-close:$  83,357
+    After close:$  -48,857
+    Need:      $     4,817
+    🔴 [CRITICAL][P3-ASSETS] APP-MRID-SC04: Insufficient funds to close: $34,500 available vs $83,357 needed
+       detail:   Borrower cannot close this loan
+       citation: Fannie B3-4.3-01
+       fix:      Request additional asset documentation
+    ℹ️  [INFO][P3-ASSETS] APP-MRID-SC04: Large deposit threshold: $3,667 (50% of $7,333/mo)
+       detail:   Manual review: check bank statements for deposits > $3,667
+       citation: Fannie B3-4.3-04
+
+  ── PHASE 4: Liability Analysis ──
+    URLA stated:     $      0.00/mo
+    Credit report:   $      0.00/mo
+    Student loan 1%: $      0.00/mo
+    Medical excl:    $      0.00/mo
+    PITI (est):      $  2,408.34/mo
+    ─────────────────────────────
+    Total oblig:     $  2,408.34/mo
+
+  ── PHASE 5: Ratio Analysis ──
+    Front-end DTI:       32.841%
+    Back-end stored:     57.591%
+    Back-end recalc:     32.841%
+    🟠 [HIGH][P5-DTI] APP-MRID-SC04: DTI mismatch: stored 57.6% vs recomputed 32.8%
+       detail:   Delta: 24.8%
+       fix:      Fix DTI calculation in golden_record_builder
+    DTI limit:             43.0%
+    ✅ DTI within limit
+
+    Appraised:       $   385,000
+    Purchase:        $   377,300
+    Lesser of:       $   377,300
+    Loan amount:     $   308,000
+    LTV stored:          80.000%
+    LTV correct:         81.633%
+    🟠 [HIGH][P5-LTV] APP-MRID-SC04: LTV wrong: stored 80.000% vs correct 81.633%
+       detail:   Lesser-of rule not applied. Should use $377,300 not $385,000
+       citation: Fannie B4-1.1-01
+       fix:      Fix LTV calc: use min(appraised, purchase)
+    LTV limit:             95.0%
+    ✅ LTV within limit
+
+  ── PHASE 6: Credit Analysis ──
+    Mid score stored: 698
+    Bureau scores:    EQ=698 EXP=695 TU=702
+    Mid correct:      698
+    ✅ Mid score correct
+    ✅ Score 698 >= floor 660
+
+  ── PHASE 7: Property Analysis ──
+    property_type: sfr
+    flood_zone:    None
+    year_built:    None
+    appr property_type: None
+    appr condition:     C3
+    appr date:          2026-05-15
+    ✅ Appraisal age: 36 days
+    ✅ Condition: C3
+    🟠 [HIGH][P7-PROPERTY] APP-MRID-SC04: flood_zone not in entity_states
+       detail:   Cannot determine flood insurance requirement
+       citation: Fannie B7-3-02
+       fix:      Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+    ✅ Property type sfr eligible
+
+  ── PHASE 8: Evidence Chain ──
+    evidence_nodes: 21
+    fact_nodes:     5
+    employment_continuity: conf=1.00 conflict=False
+    employment_continuity: conf=1.00 conflict=False
+    governing_credit_score: conf=1.00 conflict=False
+    qualifying_income: conf=1.00 conflict=False
+    verified_assets: conf=1.00 conflict=False
+    ✅ Decision output exists
+    ✅ Decision trace exists
+
+  ── PHASE 9: Decision Quality ──
+    🟠 [HIGH][P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+       detail:   Personas read raw entity_states. Decisions not evidence-based.
+       citation: EV-F
+       fix:      Wire fact_nodes into vw_*_context views
+    🟠 [HIGH][P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+       detail:   core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+       fix:      Phase RA-4: rewrite resolvers to use rule_loader
+    Decision outputs: 11452 across 16 apps
+    APP-MRID-SC01: allow, block, escalate, recommend
+    APP-MRID-SC02: allow, block, escalate, recommend
+    APP-MRID-SC03: allow, block, escalate, recommend
+    APP-MRID-SC04: allow, block, escalate, recommend
+    APP-MRID-SC05: allow, block, escalate, recommend
+    APP-MRID-SC06: allow, block, escalate, recommend
+    APP-MRID-SC07: allow, block, escalate, recommend
+    APP-MRID-SC08: allow, block, escalate, recommend
+    APP-MRID-SC09: allow, block, escalate, recommend
+    APP-MRID-SC10: allow, block, escalate, recommend
+    APP-MRID-SC11: allow, block, escalate, recommend
+    APP-MRID-SC12: allow, block, escalate, recommend
+    APP-MRID-SC13: allow, block, escalate, recommend
+    APP-MRID-SC14: allow, block, escalate, recommend
+    APP-MRID-SC15: allow, block, escalate, recommend
+    APP-MRID-SC16: allow, block, escalate, recommend
+
+════════════════════════════════════════════════════════════
+APPLICATION: APP-MRID-SC05
+════════════════════════════════════════════════════════════
+
+  ── PHASE 1: File Assembly ──
+    ✅ URLA_1003
+    ✅ W2_CURRENT
+    ✅ PAYSTUB_CURRENT
+    ✅ BANK_STATEMENT_M1
+    ✅ APPRAISAL_URAR
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC05: Recommended missing: Tax return (TAX_RETURN_1040)
+       detail:   Needed for complete income/credit analysis
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC05: Recommended missing: Employment verification (VOE)
+       detail:   Needed for complete income/credit analysis
+
+    ✅ APPRAISAL_URAR: key field = 680000.0
+    ✅ BANK_STATEMENT_M1: key field = 67000.0
+    ✅ PAYSTUB_CURRENT: key field = 60417.0
+    ✅ URLA_1003: key field = 578000
+    ✅ W2_CURRENT: key field = 145000.0
+    🟡 [MEDIUM][P1-EXTRACT] APP-MRID-SC05: property_type not in appraisal extracted_fields
+       detail:   Cannot corroborate URLA-stated property_type
+       fix:      Add property_type to appraisal extraction prompt
+
+  ── PHASE 2: Income Analysis ──
+    URLA stated:        $ 12,083.00/mo
+    W2 current:         $ 12,083.33/mo
+    W2 prior:           $ 12,083.33/mo
+    Paystub YTD:        $ 10,809.90/mo
+    SE (Schedule C):    $      0.00/mo
+    Rental (Schedule E):$      0.00/mo
+    ─────────────────────────────
+    Total verified:     $ 12,083.33/mo
+    entity_states:      $ 12,083.33/mo
+    Stated vs W2:              0.0%
+    Income trend:             +0.0% YoY ✅
+    Paystub corroboration:     10.5% ✅
+
+  ── PHASE 3: Asset Analysis ──
+    Checking:  $    67,000 × 100% = $    67,000
+    Savings:   $         0 × 100% = $         0
+    Retirement:$         0 × 60% = $         0
+    Stocks:    $         0 × 70% = $         0
+    ─────────────────────────────
+    Qualifying:     67,000
+    PITI est:  $     4,520/mo
+    Req res:   $     9,039 (2mo PITI)
+    Down pmt:  $    88,400
+    Closing:   $    17,340
+    Prepaids:  $     9,039
+    Cash-to-close:$ 114,779
+    After close:$  -47,779
+    Need:      $     9,039
+    🔴 [CRITICAL][P3-ASSETS] APP-MRID-SC05: Insufficient funds to close: $67,000 available vs $114,779 needed
+       detail:   Borrower cannot close this loan
+       citation: Fannie B3-4.3-01
+       fix:      Request additional asset documentation
+    ℹ️  [INFO][P3-ASSETS] APP-MRID-SC05: Large deposit threshold: $6,042 (50% of $12,083/mo)
+       detail:   Manual review: check bank statements for deposits > $6,042
+       citation: Fannie B3-4.3-04
+
+  ── PHASE 4: Liability Analysis ──
+    URLA stated:     $      0.00/mo
+    Credit report:   $      0.00/mo
+    Student loan 1%: $      0.00/mo
+    Medical excl:    $      0.00/mo
+    PITI (est):      $  4,519.55/mo
+    ─────────────────────────────
+    Total oblig:     $  4,519.55/mo
+
+  ── PHASE 5: Ratio Analysis ──
+    Front-end DTI:       37.403%
+    Back-end stored:     59.182%
+    Back-end recalc:     37.403%
+    🟠 [HIGH][P5-DTI] APP-MRID-SC05: DTI mismatch: stored 59.2% vs recomputed 37.4%
+       detail:   Delta: 21.8%
+       fix:      Fix DTI calculation in golden_record_builder
+    DTI limit:             43.0%
+    ✅ DTI within limit
+
+    Appraised:       $   680,000
+    Purchase:        $   666,400
+    Lesser of:       $   666,400
+    Loan amount:     $   578,000
+    LTV stored:          85.000%
+    LTV correct:         86.735%
+    🟠 [HIGH][P5-LTV] APP-MRID-SC05: LTV wrong: stored 85.000% vs correct 86.735%
+       detail:   Lesser-of rule not applied. Should use $666,400 not $680,000
+       citation: Fannie B4-1.1-01
+       fix:      Fix LTV calc: use min(appraised, purchase)
+    LTV limit:             95.0%
+    ✅ LTV within limit
+
+  ── PHASE 6: Credit Analysis ──
+    Mid score stored: 768
+    Bureau scores:    EQ=768 EXP=765 TU=771
+    Mid correct:      768
+    ✅ Mid score correct
+    ✅ Score 768 >= floor 660
+
+  ── PHASE 7: Property Analysis ──
+    property_type: sfr
+    flood_zone:    None
+    year_built:    None
+    appr property_type: None
+    appr condition:     C2
+    appr date:          2026-05-15
+    ✅ Appraisal age: 36 days
+    ✅ Condition: C2
+    🟠 [HIGH][P7-PROPERTY] APP-MRID-SC05: flood_zone not in entity_states
+       detail:   Cannot determine flood insurance requirement
+       citation: Fannie B7-3-02
+       fix:      Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+    ✅ Property type sfr eligible
+
+  ── PHASE 8: Evidence Chain ──
+    evidence_nodes: 21
+    fact_nodes:     4
+    employment_continuity: conf=1.00 conflict=False
+    governing_credit_score: conf=1.00 conflict=False
+    qualifying_income: conf=1.00 conflict=False
+    verified_assets: conf=1.00 conflict=False
+    ✅ Decision output exists
+    ✅ Decision trace exists
+
+  ── PHASE 9: Decision Quality ──
+    🟠 [HIGH][P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+       detail:   Personas read raw entity_states. Decisions not evidence-based.
+       citation: EV-F
+       fix:      Wire fact_nodes into vw_*_context views
+    🟠 [HIGH][P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+       detail:   core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+       fix:      Phase RA-4: rewrite resolvers to use rule_loader
+    Decision outputs: 11452 across 16 apps
+    APP-MRID-SC01: allow, block, escalate, recommend
+    APP-MRID-SC02: allow, block, escalate, recommend
+    APP-MRID-SC03: allow, block, escalate, recommend
+    APP-MRID-SC04: allow, block, escalate, recommend
+    APP-MRID-SC05: allow, block, escalate, recommend
+    APP-MRID-SC06: allow, block, escalate, recommend
+    APP-MRID-SC07: allow, block, escalate, recommend
+    APP-MRID-SC08: allow, block, escalate, recommend
+    APP-MRID-SC09: allow, block, escalate, recommend
+    APP-MRID-SC10: allow, block, escalate, recommend
+    APP-MRID-SC11: allow, block, escalate, recommend
+    APP-MRID-SC12: allow, block, escalate, recommend
+    APP-MRID-SC13: allow, block, escalate, recommend
+    APP-MRID-SC14: allow, block, escalate, recommend
+    APP-MRID-SC15: allow, block, escalate, recommend
+    APP-MRID-SC16: allow, block, escalate, recommend
+
+════════════════════════════════════════════════════════════
+APPLICATION: APP-MRID-SC06
+════════════════════════════════════════════════════════════
+
+  ── PHASE 1: File Assembly ──
+    ✅ URLA_1003
+    ✅ W2_CURRENT
+    ✅ PAYSTUB_CURRENT
+    ✅ BANK_STATEMENT_M1
+    ✅ APPRAISAL_URAR
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC06: Recommended missing: Tax return (TAX_RETURN_1040)
+       detail:   Needed for complete income/credit analysis
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC06: Recommended missing: Employment verification (VOE)
+       detail:   Needed for complete income/credit analysis
+
+    ✅ APPRAISAL_URAR: key field = 325000.0
+    ✅ BANK_STATEMENT_M1: key field = 43000.0
+    ✅ PAYSTUB_CURRENT: key field = 32500.0
+    ✅ URLA_1003: key field = 308750
+    ✅ W2_CURRENT: key field = 78000.0
+    🟡 [MEDIUM][P1-EXTRACT] APP-MRID-SC06: property_type not in appraisal extracted_fields
+       detail:   Cannot corroborate URLA-stated property_type
+       fix:      Add property_type to appraisal extraction prompt
+
+  ── PHASE 2: Income Analysis ──
+    URLA stated:        $  6,500.00/mo
+    W2 current:         $  6,500.00/mo
+    W2 prior:           $  6,500.00/mo
+    Paystub YTD:        $  5,814.95/mo
+    SE (Schedule C):    $      0.00/mo
+    Rental (Schedule E):$      0.00/mo
+    ─────────────────────────────
+    Total verified:     $  6,500.00/mo
+    entity_states:      $  6,500.00/mo
+    Stated vs W2:              0.0%
+    Income trend:             +0.0% YoY ✅
+    Paystub corroboration:     10.5% ✅
+
+  ── PHASE 3: Asset Analysis ──
+    Checking:  $    43,000 × 100% = $    43,000
+    Savings:   $         0 × 100% = $         0
+    Retirement:$         0 × 60% = $         0
+    Stocks:    $         0 × 70% = $         0
+    ─────────────────────────────
+    Qualifying:     43,000
+    PITI est:  $     2,414/mo
+    Req res:   $     4,828 (2mo PITI)
+    Down pmt:  $     9,750
+    Closing:   $     9,262
+    Prepaids:  $     4,828
+    Cash-to-close:$  23,841
+    After close:$   19,159
+    Need:      $     4,828
+    ✅ Assets sufficient to close
+    ✅ Reserves met after close
+    ℹ️  [INFO][P3-ASSETS] APP-MRID-SC06: Large deposit threshold: $3,250 (50% of $6,500/mo)
+       detail:   Manual review: check bank statements for deposits > $3,250
+       citation: Fannie B3-4.3-04
+
+  ── PHASE 4: Liability Analysis ──
+    URLA stated:     $      0.00/mo
+    Credit report:   $      0.00/mo
+    Student loan 1%: $      0.00/mo
+    Medical excl:    $      0.00/mo
+    PITI (est):      $  2,414.21/mo
+    ─────────────────────────────
+    Total oblig:     $  2,414.21/mo
+
+  ── PHASE 5: Ratio Analysis ──
+    Front-end DTI:       37.142%
+    Back-end stored:     64.371%
+    Back-end recalc:     37.142%
+    🟠 [HIGH][P5-DTI] APP-MRID-SC06: DTI mismatch: stored 64.4% vs recomputed 37.1%
+       detail:   Delta: 27.2%
+       fix:      Fix DTI calculation in golden_record_builder
+    DTI limit:             43.0%
+    ✅ DTI within limit
+
+    Appraised:       $   325,000
+    Purchase:        $   318,500
+    Lesser of:       $   318,500
+    Loan amount:     $   308,750
+    LTV stored:          95.000%
+    LTV correct:         96.939%
+    🟠 [HIGH][P5-LTV] APP-MRID-SC06: LTV wrong: stored 95.000% vs correct 96.939%
+       detail:   Lesser-of rule not applied. Should use $318,500 not $325,000
+       citation: Fannie B4-1.1-01
+       fix:      Fix LTV calc: use min(appraised, purchase)
+    🔴 [CRITICAL][P5-LTV] APP-MRID-SC06: LTV exceeds limit: 96.9% > 95.0%
+       detail:   Meridian overlay max: 95.0%
+       citation: Overlay: meridian/ltv_max
+       fix:      Increase down payment.
+
+  ── PHASE 6: Credit Analysis ──
+    Mid score stored: 627
+    Bureau scores:    EQ=627 EXP=624 TU=630
+    Mid correct:      627
+    ✅ Mid score correct
+    🔴 [CRITICAL][P6-CREDIT] APP-MRID-SC06: Credit score below floor: 627 < 660
+       detail:   Meridian minimum: 660
+       citation: Overlay: meridian/credit_floor
+       fix:      Loan does not qualify.
+
+  ── PHASE 7: Property Analysis ──
+    property_type: sfr
+    flood_zone:    None
+    year_built:    None
+    appr property_type: None
+    appr condition:     C2
+    appr date:          2026-05-15
+    ✅ Appraisal age: 36 days
+    ✅ Condition: C2
+    🟠 [HIGH][P7-PROPERTY] APP-MRID-SC06: flood_zone not in entity_states
+       detail:   Cannot determine flood insurance requirement
+       citation: Fannie B7-3-02
+       fix:      Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+    ✅ Property type sfr eligible
+
+  ── PHASE 8: Evidence Chain ──
+    evidence_nodes: 21
+    fact_nodes:     4
+    employment_continuity: conf=1.00 conflict=False
+    governing_credit_score: conf=1.00 conflict=False
+    qualifying_income: conf=1.00 conflict=False
+    verified_assets: conf=1.00 conflict=False
+    ✅ Decision output exists
+    ✅ Decision trace exists
+
+  ── PHASE 9: Decision Quality ──
+    🟠 [HIGH][P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+       detail:   Personas read raw entity_states. Decisions not evidence-based.
+       citation: EV-F
+       fix:      Wire fact_nodes into vw_*_context views
+    🟠 [HIGH][P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+       detail:   core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+       fix:      Phase RA-4: rewrite resolvers to use rule_loader
+    Decision outputs: 11452 across 16 apps
+    APP-MRID-SC01: allow, block, escalate, recommend
+    APP-MRID-SC02: allow, block, escalate, recommend
+    APP-MRID-SC03: allow, block, escalate, recommend
+    APP-MRID-SC04: allow, block, escalate, recommend
+    APP-MRID-SC05: allow, block, escalate, recommend
+    APP-MRID-SC06: allow, block, escalate, recommend
+    APP-MRID-SC07: allow, block, escalate, recommend
+    APP-MRID-SC08: allow, block, escalate, recommend
+    APP-MRID-SC09: allow, block, escalate, recommend
+    APP-MRID-SC10: allow, block, escalate, recommend
+    APP-MRID-SC11: allow, block, escalate, recommend
+    APP-MRID-SC12: allow, block, escalate, recommend
+    APP-MRID-SC13: allow, block, escalate, recommend
+    APP-MRID-SC14: allow, block, escalate, recommend
+    APP-MRID-SC15: allow, block, escalate, recommend
+    APP-MRID-SC16: allow, block, escalate, recommend
+
+════════════════════════════════════════════════════════════
+APPLICATION: APP-MRID-SC07
+════════════════════════════════════════════════════════════
+
+  ── PHASE 1: File Assembly ──
+    ✅ URLA_1003
+    ✅ W2_CURRENT
+    ✅ PAYSTUB_CURRENT
+    ✅ BANK_STATEMENT_M1
+    ✅ APPRAISAL_URAR
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC07: Recommended missing: Tax return (TAX_RETURN_1040)
+       detail:   Needed for complete income/credit analysis
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC07: Recommended missing: Employment verification (VOE)
+       detail:   Needed for complete income/credit analysis
+
+    ✅ APPRAISAL_URAR: key field = 445000.0
+    ✅ BANK_STATEMENT_M1: key field = 41000.0
+    ✅ PAYSTUB_CURRENT: key field = 42500.0
+    ✅ URLA_1003: key field = 400500
+    ✅ W2_CURRENT: key field = 102000.0
+    🟡 [MEDIUM][P1-EXTRACT] APP-MRID-SC07: property_type not in appraisal extracted_fields
+       detail:   Cannot corroborate URLA-stated property_type
+       fix:      Add property_type to appraisal extraction prompt
+
+  ── PHASE 2: Income Analysis ──
+    URLA stated:        $  8,500.00/mo
+    W2 current:         $  8,500.00/mo
+    W2 prior:           $  8,500.00/mo
+    Paystub YTD:        $  7,604.17/mo
+    SE (Schedule C):    $      0.00/mo
+    Rental (Schedule E):$      0.00/mo
+    ─────────────────────────────
+    Total verified:     $  8,500.00/mo
+    entity_states:      $  8,500.00/mo
+    Stated vs W2:              0.0%
+    Income trend:             +0.0% YoY ✅
+    Paystub corroboration:     10.5% ✅
+
+  ── PHASE 3: Asset Analysis ──
+    Checking:  $    41,000 × 100% = $    41,000
+    Savings:   $         0 × 100% = $         0
+    Retirement:$         0 × 60% = $         0
+    Stocks:    $         0 × 70% = $         0
+    ─────────────────────────────
+    Qualifying:     41,000
+    PITI est:  $     3,132/mo
+    Req res:   $     6,263 (2mo PITI)
+    Down pmt:  $    35,600
+    Closing:   $    12,015
+    Prepaids:  $     6,263
+    Cash-to-close:$  53,878
+    After close:$  -12,878
+    Need:      $     6,263
+    🔴 [CRITICAL][P3-ASSETS] APP-MRID-SC07: Insufficient funds to close: $41,000 available vs $53,878 needed
+       detail:   Borrower cannot close this loan
+       citation: Fannie B3-4.3-01
+       fix:      Request additional asset documentation
+    ℹ️  [INFO][P3-ASSETS] APP-MRID-SC07: Large deposit threshold: $4,250 (50% of $8,500/mo)
+       detail:   Manual review: check bank statements for deposits > $4,250
+       citation: Fannie B3-4.3-04
+
+  ── PHASE 4: Liability Analysis ──
+    URLA stated:     $      0.00/mo
+    Credit report:   $      0.00/mo
+    Student loan 1%: $      0.00/mo
+    Medical excl:    $      0.00/mo
+    PITI (est):      $  3,131.62/mo
+    ─────────────────────────────
+    Total oblig:     $  3,131.62/mo
+
+  ── PHASE 5: Ratio Analysis ──
+    Front-end DTI:       36.843%
+    Back-end stored:     41.995%
+    Back-end recalc:     36.843%
+    🟠 [HIGH][P5-DTI] APP-MRID-SC07: DTI mismatch: stored 42.0% vs recomputed 36.8%
+       detail:   Delta: 5.2%
+       fix:      Fix DTI calculation in golden_record_builder
+    DTI limit:             43.0%
+    ✅ DTI within limit
+
+    Appraised:       $   445,000
+    Purchase:        $   436,100
+    Lesser of:       $   436,100
+    Loan amount:     $   400,500
+    LTV stored:          90.000%
+    LTV correct:         91.837%
+    🟠 [HIGH][P5-LTV] APP-MRID-SC07: LTV wrong: stored 90.000% vs correct 91.837%
+       detail:   Lesser-of rule not applied. Should use $436,100 not $445,000
+       citation: Fannie B4-1.1-01
+       fix:      Fix LTV calc: use min(appraised, purchase)
+    LTV limit:             95.0%
+    ✅ LTV within limit
+
+  ── PHASE 6: Credit Analysis ──
+    Mid score stored: 712
+    Bureau scores:    EQ=712 EXP=710 TU=715
+    Mid correct:      712
+    ✅ Mid score correct
+    ✅ Score 712 >= floor 660
+
+  ── PHASE 7: Property Analysis ──
+    property_type: sfr
+    flood_zone:    None
+    year_built:    None
+    appr property_type: None
+    appr condition:     C2
+    appr date:          2026-05-15
+    ✅ Appraisal age: 36 days
+    ✅ Condition: C2
+    🟠 [HIGH][P7-PROPERTY] APP-MRID-SC07: flood_zone not in entity_states
+       detail:   Cannot determine flood insurance requirement
+       citation: Fannie B7-3-02
+       fix:      Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+    ✅ Property type sfr eligible
+
+  ── PHASE 8: Evidence Chain ──
+    evidence_nodes: 21
+    fact_nodes:     6
+    employment_continuity: conf=1.00 conflict=False
+    employment_continuity: conf=1.00 conflict=False
+    governing_credit_score: conf=1.00 conflict=False
+    qualifying_income: conf=1.00 conflict=False
+    qualifying_income: conf=1.00 conflict=False
+    verified_assets: conf=1.00 conflict=False
+    ✅ Decision output exists
+    ✅ Decision trace exists
+
+  ── PHASE 9: Decision Quality ──
+    🟠 [HIGH][P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+       detail:   Personas read raw entity_states. Decisions not evidence-based.
+       citation: EV-F
+       fix:      Wire fact_nodes into vw_*_context views
+    🟠 [HIGH][P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+       detail:   core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+       fix:      Phase RA-4: rewrite resolvers to use rule_loader
+    Decision outputs: 11452 across 16 apps
+    APP-MRID-SC01: allow, block, escalate, recommend
+    APP-MRID-SC02: allow, block, escalate, recommend
+    APP-MRID-SC03: allow, block, escalate, recommend
+    APP-MRID-SC04: allow, block, escalate, recommend
+    APP-MRID-SC05: allow, block, escalate, recommend
+    APP-MRID-SC06: allow, block, escalate, recommend
+    APP-MRID-SC07: allow, block, escalate, recommend
+    APP-MRID-SC08: allow, block, escalate, recommend
+    APP-MRID-SC09: allow, block, escalate, recommend
+    APP-MRID-SC10: allow, block, escalate, recommend
+    APP-MRID-SC11: allow, block, escalate, recommend
+    APP-MRID-SC12: allow, block, escalate, recommend
+    APP-MRID-SC13: allow, block, escalate, recommend
+    APP-MRID-SC14: allow, block, escalate, recommend
+    APP-MRID-SC15: allow, block, escalate, recommend
+    APP-MRID-SC16: allow, block, escalate, recommend
+
+════════════════════════════════════════════════════════════
+APPLICATION: APP-MRID-SC08
+════════════════════════════════════════════════════════════
+
+  ── PHASE 1: File Assembly ──
+    ✅ URLA_1003
+    ✅ W2_CURRENT
+    ✅ PAYSTUB_CURRENT
+    ✅ BANK_STATEMENT_M1
+    ✅ APPRAISAL_URAR
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC08: Recommended missing: Prior year W2 (W2_PRIOR)
+       detail:   Needed for complete income/credit analysis
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC08: Recommended missing: Tax return (TAX_RETURN_1040)
+       detail:   Needed for complete income/credit analysis
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC08: Recommended missing: Employment verification (VOE)
+       detail:   Needed for complete income/credit analysis
+
+    ✅ APPRAISAL_URAR: key field = 595000
+    🔴 [CRITICAL][P1-EXTRACT] APP-MRID-SC08: BANK_STATEMENT_M1: critical fields not extracted
+       detail:   Looked for: ['checking_balance', 'account_balance', 'ending_balance']. Got: ['bank_name', 'account_holder', 'closing_balance', 'opening_balance', 'statement_end_date']
+       fix:      Fix extraction prompt or re-upload document
+    ✅ PAYSTUB_CURRENT: key field = 56250
+    ✅ URLA_1003: key field = 535500
+    ✅ W2_CURRENT: key field = 135000
+    🟡 [MEDIUM][P1-EXTRACT] APP-MRID-SC08: property_type not in appraisal extracted_fields
+       detail:   Cannot corroborate URLA-stated property_type
+       fix:      Add property_type to appraisal extraction prompt
+
+  ── PHASE 2: Income Analysis ──
+    URLA stated:        $ 11,250.00/mo
+    W2 current:         $ 11,250.00/mo
+    W2 prior:           $      0.00/mo
+    Paystub YTD:        $ 10,064.34/mo
+    SE (Schedule C):    $      0.00/mo
+    Rental (Schedule E):$      0.00/mo
+    ─────────────────────────────
+    Total verified:     $ 11,250.00/mo
+    entity_states:      $ 11,250.00/mo
+    Stated vs W2:              0.0%
+    Paystub corroboration:     10.5% ✅
+
+  ── PHASE 3: Asset Analysis ──
+    Checking:  $         0 × 100% = $         0
+    Savings:   $         0 × 100% = $         0
+    Retirement:$         0 × 60% = $         0
+    Stocks:    $         0 × 70% = $         0
+    ─────────────────────────────
+    Qualifying:          0
+    PITI est:  $     4,187/mo
+    Req res:   $     8,374 (2mo PITI)
+    Down pmt:  $    47,600
+    Closing:   $    16,065
+    Prepaids:  $     8,374
+    Cash-to-close:$  72,039
+    After close:$  -72,039
+    Need:      $     8,374
+    🔴 [CRITICAL][P3-ASSETS] APP-MRID-SC08: Insufficient funds to close: $0 available vs $72,039 needed
+       detail:   Borrower cannot close this loan
+       citation: Fannie B3-4.3-01
+       fix:      Request additional asset documentation
+
+  ── PHASE 4: Liability Analysis ──
+    URLA stated:     $      0.00/mo
+    Credit report:   $      0.00/mo
+    Student loan 1%: $      0.00/mo
+    Medical excl:    $      0.00/mo
+    PITI (est):      $  4,187.23/mo
+    ─────────────────────────────
+    Total oblig:     $  4,187.23/mo
+
+  ── PHASE 5: Ratio Analysis ──
+    Front-end DTI:       37.220%
+    Back-end stored:     83.110%
+    Back-end recalc:     37.220%
+    🟠 [HIGH][P5-DTI] APP-MRID-SC08: DTI mismatch: stored 83.1% vs recomputed 37.2%
+       detail:   Delta: 45.9%
+       fix:      Fix DTI calculation in golden_record_builder
+    DTI limit:             43.0%
+    ✅ DTI within limit
+
+    Appraised:       $   595,000
+    Purchase:        $   583,100
+    Lesser of:       $   583,100
+    Loan amount:     $   535,500
+    LTV stored:          90.000%
+    LTV correct:         91.837%
+    🟠 [HIGH][P5-LTV] APP-MRID-SC08: LTV wrong: stored 90.000% vs correct 91.837%
+       detail:   Lesser-of rule not applied. Should use $583,100 not $595,000
+       citation: Fannie B4-1.1-01
+       fix:      Fix LTV calc: use min(appraised, purchase)
+    LTV limit:             95.0%
+    ✅ LTV within limit
+
+  ── PHASE 6: Credit Analysis ──
+    Mid score stored: 578
+    Bureau scores:    EQ=760 EXP=758 TU=763
+    Mid correct:      760
+    🔴 [CRITICAL][P6-CREDIT] APP-MRID-SC08: Mid score wrong: stored 578 vs correct 760
+       detail:   Scores: [758.0, 760.0, 763.0]. Middle = 760
+       citation: Fannie B3-5.1-01
+       fix:      Fix mid score calculation: use middle of 3 bureaus
+    🔴 [CRITICAL][P6-CREDIT] APP-MRID-SC08: Credit score below floor: 578 < 660
+       detail:   Meridian minimum: 660
+       citation: Overlay: meridian/credit_floor
+       fix:      Loan does not qualify.
+
+  ── PHASE 7: Property Analysis ──
+    property_type: sfr
+    flood_zone:    None
+    year_built:    None
+    appr property_type: None
+    appr condition:     C2
+    appr date:          2026-05-31
+    ✅ Appraisal age: 20 days
+    ✅ Condition: C2
+    🟠 [HIGH][P7-PROPERTY] APP-MRID-SC08: flood_zone not in entity_states
+       detail:   Cannot determine flood insurance requirement
+       citation: Fannie B7-3-02
+       fix:      Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+    ✅ Property type sfr eligible
+
+  ── PHASE 8: Evidence Chain ──
+    evidence_nodes: 26
+    fact_nodes:     10
+    employment_continuity: conf=0.97 conflict=True
+    🟠 [HIGH][P8-EVIDENCE] APP-MRID-SC08: Conflict detected: employment_continuity
+       detail:   Multiple sources disagree. Use conservative value.
+    employment_continuity: conf=0.00 conflict=True
+    🟡 [MEDIUM][P8-EVIDENCE] APP-MRID-SC08: Low confidence: employment_continuity (0.00)
+       detail:   Request additional docs to increase confidence
+    🟠 [HIGH][P8-EVIDENCE] APP-MRID-SC08: Conflict detected: employment_continuity
+       detail:   Multiple sources disagree. Use conservative value.
+    governing_credit_score: conf=0.97 conflict=True
+    🟠 [HIGH][P8-EVIDENCE] APP-MRID-SC08: Conflict detected: governing_credit_score
+       detail:   Multiple sources disagree. Use conservative value.
+    governing_credit_score: conf=0.00 conflict=True
+    🟡 [MEDIUM][P8-EVIDENCE] APP-MRID-SC08: Low confidence: governing_credit_score (0.00)
+       detail:   Request additional docs to increase confidence
+    🟠 [HIGH][P8-EVIDENCE] APP-MRID-SC08: Conflict detected: governing_credit_score
+       detail:   Multiple sources disagree. Use conservative value.
+    governing_credit_score: conf=0.00 conflict=True
+    🟡 [MEDIUM][P8-EVIDENCE] APP-MRID-SC08: Low confidence: governing_credit_score (0.00)
+       detail:   Request additional docs to increase confidence
+    🟠 [HIGH][P8-EVIDENCE] APP-MRID-SC08: Conflict detected: governing_credit_score
+       detail:   Multiple sources disagree. Use conservative value.
+    qualifying_income: conf=0.00 conflict=False
+    🟡 [MEDIUM][P8-EVIDENCE] APP-MRID-SC08: Low confidence: qualifying_income (0.00)
+       detail:   Request additional docs to increase confidence
+    qualifying_income: conf=0.97 conflict=False
+    qualifying_income: conf=0.97 conflict=False
+    verified_assets: conf=0.00 conflict=False
+    🟡 [MEDIUM][P8-EVIDENCE] APP-MRID-SC08: Low confidence: verified_assets (0.00)
+       detail:   Request additional docs to increase confidence
+    verified_assets: conf=0.97 conflict=False
+    ✅ Decision output exists
+    ✅ Decision trace exists
+
+  ── PHASE 9: Decision Quality ──
+    🟠 [HIGH][P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+       detail:   Personas read raw entity_states. Decisions not evidence-based.
+       citation: EV-F
+       fix:      Wire fact_nodes into vw_*_context views
+    🟠 [HIGH][P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+       detail:   core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+       fix:      Phase RA-4: rewrite resolvers to use rule_loader
+    Decision outputs: 11452 across 16 apps
+    APP-MRID-SC01: allow, block, escalate, recommend
+    APP-MRID-SC02: allow, block, escalate, recommend
+    APP-MRID-SC03: allow, block, escalate, recommend
+    APP-MRID-SC04: allow, block, escalate, recommend
+    APP-MRID-SC05: allow, block, escalate, recommend
+    APP-MRID-SC06: allow, block, escalate, recommend
+    APP-MRID-SC07: allow, block, escalate, recommend
+    APP-MRID-SC08: allow, block, escalate, recommend
+    APP-MRID-SC09: allow, block, escalate, recommend
+    APP-MRID-SC10: allow, block, escalate, recommend
+    APP-MRID-SC11: allow, block, escalate, recommend
+    APP-MRID-SC12: allow, block, escalate, recommend
+    APP-MRID-SC13: allow, block, escalate, recommend
+    APP-MRID-SC14: allow, block, escalate, recommend
+    APP-MRID-SC15: allow, block, escalate, recommend
+    APP-MRID-SC16: allow, block, escalate, recommend
+
+════════════════════════════════════════════════════════════
+APPLICATION: APP-MRID-SC09
+════════════════════════════════════════════════════════════
+
+  ── PHASE 1: File Assembly ──
+    ✅ URLA_1003
+    ✅ W2_CURRENT
+    ✅ PAYSTUB_CURRENT
+    ✅ BANK_STATEMENT_M1
+    ✅ APPRAISAL_URAR
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC09: Recommended missing: Tax return (TAX_RETURN_1040)
+       detail:   Needed for complete income/credit analysis
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC09: Recommended missing: Employment verification (VOE)
+       detail:   Needed for complete income/credit analysis
+
+    ✅ APPRAISAL_URAR: key field = 490000.0
+    ✅ BANK_STATEMENT_M1: key field = 31000.0
+    ✅ PAYSTUB_CURRENT: key field = 46667.0
+    ✅ URLA_1003: key field = 441000
+    ✅ W2_CURRENT: key field = 112000.0
+    🟡 [MEDIUM][P1-EXTRACT] APP-MRID-SC09: property_type not in appraisal extracted_fields
+       detail:   Cannot corroborate URLA-stated property_type
+       fix:      Add property_type to appraisal extraction prompt
+
+  ── PHASE 2: Income Analysis ──
+    URLA stated:        $ 12,133.33/mo
+    W2 current:         $  9,333.33/mo
+    W2 prior:           $  9,333.33/mo
+    Paystub YTD:        $  8,349.73/mo
+    SE (Schedule C):    $      0.00/mo
+    Rental (Schedule E):$      0.00/mo
+    ─────────────────────────────
+    Total verified:     $  9,333.33/mo
+    entity_states:      $  9,333.33/mo
+    Stated vs W2:             23.1%
+    🟡 [MEDIUM][P2-FRAUD] APP-MRID-SC09: Income variance 23.1%
+       detail:   Minor. Note in file.
+    Income trend:             +0.0% YoY ✅
+    Paystub corroboration:     10.5% ✅
+
+  ── PHASE 3: Asset Analysis ──
+    Checking:  $    31,000 × 100% = $    31,000
+    Savings:   $         0 × 100% = $         0
+    Retirement:$         0 × 60% = $         0
+    Stocks:    $         0 × 70% = $         0
+    ─────────────────────────────
+    Qualifying:     31,000
+    PITI est:  $     3,448/mo
+    Req res:   $     6,897 (2mo PITI)
+    Down pmt:  $    39,200
+    Closing:   $    13,230
+    Prepaids:  $     6,897
+    Cash-to-close:$  59,327
+    After close:$  -28,327
+    Need:      $     6,897
+    🔴 [CRITICAL][P3-ASSETS] APP-MRID-SC09: Insufficient funds to close: $31,000 available vs $59,327 needed
+       detail:   Borrower cannot close this loan
+       citation: Fannie B3-4.3-01
+       fix:      Request additional asset documentation
+    ℹ️  [INFO][P3-ASSETS] APP-MRID-SC09: Large deposit threshold: $4,667 (50% of $9,333/mo)
+       detail:   Manual review: check bank statements for deposits > $4,667
+       citation: Fannie B3-4.3-04
+
+  ── PHASE 4: Liability Analysis ──
+    URLA stated:     $      0.00/mo
+    Credit report:   $      0.00/mo
+    Student loan 1%: $      0.00/mo
+    Medical excl:    $      0.00/mo
+    PITI (est):      $  3,448.31/mo
+    ─────────────────────────────
+    Total oblig:     $  3,448.31/mo
+
+  ── PHASE 5: Ratio Analysis ──
+    Front-end DTI:       36.946%
+    Back-end stored:     61.480%
+    Back-end recalc:     36.946%
+    🟠 [HIGH][P5-DTI] APP-MRID-SC09: DTI mismatch: stored 61.5% vs recomputed 36.9%
+       detail:   Delta: 24.5%
+       fix:      Fix DTI calculation in golden_record_builder
+    DTI limit:             43.0%
+    ✅ DTI within limit
+
+    Appraised:       $   490,000
+    Purchase:        $   480,200
+    Lesser of:       $   480,200
+    Loan amount:     $   441,000
+    LTV stored:          90.000%
+    LTV correct:         91.837%
+    🟠 [HIGH][P5-LTV] APP-MRID-SC09: LTV wrong: stored 90.000% vs correct 91.837%
+       detail:   Lesser-of rule not applied. Should use $480,200 not $490,000
+       citation: Fannie B4-1.1-01
+       fix:      Fix LTV calc: use min(appraised, purchase)
+    LTV limit:             95.0%
+    ✅ LTV within limit
+
+  ── PHASE 6: Credit Analysis ──
+    Mid score stored: 705
+    Bureau scores:    EQ=705 EXP=702 TU=708
+    Mid correct:      705
+    ✅ Mid score correct
+    ✅ Score 705 >= floor 660
+
+  ── PHASE 7: Property Analysis ──
+    property_type: sfr
+    flood_zone:    None
+    year_built:    None
+    appr property_type: None
+    appr condition:     C3
+    appr date:          2026-05-15
+    ✅ Appraisal age: 36 days
+    ✅ Condition: C3
+    🟠 [HIGH][P7-PROPERTY] APP-MRID-SC09: flood_zone not in entity_states
+       detail:   Cannot determine flood insurance requirement
+       citation: Fannie B7-3-02
+       fix:      Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+    ✅ Property type sfr eligible
+
+  ── PHASE 8: Evidence Chain ──
+    evidence_nodes: 22
+    fact_nodes:     4
+    employment_continuity: conf=1.00 conflict=False
+    governing_credit_score: conf=1.00 conflict=False
+    qualifying_income: conf=1.00 conflict=False
+    verified_assets: conf=1.00 conflict=False
+    ✅ Decision output exists
+    ✅ Decision trace exists
+
+  ── PHASE 9: Decision Quality ──
+    🟠 [HIGH][P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+       detail:   Personas read raw entity_states. Decisions not evidence-based.
+       citation: EV-F
+       fix:      Wire fact_nodes into vw_*_context views
+    🟠 [HIGH][P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+       detail:   core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+       fix:      Phase RA-4: rewrite resolvers to use rule_loader
+    Decision outputs: 11452 across 16 apps
+    APP-MRID-SC01: allow, block, escalate, recommend
+    APP-MRID-SC02: allow, block, escalate, recommend
+    APP-MRID-SC03: allow, block, escalate, recommend
+    APP-MRID-SC04: allow, block, escalate, recommend
+    APP-MRID-SC05: allow, block, escalate, recommend
+    APP-MRID-SC06: allow, block, escalate, recommend
+    APP-MRID-SC07: allow, block, escalate, recommend
+    APP-MRID-SC08: allow, block, escalate, recommend
+    APP-MRID-SC09: allow, block, escalate, recommend
+    APP-MRID-SC10: allow, block, escalate, recommend
+    APP-MRID-SC11: allow, block, escalate, recommend
+    APP-MRID-SC12: allow, block, escalate, recommend
+    APP-MRID-SC13: allow, block, escalate, recommend
+    APP-MRID-SC14: allow, block, escalate, recommend
+    APP-MRID-SC15: allow, block, escalate, recommend
+    APP-MRID-SC16: allow, block, escalate, recommend
+
+════════════════════════════════════════════════════════════
+APPLICATION: APP-MRID-SC10
+════════════════════════════════════════════════════════════
+
+  ── PHASE 1: File Assembly ──
+    ✅ URLA_1003
+    ✅ W2_CURRENT
+    ✅ PAYSTUB_CURRENT
+    ✅ BANK_STATEMENT_M1
+    ✅ APPRAISAL_URAR
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC10: Recommended missing: Tax return (TAX_RETURN_1040)
+       detail:   Needed for complete income/credit analysis
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC10: Recommended missing: Employment verification (VOE)
+       detail:   Needed for complete income/credit analysis
+
+    ✅ APPRAISAL_URAR: key field = 510000.0
+    ✅ BANK_STATEMENT_M1: key field = 59000.0
+    ✅ PAYSTUB_CURRENT: key field = 49167.0
+    ✅ URLA_1003: key field = 408000
+    ✅ W2_CURRENT: key field = 118000.0
+    🟡 [MEDIUM][P1-EXTRACT] APP-MRID-SC10: property_type not in appraisal extracted_fields
+       detail:   Cannot corroborate URLA-stated property_type
+       fix:      Add property_type to appraisal extraction prompt
+
+  ── PHASE 2: Income Analysis ──
+    URLA stated:        $  9,833.00/mo
+    W2 current:         $  9,833.33/mo
+    W2 prior:           $  9,833.33/mo
+    Paystub YTD:        $  8,797.04/mo
+    SE (Schedule C):    $      0.00/mo
+    Rental (Schedule E):$      0.00/mo
+    ─────────────────────────────
+    Total verified:     $  9,833.33/mo
+    entity_states:      $  9,833.33/mo
+    Stated vs W2:              0.0%
+    Income trend:             +0.0% YoY ✅
+    Paystub corroboration:     10.5% ✅
+
+  ── PHASE 3: Asset Analysis ──
+    Checking:  $    59,000 × 100% = $    59,000
+    Savings:   $         0 × 100% = $         0
+    Retirement:$         0 × 60% = $         0
+    Stocks:    $         0 × 70% = $         0
+    ─────────────────────────────
+    Qualifying:     59,000
+    PITI est:  $     3,190/mo
+    Req res:   $     6,381 (2mo PITI)
+    Down pmt:  $    91,800
+    Closing:   $    12,240
+    Prepaids:  $     6,381
+    Cash-to-close:$ 110,421
+    After close:$  -51,421
+    Need:      $     6,381
+    🔴 [CRITICAL][P3-ASSETS] APP-MRID-SC10: Insufficient funds to close: $59,000 available vs $110,421 needed
+       detail:   Borrower cannot close this loan
+       citation: Fannie B3-4.3-01
+       fix:      Request additional asset documentation
+    ℹ️  [INFO][P3-ASSETS] APP-MRID-SC10: Large deposit threshold: $4,917 (50% of $9,833/mo)
+       detail:   Manual review: check bank statements for deposits > $4,917
+       citation: Fannie B3-4.3-04
+
+  ── PHASE 4: Liability Analysis ──
+    URLA stated:     $      0.00/mo
+    Credit report:   $      0.00/mo
+    Student loan 1%: $      0.00/mo
+    Medical excl:    $      0.00/mo
+    PITI (est):      $  3,190.27/mo
+    ─────────────────────────────
+    Total oblig:     $  3,190.27/mo
+
+  ── PHASE 5: Ratio Analysis ──
+    Front-end DTI:       32.443%
+    Back-end stored:     56.749%
+    Back-end recalc:     32.443%
+    🟠 [HIGH][P5-DTI] APP-MRID-SC10: DTI mismatch: stored 56.7% vs recomputed 32.4%
+       detail:   Delta: 24.3%
+       fix:      Fix DTI calculation in golden_record_builder
+    DTI limit:             43.0%
+    ✅ DTI within limit
+
+    Appraised:       $   510,000
+    Purchase:        $   499,800
+    Lesser of:       $   499,800
+    Loan amount:     $   408,000
+    LTV stored:          80.000%
+    LTV correct:         81.633%
+    🟠 [HIGH][P5-LTV] APP-MRID-SC10: LTV wrong: stored 80.000% vs correct 81.633%
+       detail:   Lesser-of rule not applied. Should use $499,800 not $510,000
+       citation: Fannie B4-1.1-01
+       fix:      Fix LTV calc: use min(appraised, purchase)
+    LTV limit:             95.0%
+    ✅ LTV within limit
+
+  ── PHASE 6: Credit Analysis ──
+    Mid score stored: 734
+    Bureau scores:    EQ=734 EXP=731 TU=737
+    Mid correct:      734
+    ✅ Mid score correct
+    ✅ Score 734 >= floor 660
+
+  ── PHASE 7: Property Analysis ──
+    property_type: sfr
+    flood_zone:    None
+    year_built:    None
+    appr property_type: None
+    appr condition:     C2
+    appr date:          2026-05-15
+    ✅ Appraisal age: 36 days
+    ✅ Condition: C2
+    🟠 [HIGH][P7-PROPERTY] APP-MRID-SC10: flood_zone not in entity_states
+       detail:   Cannot determine flood insurance requirement
+       citation: Fannie B7-3-02
+       fix:      Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+    ✅ Property type sfr eligible
+
+  ── PHASE 8: Evidence Chain ──
+    evidence_nodes: 21
+    fact_nodes:     4
+    employment_continuity: conf=1.00 conflict=False
+    governing_credit_score: conf=1.00 conflict=False
+    qualifying_income: conf=1.00 conflict=False
+    verified_assets: conf=1.00 conflict=False
+    ✅ Decision output exists
+    ✅ Decision trace exists
+
+  ── PHASE 9: Decision Quality ──
+    🟠 [HIGH][P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+       detail:   Personas read raw entity_states. Decisions not evidence-based.
+       citation: EV-F
+       fix:      Wire fact_nodes into vw_*_context views
+    🟠 [HIGH][P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+       detail:   core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+       fix:      Phase RA-4: rewrite resolvers to use rule_loader
+    Decision outputs: 11452 across 16 apps
+    APP-MRID-SC01: allow, block, escalate, recommend
+    APP-MRID-SC02: allow, block, escalate, recommend
+    APP-MRID-SC03: allow, block, escalate, recommend
+    APP-MRID-SC04: allow, block, escalate, recommend
+    APP-MRID-SC05: allow, block, escalate, recommend
+    APP-MRID-SC06: allow, block, escalate, recommend
+    APP-MRID-SC07: allow, block, escalate, recommend
+    APP-MRID-SC08: allow, block, escalate, recommend
+    APP-MRID-SC09: allow, block, escalate, recommend
+    APP-MRID-SC10: allow, block, escalate, recommend
+    APP-MRID-SC11: allow, block, escalate, recommend
+    APP-MRID-SC12: allow, block, escalate, recommend
+    APP-MRID-SC13: allow, block, escalate, recommend
+    APP-MRID-SC14: allow, block, escalate, recommend
+    APP-MRID-SC15: allow, block, escalate, recommend
+    APP-MRID-SC16: allow, block, escalate, recommend
+
+════════════════════════════════════════════════════════════
+APPLICATION: APP-MRID-SC11
+════════════════════════════════════════════════════════════
+
+  ── PHASE 1: File Assembly ──
+    ✅ URLA_1003
+    ✅ W2_CURRENT
+    ✅ PAYSTUB_CURRENT
+    ✅ BANK_STATEMENT_M1
+    ✅ APPRAISAL_URAR
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC11: Recommended missing: Tax return (TAX_RETURN_1040)
+       detail:   Needed for complete income/credit analysis
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC11: Recommended missing: Employment verification (VOE)
+       detail:   Needed for complete income/credit analysis
+
+    ✅ APPRAISAL_URAR: key field = 455000.0
+    ✅ BANK_STATEMENT_M1: key field = 36000.0
+    ✅ PAYSTUB_CURRENT: key field = 42500.0
+    ✅ URLA_1003: key field = 364000
+    ✅ W2_CURRENT: key field = 102000.0
+    🟡 [MEDIUM][P1-EXTRACT] APP-MRID-SC11: property_type not in appraisal extracted_fields
+       detail:   Cannot corroborate URLA-stated property_type
+       fix:      Add property_type to appraisal extraction prompt
+
+  ── PHASE 2: Income Analysis ──
+    URLA stated:        $  8,500.00/mo
+    W2 current:         $  8,500.00/mo
+    W2 prior:           $  8,500.00/mo
+    Paystub YTD:        $  7,604.17/mo
+    SE (Schedule C):    $      0.00/mo
+    Rental (Schedule E):$      0.00/mo
+    ─────────────────────────────
+    Total verified:     $  8,500.00/mo
+    entity_states:      $  8,500.00/mo
+    Stated vs W2:              0.0%
+    Income trend:             +0.0% YoY ✅
+    Paystub corroboration:     10.5% ✅
+
+  ── PHASE 3: Asset Analysis ──
+    Checking:  $    36,000 × 100% = $    36,000
+    Savings:   $         0 × 100% = $         0
+    Retirement:$         0 × 60% = $         0
+    Stocks:    $         0 × 70% = $         0
+    ─────────────────────────────
+    Qualifying:     36,000
+    PITI est:  $     2,846/mo
+    Req res:   $     5,692 (2mo PITI)
+    Down pmt:  $    81,900
+    Closing:   $    10,920
+    Prepaids:  $     5,692
+    Cash-to-close:$  98,512
+    After close:$  -62,512
+    Need:      $     5,692
+    🔴 [CRITICAL][P3-ASSETS] APP-MRID-SC11: Insufficient funds to close: $36,000 available vs $98,512 needed
+       detail:   Borrower cannot close this loan
+       citation: Fannie B3-4.3-01
+       fix:      Request additional asset documentation
+    ℹ️  [INFO][P3-ASSETS] APP-MRID-SC11: Large deposit threshold: $4,250 (50% of $8,500/mo)
+       detail:   Manual review: check bank statements for deposits > $4,250
+       citation: Fannie B3-4.3-04
+
+  ── PHASE 4: Liability Analysis ──
+    URLA stated:     $      0.00/mo
+    Credit report:   $      0.00/mo
+    Student loan 1%: $      0.00/mo
+    Medical excl:    $      0.00/mo
+    PITI (est):      $  2,846.22/mo
+    ─────────────────────────────
+    Total oblig:     $  2,846.22/mo
+
+  ── PHASE 5: Ratio Analysis ──
+    Front-end DTI:       33.485%
+    Back-end stored:     72.873%
+    Back-end recalc:     33.485%
+    🟠 [HIGH][P5-DTI] APP-MRID-SC11: DTI mismatch: stored 72.9% vs recomputed 33.5%
+       detail:   Delta: 39.4%
+       fix:      Fix DTI calculation in golden_record_builder
+    DTI limit:             43.0%
+    ✅ DTI within limit
+
+    Appraised:       $   455,000
+    Purchase:        $   445,900
+    Lesser of:       $   445,900
+    Loan amount:     $   364,000
+    LTV stored:          80.000%
+    LTV correct:         81.633%
+    🟠 [HIGH][P5-LTV] APP-MRID-SC11: LTV wrong: stored 80.000% vs correct 81.633%
+       detail:   Lesser-of rule not applied. Should use $445,900 not $455,000
+       citation: Fannie B4-1.1-01
+       fix:      Fix LTV calc: use min(appraised, purchase)
+    LTV limit:             95.0%
+    ✅ LTV within limit
+
+  ── PHASE 6: Credit Analysis ──
+    Mid score stored: 722
+    Bureau scores:    EQ=722 EXP=719 TU=725
+    Mid correct:      722
+    ✅ Mid score correct
+    ✅ Score 722 >= floor 660
+
+  ── PHASE 7: Property Analysis ──
+    property_type: sfr
+    flood_zone:    None
+    year_built:    None
+    appr property_type: None
+    appr condition:     C2
+    appr date:          2026-05-15
+    ✅ Appraisal age: 36 days
+    ✅ Condition: C2
+    🟠 [HIGH][P7-PROPERTY] APP-MRID-SC11: flood_zone not in entity_states
+       detail:   Cannot determine flood insurance requirement
+       citation: Fannie B7-3-02
+       fix:      Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+    ✅ Property type sfr eligible
+
+  ── PHASE 8: Evidence Chain ──
+    evidence_nodes: 21
+    fact_nodes:     4
+    employment_continuity: conf=1.00 conflict=False
+    governing_credit_score: conf=1.00 conflict=False
+    qualifying_income: conf=1.00 conflict=False
+    verified_assets: conf=1.00 conflict=False
+    ✅ Decision output exists
+    ✅ Decision trace exists
+
+  ── PHASE 9: Decision Quality ──
+    🟠 [HIGH][P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+       detail:   Personas read raw entity_states. Decisions not evidence-based.
+       citation: EV-F
+       fix:      Wire fact_nodes into vw_*_context views
+    🟠 [HIGH][P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+       detail:   core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+       fix:      Phase RA-4: rewrite resolvers to use rule_loader
+    Decision outputs: 11452 across 16 apps
+    APP-MRID-SC01: allow, block, escalate, recommend
+    APP-MRID-SC02: allow, block, escalate, recommend
+    APP-MRID-SC03: allow, block, escalate, recommend
+    APP-MRID-SC04: allow, block, escalate, recommend
+    APP-MRID-SC05: allow, block, escalate, recommend
+    APP-MRID-SC06: allow, block, escalate, recommend
+    APP-MRID-SC07: allow, block, escalate, recommend
+    APP-MRID-SC08: allow, block, escalate, recommend
+    APP-MRID-SC09: allow, block, escalate, recommend
+    APP-MRID-SC10: allow, block, escalate, recommend
+    APP-MRID-SC11: allow, block, escalate, recommend
+    APP-MRID-SC12: allow, block, escalate, recommend
+    APP-MRID-SC13: allow, block, escalate, recommend
+    APP-MRID-SC14: allow, block, escalate, recommend
+    APP-MRID-SC15: allow, block, escalate, recommend
+    APP-MRID-SC16: allow, block, escalate, recommend
+
+════════════════════════════════════════════════════════════
+APPLICATION: APP-MRID-SC12
+════════════════════════════════════════════════════════════
+
+  ── PHASE 1: File Assembly ──
+    ✅ URLA_1003
+    ✅ W2_CURRENT
+    ✅ PAYSTUB_CURRENT
+    ✅ BANK_STATEMENT_M1
+    ✅ APPRAISAL_URAR
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC12: Recommended missing: Tax return (TAX_RETURN_1040)
+       detail:   Needed for complete income/credit analysis
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC12: Recommended missing: Employment verification (VOE)
+       detail:   Needed for complete income/credit analysis
+
+    ✅ APPRAISAL_URAR: key field = 395000.0
+    ✅ BANK_STATEMENT_M1: key field = 30500.0
+    ✅ PAYSTUB_CURRENT: key field = 31000.0
+    ✅ URLA_1003: key field = 355500
+    ✅ W2_CURRENT: key field = 74400.0
+    🟡 [MEDIUM][P1-EXTRACT] APP-MRID-SC12: property_type not in appraisal extracted_fields
+       detail:   Cannot corroborate URLA-stated property_type
+       fix:      Add property_type to appraisal extraction prompt
+
+  ── PHASE 2: Income Analysis ──
+    URLA stated:        $  6,200.00/mo
+    W2 current:         $  6,200.00/mo
+    W2 prior:           $  6,200.00/mo
+    Paystub YTD:        $  5,546.57/mo
+    SE (Schedule C):    $      0.00/mo
+    Rental (Schedule E):$  1,650.00/mo
+    ─────────────────────────────
+    Total verified:     $  7,850.00/mo
+    entity_states:      $  7,850.00/mo
+    Stated vs W2:              0.0%
+    Income trend:             +0.0% YoY ✅
+    Paystub corroboration:     10.5% ✅
+
+  ── PHASE 3: Asset Analysis ──
+    Checking:  $    30,500 × 100% = $    30,500
+    Savings:   $         0 × 100% = $         0
+    Retirement:$         0 × 60% = $         0
+    Stocks:    $         0 × 70% = $         0
+    ─────────────────────────────
+    Qualifying:     30,500
+    PITI est:  $     2,780/mo
+    Req res:   $     5,560 (2mo PITI)
+    Down pmt:  $    31,600
+    Closing:   $    10,665
+    Prepaids:  $     5,560
+    Cash-to-close:$  47,825
+    After close:$  -17,325
+    Need:      $     5,560
+    🔴 [CRITICAL][P3-ASSETS] APP-MRID-SC12: Insufficient funds to close: $30,500 available vs $47,825 needed
+       detail:   Borrower cannot close this loan
+       citation: Fannie B3-4.3-01
+       fix:      Request additional asset documentation
+    ℹ️  [INFO][P3-ASSETS] APP-MRID-SC12: Large deposit threshold: $3,925 (50% of $7,850/mo)
+       detail:   Manual review: check bank statements for deposits > $3,925
+       citation: Fannie B3-4.3-04
+
+  ── PHASE 4: Liability Analysis ──
+    URLA stated:     $      0.00/mo
+    Credit report:   $      0.00/mo
+    Student loan 1%: $      0.00/mo
+    Medical excl:    $      0.00/mo
+    PITI (est):      $  2,779.76/mo
+    ─────────────────────────────
+    Total oblig:     $  2,779.76/mo
+
+  ── PHASE 5: Ratio Analysis ──
+    Front-end DTI:       35.411%
+    Back-end stored:     88.152%
+    Back-end recalc:     35.411%
+    🟠 [HIGH][P5-DTI] APP-MRID-SC12: DTI mismatch: stored 88.2% vs recomputed 35.4%
+       detail:   Delta: 52.7%
+       fix:      Fix DTI calculation in golden_record_builder
+    DTI limit:             43.0%
+    ✅ DTI within limit
+
+    Appraised:       $   395,000
+    Purchase:        $   387,100
+    Lesser of:       $   387,100
+    Loan amount:     $   355,500
+    LTV stored:          90.000%
+    LTV correct:         91.837%
+    🟠 [HIGH][P5-LTV] APP-MRID-SC12: LTV wrong: stored 90.000% vs correct 91.837%
+       detail:   Lesser-of rule not applied. Should use $387,100 not $395,000
+       citation: Fannie B4-1.1-01
+       fix:      Fix LTV calc: use min(appraised, purchase)
+    LTV limit:             95.0%
+    ✅ LTV within limit
+
+  ── PHASE 6: Credit Analysis ──
+    Mid score stored: 708
+    Bureau scores:    EQ=708 EXP=705 TU=711
+    Mid correct:      708
+    ✅ Mid score correct
+    ✅ Score 708 >= floor 660
+
+  ── PHASE 7: Property Analysis ──
+    property_type: sfr
+    flood_zone:    None
+    year_built:    None
+    appr property_type: None
+    appr condition:     C3
+    appr date:          2026-05-15
+    ✅ Appraisal age: 36 days
+    ✅ Condition: C3
+    🟠 [HIGH][P7-PROPERTY] APP-MRID-SC12: flood_zone not in entity_states
+       detail:   Cannot determine flood insurance requirement
+       citation: Fannie B7-3-02
+       fix:      Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+    ✅ Property type sfr eligible
+
+  ── PHASE 8: Evidence Chain ──
+    evidence_nodes: 21
+    fact_nodes:     4
+    employment_continuity: conf=1.00 conflict=False
+    governing_credit_score: conf=1.00 conflict=False
+    qualifying_income: conf=1.00 conflict=False
+    verified_assets: conf=1.00 conflict=False
+    ✅ Decision output exists
+    ✅ Decision trace exists
+
+  ── PHASE 9: Decision Quality ──
+    🟠 [HIGH][P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+       detail:   Personas read raw entity_states. Decisions not evidence-based.
+       citation: EV-F
+       fix:      Wire fact_nodes into vw_*_context views
+    🟠 [HIGH][P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+       detail:   core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+       fix:      Phase RA-4: rewrite resolvers to use rule_loader
+    Decision outputs: 11452 across 16 apps
+    APP-MRID-SC01: allow, block, escalate, recommend
+    APP-MRID-SC02: allow, block, escalate, recommend
+    APP-MRID-SC03: allow, block, escalate, recommend
+    APP-MRID-SC04: allow, block, escalate, recommend
+    APP-MRID-SC05: allow, block, escalate, recommend
+    APP-MRID-SC06: allow, block, escalate, recommend
+    APP-MRID-SC07: allow, block, escalate, recommend
+    APP-MRID-SC08: allow, block, escalate, recommend
+    APP-MRID-SC09: allow, block, escalate, recommend
+    APP-MRID-SC10: allow, block, escalate, recommend
+    APP-MRID-SC11: allow, block, escalate, recommend
+    APP-MRID-SC12: allow, block, escalate, recommend
+    APP-MRID-SC13: allow, block, escalate, recommend
+    APP-MRID-SC14: allow, block, escalate, recommend
+    APP-MRID-SC15: allow, block, escalate, recommend
+    APP-MRID-SC16: allow, block, escalate, recommend
+
+════════════════════════════════════════════════════════════
+APPLICATION: APP-MRID-SC13
+════════════════════════════════════════════════════════════
+
+  ── PHASE 1: File Assembly ──
+    ✅ URLA_1003
+    ✅ W2_CURRENT
+    ✅ PAYSTUB_CURRENT
+    ✅ BANK_STATEMENT_M1
+    ✅ APPRAISAL_URAR
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC13: Recommended missing: Tax return (TAX_RETURN_1040)
+       detail:   Needed for complete income/credit analysis
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC13: Recommended missing: Employment verification (VOE)
+       detail:   Needed for complete income/credit analysis
+
+    ✅ APPRAISAL_URAR: key field = 345000.0
+    ✅ BANK_STATEMENT_M1: key field = 44500.0
+    ✅ PAYSTUB_CURRENT: key field = 38333.0
+    ✅ URLA_1003: key field = 310500
+    ✅ W2_CURRENT: key field = 92000.0
+    🟡 [MEDIUM][P1-EXTRACT] APP-MRID-SC13: property_type not in appraisal extracted_fields
+       detail:   Cannot corroborate URLA-stated property_type
+       fix:      Add property_type to appraisal extraction prompt
+
+  ── PHASE 2: Income Analysis ──
+    URLA stated:        $  7,667.00/mo
+    W2 current:         $  7,666.67/mo
+    W2 prior:           $  7,666.67/mo
+    Paystub YTD:        $  6,858.60/mo
+    SE (Schedule C):    $      0.00/mo
+    Rental (Schedule E):$      0.00/mo
+    ─────────────────────────────
+    Total verified:     $  7,666.67/mo
+    entity_states:      $  7,666.67/mo
+    Stated vs W2:              0.0%
+    Income trend:             +0.0% YoY ✅
+    Paystub corroboration:     10.5% ✅
+
+  ── PHASE 3: Asset Analysis ──
+    Checking:  $    44,500 × 100% = $    44,500
+    Savings:   $         0 × 100% = $         0
+    Retirement:$         0 × 60% = $         0
+    Stocks:    $         0 × 70% = $         0
+    ─────────────────────────────
+    Qualifying:     44,500
+    PITI est:  $     2,428/mo
+    Req res:   $     4,856 (2mo PITI)
+    Down pmt:  $    27,600
+    Closing:   $     9,315
+    Prepaids:  $     4,856
+    Cash-to-close:$  41,771
+    After close:$    2,729
+    Need:      $     4,856
+    🔴 [CRITICAL][P3-ASSETS] APP-MRID-SC13: Insufficient reserves after closing: $2,729 vs $4,856 needed
+       detail:   2 months PITI required
+       citation: Fannie B3-4.3-04
+       fix:      Request gift funds or additional assets
+    ℹ️  [INFO][P3-ASSETS] APP-MRID-SC13: Large deposit threshold: $3,833 (50% of $7,667/mo)
+       detail:   Manual review: check bank statements for deposits > $3,833
+       citation: Fannie B3-4.3-04
+
+  ── PHASE 4: Liability Analysis ──
+    URLA stated:     $      0.00/mo
+    Credit report:   $      0.00/mo
+    Student loan 1%: $      0.00/mo
+    Medical excl:    $      0.00/mo
+    PITI (est):      $  2,427.89/mo
+    ─────────────────────────────
+    Total oblig:     $  2,427.89/mo
+
+  ── PHASE 5: Ratio Analysis ──
+    Front-end DTI:       31.668%
+    Back-end stored:     58.361%
+    Back-end recalc:     31.668%
+    🟠 [HIGH][P5-DTI] APP-MRID-SC13: DTI mismatch: stored 58.4% vs recomputed 31.7%
+       detail:   Delta: 26.7%
+       fix:      Fix DTI calculation in golden_record_builder
+    DTI limit:             43.0%
+    ✅ DTI within limit
+
+    Appraised:       $   345,000
+    Purchase:        $   338,100
+    Lesser of:       $   338,100
+    Loan amount:     $   310,500
+    LTV stored:          90.000%
+    LTV correct:         91.837%
+    🟠 [HIGH][P5-LTV] APP-MRID-SC13: LTV wrong: stored 90.000% vs correct 91.837%
+       detail:   Lesser-of rule not applied. Should use $338,100 not $345,000
+       citation: Fannie B4-1.1-01
+       fix:      Fix LTV calc: use min(appraised, purchase)
+    LTV limit:             95.0%
+    ✅ LTV within limit
+
+  ── PHASE 6: Credit Analysis ──
+    Mid score stored: 751
+    Bureau scores:    EQ=751 EXP=748 TU=754
+    Mid correct:      751
+    ✅ Mid score correct
+    ✅ Score 751 >= floor 660
+
+  ── PHASE 7: Property Analysis ──
+    property_type: sfr
+    flood_zone:    None
+    year_built:    None
+    appr property_type: None
+    appr condition:     C2
+    appr date:          2026-05-15
+    ✅ Appraisal age: 36 days
+    ✅ Condition: C2
+    🟠 [HIGH][P7-PROPERTY] APP-MRID-SC13: flood_zone not in entity_states
+       detail:   Cannot determine flood insurance requirement
+       citation: Fannie B7-3-02
+       fix:      Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+    ✅ Property type sfr eligible
+
+  ── PHASE 8: Evidence Chain ──
+    evidence_nodes: 21
+    fact_nodes:     4
+    employment_continuity: conf=1.00 conflict=False
+    governing_credit_score: conf=1.00 conflict=False
+    qualifying_income: conf=1.00 conflict=False
+    verified_assets: conf=1.00 conflict=False
+    ✅ Decision output exists
+    ✅ Decision trace exists
+
+  ── PHASE 9: Decision Quality ──
+    🟠 [HIGH][P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+       detail:   Personas read raw entity_states. Decisions not evidence-based.
+       citation: EV-F
+       fix:      Wire fact_nodes into vw_*_context views
+    🟠 [HIGH][P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+       detail:   core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+       fix:      Phase RA-4: rewrite resolvers to use rule_loader
+    Decision outputs: 11452 across 16 apps
+    APP-MRID-SC01: allow, block, escalate, recommend
+    APP-MRID-SC02: allow, block, escalate, recommend
+    APP-MRID-SC03: allow, block, escalate, recommend
+    APP-MRID-SC04: allow, block, escalate, recommend
+    APP-MRID-SC05: allow, block, escalate, recommend
+    APP-MRID-SC06: allow, block, escalate, recommend
+    APP-MRID-SC07: allow, block, escalate, recommend
+    APP-MRID-SC08: allow, block, escalate, recommend
+    APP-MRID-SC09: allow, block, escalate, recommend
+    APP-MRID-SC10: allow, block, escalate, recommend
+    APP-MRID-SC11: allow, block, escalate, recommend
+    APP-MRID-SC12: allow, block, escalate, recommend
+    APP-MRID-SC13: allow, block, escalate, recommend
+    APP-MRID-SC14: allow, block, escalate, recommend
+    APP-MRID-SC15: allow, block, escalate, recommend
+    APP-MRID-SC16: allow, block, escalate, recommend
+
+════════════════════════════════════════════════════════════
+APPLICATION: APP-MRID-SC14
+════════════════════════════════════════════════════════════
+
+  ── PHASE 1: File Assembly ──
+    ✅ URLA_1003
+    ✅ W2_CURRENT
+    ✅ PAYSTUB_CURRENT
+    ✅ BANK_STATEMENT_M1
+    ✅ APPRAISAL_URAR
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC14: Recommended missing: Tax return (TAX_RETURN_1040)
+       detail:   Needed for complete income/credit analysis
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC14: Recommended missing: Employment verification (VOE)
+       detail:   Needed for complete income/credit analysis
+
+    ✅ APPRAISAL_URAR: key field = 420000
+    🔴 [CRITICAL][P1-EXTRACT] APP-MRID-SC14: BANK_STATEMENT_M1: critical fields not extracted
+       detail:   Looked for: ['checking_balance', 'account_balance', 'ending_balance']. Got: ['bank_name', 'gift_funds', 'account_holder', 'closing_balance', 'opening_balance']
+       fix:      Fix extraction prompt or re-upload document
+    ✅ PAYSTUB_CURRENT: key field = 36667
+    ✅ URLA_1003: key field = 378000
+    ✅ W2_CURRENT: key field = 88000
+    🟡 [MEDIUM][P1-EXTRACT] APP-MRID-SC14: property_type not in appraisal extracted_fields
+       detail:   Cannot corroborate URLA-stated property_type
+       fix:      Add property_type to appraisal extraction prompt
+
+  ── PHASE 2: Income Analysis ──
+    URLA stated:        $  7,333.00/mo
+    W2 current:         $  7,333.33/mo
+    W2 prior:           $  7,333.33/mo
+    Paystub YTD:        $  6,560.52/mo
+    SE (Schedule C):    $      0.00/mo
+    Rental (Schedule E):$      0.00/mo
+    ─────────────────────────────
+    Total verified:     $  7,333.33/mo
+    entity_states:      $  7,333.33/mo
+    Stated vs W2:              0.0%
+    Income trend:             +0.0% YoY ✅
+    Paystub corroboration:     10.5% ✅
+
+  ── PHASE 3: Asset Analysis ──
+    Checking:  $         0 × 100% = $         0
+    Savings:   $         0 × 100% = $         0
+    Retirement:$         0 × 60% = $         0
+    Stocks:    $         0 × 70% = $         0
+    ─────────────────────────────
+    Qualifying:          0
+    PITI est:  $     2,956/mo
+    Req res:   $     5,911 (2mo PITI)
+    Down pmt:  $    33,600
+    Closing:   $    11,340
+    Prepaids:  $     5,911
+    Cash-to-close:$  50,851
+    After close:$  -50,851
+    Need:      $     5,911
+    🔴 [CRITICAL][P3-ASSETS] APP-MRID-SC14: Insufficient funds to close: $0 available vs $50,851 needed
+       detail:   Borrower cannot close this loan
+       citation: Fannie B3-4.3-01
+       fix:      Request additional asset documentation
+
+  ── PHASE 4: Liability Analysis ──
+    URLA stated:     $      0.00/mo
+    Credit report:   $      0.00/mo
+    Student loan 1%: $      0.00/mo
+    Medical excl:    $      0.00/mo
+    PITI (est):      $  2,955.69/mo
+    ─────────────────────────────
+    Total oblig:     $  2,955.69/mo
+
+  ── PHASE 5: Ratio Analysis ──
+    Front-end DTI:       40.305%
+    Back-end stored:     42.000%
+    Back-end recalc:     40.305%
+    DTI limit:             43.0%
+    ✅ DTI within limit
+
+    Appraised:       $   420,000
+    Purchase:        $   411,600
+    Lesser of:       $   411,600
+    Loan amount:     $   378,000
+    LTV stored:          90.000%
+    LTV correct:         91.837%
+    🟠 [HIGH][P5-LTV] APP-MRID-SC14: LTV wrong: stored 90.000% vs correct 91.837%
+       detail:   Lesser-of rule not applied. Should use $411,600 not $420,000
+       citation: Fannie B4-1.1-01
+       fix:      Fix LTV calc: use min(appraised, purchase)
+    LTV limit:             95.0%
+    ✅ LTV within limit
+
+  ── PHASE 6: Credit Analysis ──
+    Mid score stored: 724
+    Bureau scores:    EQ=724 EXP=721 TU=727
+    Mid correct:      724
+    ✅ Mid score correct
+    ✅ Score 724 >= floor 660
+
+  ── PHASE 7: Property Analysis ──
+    property_type: sfr
+    flood_zone:    None
+    year_built:    None
+    appr property_type: None
+    appr condition:     C2
+    appr date:          2026-05-31
+    ✅ Appraisal age: 20 days
+    ✅ Condition: C2
+    🟠 [HIGH][P7-PROPERTY] APP-MRID-SC14: flood_zone not in entity_states
+       detail:   Cannot determine flood insurance requirement
+       citation: Fannie B7-3-02
+       fix:      Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+    ✅ Property type sfr eligible
+
+  ── PHASE 8: Evidence Chain ──
+    evidence_nodes: 22
+    fact_nodes:     4
+    employment_continuity: conf=0.97 conflict=False
+    governing_credit_score: conf=0.97 conflict=False
+    qualifying_income: conf=0.97 conflict=False
+    verified_assets: conf=0.97 conflict=False
+    ✅ Decision output exists
+    ✅ Decision trace exists
+
+  ── PHASE 9: Decision Quality ──
+    🟠 [HIGH][P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+       detail:   Personas read raw entity_states. Decisions not evidence-based.
+       citation: EV-F
+       fix:      Wire fact_nodes into vw_*_context views
+    🟠 [HIGH][P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+       detail:   core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+       fix:      Phase RA-4: rewrite resolvers to use rule_loader
+    Decision outputs: 11452 across 16 apps
+    APP-MRID-SC01: allow, block, escalate, recommend
+    APP-MRID-SC02: allow, block, escalate, recommend
+    APP-MRID-SC03: allow, block, escalate, recommend
+    APP-MRID-SC04: allow, block, escalate, recommend
+    APP-MRID-SC05: allow, block, escalate, recommend
+    APP-MRID-SC06: allow, block, escalate, recommend
+    APP-MRID-SC07: allow, block, escalate, recommend
+    APP-MRID-SC08: allow, block, escalate, recommend
+    APP-MRID-SC09: allow, block, escalate, recommend
+    APP-MRID-SC10: allow, block, escalate, recommend
+    APP-MRID-SC11: allow, block, escalate, recommend
+    APP-MRID-SC12: allow, block, escalate, recommend
+    APP-MRID-SC13: allow, block, escalate, recommend
+    APP-MRID-SC14: allow, block, escalate, recommend
+    APP-MRID-SC15: allow, block, escalate, recommend
+    APP-MRID-SC16: allow, block, escalate, recommend
+
+════════════════════════════════════════════════════════════
+APPLICATION: APP-MRID-SC15
+════════════════════════════════════════════════════════════
+
+  ── PHASE 1: File Assembly ──
+    ✅ URLA_1003
+    ✅ W2_CURRENT
+    ✅ PAYSTUB_CURRENT
+    ✅ BANK_STATEMENT_M1
+    ✅ APPRAISAL_URAR
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC15: Recommended missing: Tax return (TAX_RETURN_1040)
+       detail:   Needed for complete income/credit analysis
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC15: Recommended missing: Employment verification (VOE)
+       detail:   Needed for complete income/credit analysis
+
+    ✅ APPRAISAL_URAR: key field = 370000.0
+    ✅ BANK_STATEMENT_M1: key field = 42000.0
+    ✅ PAYSTUB_CURRENT: key field = 35000.0
+    ✅ URLA_1003: key field = 314500
+    ✅ W2_CURRENT: key field = 84000.0
+    🟡 [MEDIUM][P1-EXTRACT] APP-MRID-SC15: property_type not in appraisal extracted_fields
+       detail:   Cannot corroborate URLA-stated property_type
+       fix:      Add property_type to appraisal extraction prompt
+
+  ── PHASE 2: Income Analysis ──
+    URLA stated:        $  7,000.00/mo
+    W2 current:         $  7,000.00/mo
+    W2 prior:           $  7,000.00/mo
+    Paystub YTD:        $  6,262.25/mo
+    SE (Schedule C):    $      0.00/mo
+    Rental (Schedule E):$      0.00/mo
+    ─────────────────────────────
+    Total verified:     $  7,000.00/mo
+    entity_states:      $  7,000.00/mo
+    Stated vs W2:              0.0%
+    Income trend:             +0.0% YoY ✅
+    Paystub corroboration:     10.5% ✅
+
+  ── PHASE 3: Asset Analysis ──
+    Checking:  $    42,000 × 100% = $    42,000
+    Savings:   $         0 × 100% = $         0
+    Retirement:$         0 × 60% = $         0
+    Stocks:    $         0 × 70% = $         0
+    ─────────────────────────────
+    Qualifying:     42,000
+    PITI est:  $     2,459/mo
+    Req res:   $     4,918 (2mo PITI)
+    Down pmt:  $    48,100
+    Closing:   $     9,435
+    Prepaids:  $     4,918
+    Cash-to-close:$  62,453
+    After close:$  -20,453
+    Need:      $     4,918
+    🔴 [CRITICAL][P3-ASSETS] APP-MRID-SC15: Insufficient funds to close: $42,000 available vs $62,453 needed
+       detail:   Borrower cannot close this loan
+       citation: Fannie B3-4.3-01
+       fix:      Request additional asset documentation
+    ℹ️  [INFO][P3-ASSETS] APP-MRID-SC15: Large deposit threshold: $3,500 (50% of $7,000/mo)
+       detail:   Manual review: check bank statements for deposits > $3,500
+       citation: Fannie B3-4.3-04
+
+  ── PHASE 4: Liability Analysis ──
+    URLA stated:     $      0.00/mo
+    Credit report:   $      0.00/mo
+    Student loan 1%: $      0.00/mo
+    Medical excl:    $      0.00/mo
+    PITI (est):      $  2,459.17/mo
+    ─────────────────────────────
+    Total oblig:     $  2,459.17/mo
+
+  ── PHASE 5: Ratio Analysis ──
+    Front-end DTI:       35.131%
+    Back-end stored:     60.713%
+    Back-end recalc:     35.131%
+    🟠 [HIGH][P5-DTI] APP-MRID-SC15: DTI mismatch: stored 60.7% vs recomputed 35.1%
+       detail:   Delta: 25.6%
+       fix:      Fix DTI calculation in golden_record_builder
+    DTI limit:             43.0%
+    ✅ DTI within limit
+
+    Appraised:       $   370,000
+    Purchase:        $   362,600
+    Lesser of:       $   362,600
+    Loan amount:     $   314,500
+    LTV stored:          85.000%
+    LTV correct:         86.735%
+    🟠 [HIGH][P5-LTV] APP-MRID-SC15: LTV wrong: stored 85.000% vs correct 86.735%
+       detail:   Lesser-of rule not applied. Should use $362,600 not $370,000
+       citation: Fannie B4-1.1-01
+       fix:      Fix LTV calc: use min(appraised, purchase)
+    LTV limit:             95.0%
+    ✅ LTV within limit
+
+  ── PHASE 6: Credit Analysis ──
+    Mid score stored: 715
+    Bureau scores:    EQ=715 EXP=712 TU=718
+    Mid correct:      715
+    ✅ Mid score correct
+    ✅ Score 715 >= floor 660
+
+  ── PHASE 7: Property Analysis ──
+    property_type: sfr
+    flood_zone:    None
+    year_built:    None
+    appr property_type: None
+    appr condition:     C3
+    appr date:          2026-05-15
+    ✅ Appraisal age: 36 days
+    ✅ Condition: C3
+    🟠 [HIGH][P7-PROPERTY] APP-MRID-SC15: flood_zone not in entity_states
+       detail:   Cannot determine flood insurance requirement
+       citation: Fannie B7-3-02
+       fix:      Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+    ✅ Property type sfr eligible
+
+  ── PHASE 8: Evidence Chain ──
+    evidence_nodes: 21
+    fact_nodes:     5
+    employment_continuity: conf=1.00 conflict=False
+    governing_credit_score: conf=1.00 conflict=False
+    qualifying_income: conf=1.00 conflict=False
+    verified_assets: conf=0.97 conflict=True
+    🟠 [HIGH][P8-EVIDENCE] APP-MRID-SC15: Conflict detected: verified_assets
+       detail:   Multiple sources disagree. Use conservative value.
+    verified_assets: conf=0.97 conflict=True
+    🟠 [HIGH][P8-EVIDENCE] APP-MRID-SC15: Conflict detected: verified_assets
+       detail:   Multiple sources disagree. Use conservative value.
+    ✅ Decision output exists
+    ✅ Decision trace exists
+
+  ── PHASE 9: Decision Quality ──
+    🟠 [HIGH][P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+       detail:   Personas read raw entity_states. Decisions not evidence-based.
+       citation: EV-F
+       fix:      Wire fact_nodes into vw_*_context views
+    🟠 [HIGH][P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+       detail:   core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+       fix:      Phase RA-4: rewrite resolvers to use rule_loader
+    Decision outputs: 11452 across 16 apps
+    APP-MRID-SC01: allow, block, escalate, recommend
+    APP-MRID-SC02: allow, block, escalate, recommend
+    APP-MRID-SC03: allow, block, escalate, recommend
+    APP-MRID-SC04: allow, block, escalate, recommend
+    APP-MRID-SC05: allow, block, escalate, recommend
+    APP-MRID-SC06: allow, block, escalate, recommend
+    APP-MRID-SC07: allow, block, escalate, recommend
+    APP-MRID-SC08: allow, block, escalate, recommend
+    APP-MRID-SC09: allow, block, escalate, recommend
+    APP-MRID-SC10: allow, block, escalate, recommend
+    APP-MRID-SC11: allow, block, escalate, recommend
+    APP-MRID-SC12: allow, block, escalate, recommend
+    APP-MRID-SC13: allow, block, escalate, recommend
+    APP-MRID-SC14: allow, block, escalate, recommend
+    APP-MRID-SC15: allow, block, escalate, recommend
+    APP-MRID-SC16: allow, block, escalate, recommend
+
+════════════════════════════════════════════════════════════
+APPLICATION: APP-MRID-SC16
+════════════════════════════════════════════════════════════
+
+  ── PHASE 1: File Assembly ──
+    ✅ URLA_1003
+    ✅ W2_CURRENT
+    ✅ PAYSTUB_CURRENT
+    ✅ BANK_STATEMENT_M1
+    ✅ APPRAISAL_URAR
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC16: Recommended missing: Tax return (TAX_RETURN_1040)
+       detail:   Needed for complete income/credit analysis
+    🟠 [HIGH][P1-DOCS] APP-MRID-SC16: Recommended missing: Employment verification (VOE)
+       detail:   Needed for complete income/credit analysis
+
+    ✅ APPRAISAL_URAR: key field = 440000
+    🔴 [CRITICAL][P1-EXTRACT] APP-MRID-SC16: BANK_STATEMENT_M1: critical fields not extracted
+       detail:   Looked for: ['checking_balance', 'account_balance', 'ending_balance']. Got: ['bank_name', 'gift_funds', 'account_holder', 'closing_balance', 'opening_balance']
+       fix:      Fix extraction prompt or re-upload document
+    ✅ PAYSTUB_CURRENT: key field = 40000
+    ✅ URLA_1003: key field = 374000
+    ✅ W2_CURRENT: key field = 96000
+    🟡 [MEDIUM][P1-EXTRACT] APP-MRID-SC16: property_type not in appraisal extracted_fields
+       detail:   Cannot corroborate URLA-stated property_type
+       fix:      Add property_type to appraisal extraction prompt
+
+  ── PHASE 2: Income Analysis ──
+    URLA stated:        $  8,000.00/mo
+    W2 current:         $  8,000.00/mo
+    W2 prior:           $  8,000.00/mo
+    Paystub YTD:        $  7,156.86/mo
+    SE (Schedule C):    $      0.00/mo
+    Rental (Schedule E):$      0.00/mo
+    ─────────────────────────────
+    Total verified:     $  8,000.00/mo
+    entity_states:      $  8,000.00/mo
+    Stated vs W2:              0.0%
+    Income trend:             +0.0% YoY ✅
+    Paystub corroboration:     10.5% ✅
+
+  ── PHASE 3: Asset Analysis ──
+    Checking:  $         0 × 100% = $         0
+    Savings:   $         0 × 100% = $         0
+    Retirement:$         0 × 60% = $         0
+    Stocks:    $         0 × 70% = $         0
+    ─────────────────────────────
+    Qualifying:          0
+    PITI est:  $     2,924/mo
+    Req res:   $     5,849 (2mo PITI)
+    Down pmt:  $    57,200
+    Closing:   $    11,220
+    Prepaids:  $     5,849
+    Cash-to-close:$  74,269
+    After close:$  -74,269
+    Need:      $     5,849
+    🔴 [CRITICAL][P3-ASSETS] APP-MRID-SC16: Insufficient funds to close: $0 available vs $74,269 needed
+       detail:   Borrower cannot close this loan
+       citation: Fannie B3-4.3-01
+       fix:      Request additional asset documentation
+
+  ── PHASE 4: Liability Analysis ──
+    URLA stated:     $      0.00/mo
+    Credit report:   $      0.00/mo
+    Student loan 1%: $      0.00/mo
+    Medical excl:    $      0.00/mo
+    PITI (est):      $  2,924.41/mo
+    ─────────────────────────────
+    Total oblig:     $  2,924.41/mo
+
+  ── PHASE 5: Ratio Analysis ──
+    Front-end DTI:       36.555%
+    Back-end stored:     41.996%
+    Back-end recalc:     36.555%
+    🟠 [HIGH][P5-DTI] APP-MRID-SC16: DTI mismatch: stored 42.0% vs recomputed 36.6%
+       detail:   Delta: 5.4%
+       fix:      Fix DTI calculation in golden_record_builder
+    DTI limit:             43.0%
+    ✅ DTI within limit
+
+    Appraised:       $   440,000
+    Purchase:        $   431,200
+    Lesser of:       $   431,200
+    Loan amount:     $   374,000
+    LTV stored:          85.000%
+    LTV correct:         86.735%
+    🟠 [HIGH][P5-LTV] APP-MRID-SC16: LTV wrong: stored 85.000% vs correct 86.735%
+       detail:   Lesser-of rule not applied. Should use $431,200 not $440,000
+       citation: Fannie B4-1.1-01
+       fix:      Fix LTV calc: use min(appraised, purchase)
+    LTV limit:             95.0%
+    ✅ LTV within limit
+
+  ── PHASE 6: Credit Analysis ──
+    Mid score stored: 729
+    Bureau scores:    EQ=729 EXP=726 TU=732
+    Mid correct:      729
+    ✅ Mid score correct
+    ✅ Score 729 >= floor 660
+
+  ── PHASE 7: Property Analysis ──
+    property_type: sfr
+    flood_zone:    None
+    year_built:    None
+    appr property_type: None
+    appr condition:     C2
+    appr date:          2026-05-31
+    ✅ Appraisal age: 20 days
+    ✅ Condition: C2
+    🟠 [HIGH][P7-PROPERTY] APP-MRID-SC16: flood_zone not in entity_states
+       detail:   Cannot determine flood insurance requirement
+       citation: Fannie B7-3-02
+       fix:      Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+    ✅ Property type sfr eligible
+
+  ── PHASE 8: Evidence Chain ──
+    evidence_nodes: 22
+    fact_nodes:     4
+    employment_continuity: conf=0.97 conflict=False
+    governing_credit_score: conf=0.97 conflict=False
+    qualifying_income: conf=0.97 conflict=False
+    verified_assets: conf=0.97 conflict=False
+    ✅ Decision output exists
+    ✅ Decision trace exists
+
+  ── PHASE 9: Decision Quality ──
+    🟠 [HIGH][P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+       detail:   Personas read raw entity_states. Decisions not evidence-based.
+       citation: EV-F
+       fix:      Wire fact_nodes into vw_*_context views
+    🟠 [HIGH][P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+       detail:   core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+       fix:      Phase RA-4: rewrite resolvers to use rule_loader
+    Decision outputs: 11452 across 16 apps
+    APP-MRID-SC01: allow, block, escalate, recommend
+    APP-MRID-SC02: allow, block, escalate, recommend
+    APP-MRID-SC03: allow, block, escalate, recommend
+    APP-MRID-SC04: allow, block, escalate, recommend
+    APP-MRID-SC05: allow, block, escalate, recommend
+    APP-MRID-SC06: allow, block, escalate, recommend
+    APP-MRID-SC07: allow, block, escalate, recommend
+    APP-MRID-SC08: allow, block, escalate, recommend
+    APP-MRID-SC09: allow, block, escalate, recommend
+    APP-MRID-SC10: allow, block, escalate, recommend
+    APP-MRID-SC11: allow, block, escalate, recommend
+    APP-MRID-SC12: allow, block, escalate, recommend
+    APP-MRID-SC13: allow, block, escalate, recommend
+    APP-MRID-SC14: allow, block, escalate, recommend
+    APP-MRID-SC15: allow, block, escalate, recommend
+    APP-MRID-SC16: allow, block, escalate, recommend
+
+
+============================================================
+AUDIT FINDINGS SUMMARY
+============================================================
+Total findings: 178
+🔴 CRITICAL: 23
+🟠 HIGH: 120
+🟡 MEDIUM: 22
+ℹ️  INFO: 13
+
+🔴 CRITICAL FINDINGS:
+  [P3-ASSETS] APP-MRID-SC01: Insufficient funds to close: $24,500 available vs $51,457 needed
+    detail: Borrower cannot close this loan
+    cite:   Fannie B3-4.3-01
+    fix:    Request additional asset documentation
+  [P1-EXTRACT] APP-MRID-SC03: W2_CURRENT: critical fields not extracted
+    detail: Looked for: ['box1_wages', 'wages', 'gross_wages', 'total_wages']. Got: ['tax_year', 'ssn_last4', 'box1_wages', 'employer_ein', 'employee_name']
+    fix:    Fix extraction prompt or re-upload document
+  [P1-NULL] APP-MRID-SC03: entity_states.dti_back is NULL
+    detail: Field not populated from document extraction
+    fix:    Fix golden_record_builder mapping for dti_back
+  [P3-ASSETS] APP-MRID-SC03: Insufficient funds to close: $52,000 available vs $133,154 needed
+    detail: Borrower cannot close this loan
+    cite:   Fannie B3-4.3-01
+    fix:    Request additional asset documentation
+  [P3-ASSETS] APP-MRID-SC04: Insufficient funds to close: $34,500 available vs $83,357 needed
+    detail: Borrower cannot close this loan
+    cite:   Fannie B3-4.3-01
+    fix:    Request additional asset documentation
+  [P3-ASSETS] APP-MRID-SC05: Insufficient funds to close: $67,000 available vs $114,779 needed
+    detail: Borrower cannot close this loan
+    cite:   Fannie B3-4.3-01
+    fix:    Request additional asset documentation
+  [P5-LTV] APP-MRID-SC06: LTV exceeds limit: 96.9% > 95.0%
+    detail: Meridian overlay max: 95.0%
+    cite:   Overlay: meridian/ltv_max
+    fix:    Increase down payment.
+  [P6-CREDIT] APP-MRID-SC06: Credit score below floor: 627 < 660
+    detail: Meridian minimum: 660
+    cite:   Overlay: meridian/credit_floor
+    fix:    Loan does not qualify.
+  [P3-ASSETS] APP-MRID-SC07: Insufficient funds to close: $41,000 available vs $53,878 needed
+    detail: Borrower cannot close this loan
+    cite:   Fannie B3-4.3-01
+    fix:    Request additional asset documentation
+  [P1-EXTRACT] APP-MRID-SC08: BANK_STATEMENT_M1: critical fields not extracted
+    detail: Looked for: ['checking_balance', 'account_balance', 'ending_balance']. Got: ['bank_name', 'account_holder', 'closing_balance', 'opening_balance', 'statement_end_date']
+    fix:    Fix extraction prompt or re-upload document
+  [P3-ASSETS] APP-MRID-SC08: Insufficient funds to close: $0 available vs $72,039 needed
+    detail: Borrower cannot close this loan
+    cite:   Fannie B3-4.3-01
+    fix:    Request additional asset documentation
+  [P6-CREDIT] APP-MRID-SC08: Mid score wrong: stored 578 vs correct 760
+    detail: Scores: [758.0, 760.0, 763.0]. Middle = 760
+    cite:   Fannie B3-5.1-01
+    fix:    Fix mid score calculation: use middle of 3 bureaus
+  [P6-CREDIT] APP-MRID-SC08: Credit score below floor: 578 < 660
+    detail: Meridian minimum: 660
+    cite:   Overlay: meridian/credit_floor
+    fix:    Loan does not qualify.
+  [P3-ASSETS] APP-MRID-SC09: Insufficient funds to close: $31,000 available vs $59,327 needed
+    detail: Borrower cannot close this loan
+    cite:   Fannie B3-4.3-01
+    fix:    Request additional asset documentation
+  [P3-ASSETS] APP-MRID-SC10: Insufficient funds to close: $59,000 available vs $110,421 needed
+    detail: Borrower cannot close this loan
+    cite:   Fannie B3-4.3-01
+    fix:    Request additional asset documentation
+  [P3-ASSETS] APP-MRID-SC11: Insufficient funds to close: $36,000 available vs $98,512 needed
+    detail: Borrower cannot close this loan
+    cite:   Fannie B3-4.3-01
+    fix:    Request additional asset documentation
+  [P3-ASSETS] APP-MRID-SC12: Insufficient funds to close: $30,500 available vs $47,825 needed
+    detail: Borrower cannot close this loan
+    cite:   Fannie B3-4.3-01
+    fix:    Request additional asset documentation
+  [P3-ASSETS] APP-MRID-SC13: Insufficient reserves after closing: $2,729 vs $4,856 needed
+    detail: 2 months PITI required
+    cite:   Fannie B3-4.3-04
+    fix:    Request gift funds or additional assets
+  [P1-EXTRACT] APP-MRID-SC14: BANK_STATEMENT_M1: critical fields not extracted
+    detail: Looked for: ['checking_balance', 'account_balance', 'ending_balance']. Got: ['bank_name', 'gift_funds', 'account_holder', 'closing_balance', 'opening_balance']
+    fix:    Fix extraction prompt or re-upload document
+  [P3-ASSETS] APP-MRID-SC14: Insufficient funds to close: $0 available vs $50,851 needed
+    detail: Borrower cannot close this loan
+    cite:   Fannie B3-4.3-01
+    fix:    Request additional asset documentation
+  [P3-ASSETS] APP-MRID-SC15: Insufficient funds to close: $42,000 available vs $62,453 needed
+    detail: Borrower cannot close this loan
+    cite:   Fannie B3-4.3-01
+    fix:    Request additional asset documentation
+  [P1-EXTRACT] APP-MRID-SC16: BANK_STATEMENT_M1: critical fields not extracted
+    detail: Looked for: ['checking_balance', 'account_balance', 'ending_balance']. Got: ['bank_name', 'gift_funds', 'account_holder', 'closing_balance', 'opening_balance']
+    fix:    Fix extraction prompt or re-upload document
+  [P3-ASSETS] APP-MRID-SC16: Insufficient funds to close: $0 available vs $74,269 needed
+    detail: Borrower cannot close this loan
+    cite:   Fannie B3-4.3-01
+    fix:    Request additional asset documentation
+
+🟠 HIGH FINDINGS:
+  [P1-DOCS] APP-MRID-SC01: Recommended missing: Tax return (TAX_RETURN_1040)
+    detail: Needed for complete income/credit analysis
+  [P1-DOCS] APP-MRID-SC01: Recommended missing: Employment verification (VOE)
+    detail: Needed for complete income/credit analysis
+  [P5-DTI] APP-MRID-SC01: DTI mismatch: stored 56.0% vs recomputed 37.4%
+    detail: Delta: 18.6%
+    fix:    Fix DTI calculation in golden_record_builder
+  [P5-LTV] APP-MRID-SC01: LTV wrong: stored 90.000% vs correct 91.837%
+    detail: Lesser-of rule not applied. Should use $416,500 not $425,000
+    cite:   Fannie B4-1.1-01
+    fix:    Fix LTV calc: use min(appraised, purchase)
+  [P7-PROPERTY] APP-MRID-SC01: flood_zone not in entity_states
+    detail: Cannot determine flood insurance requirement
+    cite:   Fannie B7-3-02
+    fix:    Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  [P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+    detail: Personas read raw entity_states. Decisions not evidence-based.
+    cite:   EV-F
+    fix:    Wire fact_nodes into vw_*_context views
+  [P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+    detail: core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+    fix:    Phase RA-4: rewrite resolvers to use rule_loader
+  [P1-DOCS] APP-MRID-SC02: Recommended missing: Tax return (TAX_RETURN_1040)
+    detail: Needed for complete income/credit analysis
+  [P1-DOCS] APP-MRID-SC02: Recommended missing: Employment verification (VOE)
+    detail: Needed for complete income/credit analysis
+  [P5-DTI] APP-MRID-SC02: DTI mismatch: stored 80.2% vs recomputed 40.7%
+    detail: Delta: 39.6%
+    fix:    Fix DTI calculation in golden_record_builder
+  [P5-LTV] APP-MRID-SC02: LTV wrong: stored 90.000% vs correct 91.837%
+    detail: Lesser-of rule not applied. Should use $509,600 not $520,000
+    cite:   Fannie B4-1.1-01
+    fix:    Fix LTV calc: use min(appraised, purchase)
+  [P7-PROPERTY] APP-MRID-SC02: flood_zone not in entity_states
+    detail: Cannot determine flood insurance requirement
+    cite:   Fannie B7-3-02
+    fix:    Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  [P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+    detail: Personas read raw entity_states. Decisions not evidence-based.
+    cite:   EV-F
+    fix:    Wire fact_nodes into vw_*_context views
+  [P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+    detail: core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+    fix:    Phase RA-4: rewrite resolvers to use rule_loader
+  [P1-DOCS] APP-MRID-SC03: Recommended missing: Tax return (TAX_RETURN_1040)
+    detail: Needed for complete income/credit analysis
+  [P1-DOCS] APP-MRID-SC03: Recommended missing: Employment verification (VOE)
+    detail: Needed for complete income/credit analysis
+  [P5-LTV] APP-MRID-SC03: LTV wrong: stored 80.000% vs correct 81.633%
+    detail: Lesser-of rule not applied. Should use $602,700 not $615,000
+    cite:   Fannie B4-1.1-01
+    fix:    Fix LTV calc: use min(appraised, purchase)
+  [P7-PROPERTY] APP-MRID-SC03: flood_zone not in entity_states
+    detail: Cannot determine flood insurance requirement
+    cite:   Fannie B7-3-02
+    fix:    Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  [P8-EVIDENCE] APP-MRID-SC03: Conflict detected: employment_continuity
+    detail: Multiple sources disagree. Use conservative value.
+  [P8-EVIDENCE] APP-MRID-SC03: Conflict detected: employment_continuity
+    detail: Multiple sources disagree. Use conservative value.
+  [P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+    detail: Personas read raw entity_states. Decisions not evidence-based.
+    cite:   EV-F
+    fix:    Wire fact_nodes into vw_*_context views
+  [P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+    detail: core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+    fix:    Phase RA-4: rewrite resolvers to use rule_loader
+  [P1-DOCS] APP-MRID-SC04: Recommended missing: Tax return (TAX_RETURN_1040)
+    detail: Needed for complete income/credit analysis
+  [P1-DOCS] APP-MRID-SC04: Recommended missing: Employment verification (VOE)
+    detail: Needed for complete income/credit analysis
+  [P5-DTI] APP-MRID-SC04: DTI mismatch: stored 57.6% vs recomputed 32.8%
+    detail: Delta: 24.8%
+    fix:    Fix DTI calculation in golden_record_builder
+  [P5-LTV] APP-MRID-SC04: LTV wrong: stored 80.000% vs correct 81.633%
+    detail: Lesser-of rule not applied. Should use $377,300 not $385,000
+    cite:   Fannie B4-1.1-01
+    fix:    Fix LTV calc: use min(appraised, purchase)
+  [P7-PROPERTY] APP-MRID-SC04: flood_zone not in entity_states
+    detail: Cannot determine flood insurance requirement
+    cite:   Fannie B7-3-02
+    fix:    Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  [P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+    detail: Personas read raw entity_states. Decisions not evidence-based.
+    cite:   EV-F
+    fix:    Wire fact_nodes into vw_*_context views
+  [P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+    detail: core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+    fix:    Phase RA-4: rewrite resolvers to use rule_loader
+  [P1-DOCS] APP-MRID-SC05: Recommended missing: Tax return (TAX_RETURN_1040)
+    detail: Needed for complete income/credit analysis
+  [P1-DOCS] APP-MRID-SC05: Recommended missing: Employment verification (VOE)
+    detail: Needed for complete income/credit analysis
+  [P5-DTI] APP-MRID-SC05: DTI mismatch: stored 59.2% vs recomputed 37.4%
+    detail: Delta: 21.8%
+    fix:    Fix DTI calculation in golden_record_builder
+  [P5-LTV] APP-MRID-SC05: LTV wrong: stored 85.000% vs correct 86.735%
+    detail: Lesser-of rule not applied. Should use $666,400 not $680,000
+    cite:   Fannie B4-1.1-01
+    fix:    Fix LTV calc: use min(appraised, purchase)
+  [P7-PROPERTY] APP-MRID-SC05: flood_zone not in entity_states
+    detail: Cannot determine flood insurance requirement
+    cite:   Fannie B7-3-02
+    fix:    Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  [P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+    detail: Personas read raw entity_states. Decisions not evidence-based.
+    cite:   EV-F
+    fix:    Wire fact_nodes into vw_*_context views
+  [P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+    detail: core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+    fix:    Phase RA-4: rewrite resolvers to use rule_loader
+  [P1-DOCS] APP-MRID-SC06: Recommended missing: Tax return (TAX_RETURN_1040)
+    detail: Needed for complete income/credit analysis
+  [P1-DOCS] APP-MRID-SC06: Recommended missing: Employment verification (VOE)
+    detail: Needed for complete income/credit analysis
+  [P5-DTI] APP-MRID-SC06: DTI mismatch: stored 64.4% vs recomputed 37.1%
+    detail: Delta: 27.2%
+    fix:    Fix DTI calculation in golden_record_builder
+  [P5-LTV] APP-MRID-SC06: LTV wrong: stored 95.000% vs correct 96.939%
+    detail: Lesser-of rule not applied. Should use $318,500 not $325,000
+    cite:   Fannie B4-1.1-01
+    fix:    Fix LTV calc: use min(appraised, purchase)
+  [P7-PROPERTY] APP-MRID-SC06: flood_zone not in entity_states
+    detail: Cannot determine flood insurance requirement
+    cite:   Fannie B7-3-02
+    fix:    Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  [P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+    detail: Personas read raw entity_states. Decisions not evidence-based.
+    cite:   EV-F
+    fix:    Wire fact_nodes into vw_*_context views
+  [P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+    detail: core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+    fix:    Phase RA-4: rewrite resolvers to use rule_loader
+  [P1-DOCS] APP-MRID-SC07: Recommended missing: Tax return (TAX_RETURN_1040)
+    detail: Needed for complete income/credit analysis
+  [P1-DOCS] APP-MRID-SC07: Recommended missing: Employment verification (VOE)
+    detail: Needed for complete income/credit analysis
+  [P5-DTI] APP-MRID-SC07: DTI mismatch: stored 42.0% vs recomputed 36.8%
+    detail: Delta: 5.2%
+    fix:    Fix DTI calculation in golden_record_builder
+  [P5-LTV] APP-MRID-SC07: LTV wrong: stored 90.000% vs correct 91.837%
+    detail: Lesser-of rule not applied. Should use $436,100 not $445,000
+    cite:   Fannie B4-1.1-01
+    fix:    Fix LTV calc: use min(appraised, purchase)
+  [P7-PROPERTY] APP-MRID-SC07: flood_zone not in entity_states
+    detail: Cannot determine flood insurance requirement
+    cite:   Fannie B7-3-02
+    fix:    Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  [P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+    detail: Personas read raw entity_states. Decisions not evidence-based.
+    cite:   EV-F
+    fix:    Wire fact_nodes into vw_*_context views
+  [P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+    detail: core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+    fix:    Phase RA-4: rewrite resolvers to use rule_loader
+  [P1-DOCS] APP-MRID-SC08: Recommended missing: Prior year W2 (W2_PRIOR)
+    detail: Needed for complete income/credit analysis
+  [P1-DOCS] APP-MRID-SC08: Recommended missing: Tax return (TAX_RETURN_1040)
+    detail: Needed for complete income/credit analysis
+  [P1-DOCS] APP-MRID-SC08: Recommended missing: Employment verification (VOE)
+    detail: Needed for complete income/credit analysis
+  [P5-DTI] APP-MRID-SC08: DTI mismatch: stored 83.1% vs recomputed 37.2%
+    detail: Delta: 45.9%
+    fix:    Fix DTI calculation in golden_record_builder
+  [P5-LTV] APP-MRID-SC08: LTV wrong: stored 90.000% vs correct 91.837%
+    detail: Lesser-of rule not applied. Should use $583,100 not $595,000
+    cite:   Fannie B4-1.1-01
+    fix:    Fix LTV calc: use min(appraised, purchase)
+  [P7-PROPERTY] APP-MRID-SC08: flood_zone not in entity_states
+    detail: Cannot determine flood insurance requirement
+    cite:   Fannie B7-3-02
+    fix:    Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  [P8-EVIDENCE] APP-MRID-SC08: Conflict detected: employment_continuity
+    detail: Multiple sources disagree. Use conservative value.
+  [P8-EVIDENCE] APP-MRID-SC08: Conflict detected: employment_continuity
+    detail: Multiple sources disagree. Use conservative value.
+  [P8-EVIDENCE] APP-MRID-SC08: Conflict detected: governing_credit_score
+    detail: Multiple sources disagree. Use conservative value.
+  [P8-EVIDENCE] APP-MRID-SC08: Conflict detected: governing_credit_score
+    detail: Multiple sources disagree. Use conservative value.
+  [P8-EVIDENCE] APP-MRID-SC08: Conflict detected: governing_credit_score
+    detail: Multiple sources disagree. Use conservative value.
+  [P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+    detail: Personas read raw entity_states. Decisions not evidence-based.
+    cite:   EV-F
+    fix:    Wire fact_nodes into vw_*_context views
+  [P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+    detail: core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+    fix:    Phase RA-4: rewrite resolvers to use rule_loader
+  [P1-DOCS] APP-MRID-SC09: Recommended missing: Tax return (TAX_RETURN_1040)
+    detail: Needed for complete income/credit analysis
+  [P1-DOCS] APP-MRID-SC09: Recommended missing: Employment verification (VOE)
+    detail: Needed for complete income/credit analysis
+  [P5-DTI] APP-MRID-SC09: DTI mismatch: stored 61.5% vs recomputed 36.9%
+    detail: Delta: 24.5%
+    fix:    Fix DTI calculation in golden_record_builder
+  [P5-LTV] APP-MRID-SC09: LTV wrong: stored 90.000% vs correct 91.837%
+    detail: Lesser-of rule not applied. Should use $480,200 not $490,000
+    cite:   Fannie B4-1.1-01
+    fix:    Fix LTV calc: use min(appraised, purchase)
+  [P7-PROPERTY] APP-MRID-SC09: flood_zone not in entity_states
+    detail: Cannot determine flood insurance requirement
+    cite:   Fannie B7-3-02
+    fix:    Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  [P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+    detail: Personas read raw entity_states. Decisions not evidence-based.
+    cite:   EV-F
+    fix:    Wire fact_nodes into vw_*_context views
+  [P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+    detail: core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+    fix:    Phase RA-4: rewrite resolvers to use rule_loader
+  [P1-DOCS] APP-MRID-SC10: Recommended missing: Tax return (TAX_RETURN_1040)
+    detail: Needed for complete income/credit analysis
+  [P1-DOCS] APP-MRID-SC10: Recommended missing: Employment verification (VOE)
+    detail: Needed for complete income/credit analysis
+  [P5-DTI] APP-MRID-SC10: DTI mismatch: stored 56.7% vs recomputed 32.4%
+    detail: Delta: 24.3%
+    fix:    Fix DTI calculation in golden_record_builder
+  [P5-LTV] APP-MRID-SC10: LTV wrong: stored 80.000% vs correct 81.633%
+    detail: Lesser-of rule not applied. Should use $499,800 not $510,000
+    cite:   Fannie B4-1.1-01
+    fix:    Fix LTV calc: use min(appraised, purchase)
+  [P7-PROPERTY] APP-MRID-SC10: flood_zone not in entity_states
+    detail: Cannot determine flood insurance requirement
+    cite:   Fannie B7-3-02
+    fix:    Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  [P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+    detail: Personas read raw entity_states. Decisions not evidence-based.
+    cite:   EV-F
+    fix:    Wire fact_nodes into vw_*_context views
+  [P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+    detail: core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+    fix:    Phase RA-4: rewrite resolvers to use rule_loader
+  [P1-DOCS] APP-MRID-SC11: Recommended missing: Tax return (TAX_RETURN_1040)
+    detail: Needed for complete income/credit analysis
+  [P1-DOCS] APP-MRID-SC11: Recommended missing: Employment verification (VOE)
+    detail: Needed for complete income/credit analysis
+  [P5-DTI] APP-MRID-SC11: DTI mismatch: stored 72.9% vs recomputed 33.5%
+    detail: Delta: 39.4%
+    fix:    Fix DTI calculation in golden_record_builder
+  [P5-LTV] APP-MRID-SC11: LTV wrong: stored 80.000% vs correct 81.633%
+    detail: Lesser-of rule not applied. Should use $445,900 not $455,000
+    cite:   Fannie B4-1.1-01
+    fix:    Fix LTV calc: use min(appraised, purchase)
+  [P7-PROPERTY] APP-MRID-SC11: flood_zone not in entity_states
+    detail: Cannot determine flood insurance requirement
+    cite:   Fannie B7-3-02
+    fix:    Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  [P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+    detail: Personas read raw entity_states. Decisions not evidence-based.
+    cite:   EV-F
+    fix:    Wire fact_nodes into vw_*_context views
+  [P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+    detail: core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+    fix:    Phase RA-4: rewrite resolvers to use rule_loader
+  [P1-DOCS] APP-MRID-SC12: Recommended missing: Tax return (TAX_RETURN_1040)
+    detail: Needed for complete income/credit analysis
+  [P1-DOCS] APP-MRID-SC12: Recommended missing: Employment verification (VOE)
+    detail: Needed for complete income/credit analysis
+  [P5-DTI] APP-MRID-SC12: DTI mismatch: stored 88.2% vs recomputed 35.4%
+    detail: Delta: 52.7%
+    fix:    Fix DTI calculation in golden_record_builder
+  [P5-LTV] APP-MRID-SC12: LTV wrong: stored 90.000% vs correct 91.837%
+    detail: Lesser-of rule not applied. Should use $387,100 not $395,000
+    cite:   Fannie B4-1.1-01
+    fix:    Fix LTV calc: use min(appraised, purchase)
+  [P7-PROPERTY] APP-MRID-SC12: flood_zone not in entity_states
+    detail: Cannot determine flood insurance requirement
+    cite:   Fannie B7-3-02
+    fix:    Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  [P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+    detail: Personas read raw entity_states. Decisions not evidence-based.
+    cite:   EV-F
+    fix:    Wire fact_nodes into vw_*_context views
+  [P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+    detail: core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+    fix:    Phase RA-4: rewrite resolvers to use rule_loader
+  [P1-DOCS] APP-MRID-SC13: Recommended missing: Tax return (TAX_RETURN_1040)
+    detail: Needed for complete income/credit analysis
+  [P1-DOCS] APP-MRID-SC13: Recommended missing: Employment verification (VOE)
+    detail: Needed for complete income/credit analysis
+  [P5-DTI] APP-MRID-SC13: DTI mismatch: stored 58.4% vs recomputed 31.7%
+    detail: Delta: 26.7%
+    fix:    Fix DTI calculation in golden_record_builder
+  [P5-LTV] APP-MRID-SC13: LTV wrong: stored 90.000% vs correct 91.837%
+    detail: Lesser-of rule not applied. Should use $338,100 not $345,000
+    cite:   Fannie B4-1.1-01
+    fix:    Fix LTV calc: use min(appraised, purchase)
+  [P7-PROPERTY] APP-MRID-SC13: flood_zone not in entity_states
+    detail: Cannot determine flood insurance requirement
+    cite:   Fannie B7-3-02
+    fix:    Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  [P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+    detail: Personas read raw entity_states. Decisions not evidence-based.
+    cite:   EV-F
+    fix:    Wire fact_nodes into vw_*_context views
+  [P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+    detail: core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+    fix:    Phase RA-4: rewrite resolvers to use rule_loader
+  [P1-DOCS] APP-MRID-SC14: Recommended missing: Tax return (TAX_RETURN_1040)
+    detail: Needed for complete income/credit analysis
+  [P1-DOCS] APP-MRID-SC14: Recommended missing: Employment verification (VOE)
+    detail: Needed for complete income/credit analysis
+  [P5-LTV] APP-MRID-SC14: LTV wrong: stored 90.000% vs correct 91.837%
+    detail: Lesser-of rule not applied. Should use $411,600 not $420,000
+    cite:   Fannie B4-1.1-01
+    fix:    Fix LTV calc: use min(appraised, purchase)
+  [P7-PROPERTY] APP-MRID-SC14: flood_zone not in entity_states
+    detail: Cannot determine flood insurance requirement
+    cite:   Fannie B7-3-02
+    fix:    Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  [P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+    detail: Personas read raw entity_states. Decisions not evidence-based.
+    cite:   EV-F
+    fix:    Wire fact_nodes into vw_*_context views
+  [P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+    detail: core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+    fix:    Phase RA-4: rewrite resolvers to use rule_loader
+  [P1-DOCS] APP-MRID-SC15: Recommended missing: Tax return (TAX_RETURN_1040)
+    detail: Needed for complete income/credit analysis
+  [P1-DOCS] APP-MRID-SC15: Recommended missing: Employment verification (VOE)
+    detail: Needed for complete income/credit analysis
+  [P5-DTI] APP-MRID-SC15: DTI mismatch: stored 60.7% vs recomputed 35.1%
+    detail: Delta: 25.6%
+    fix:    Fix DTI calculation in golden_record_builder
+  [P5-LTV] APP-MRID-SC15: LTV wrong: stored 85.000% vs correct 86.735%
+    detail: Lesser-of rule not applied. Should use $362,600 not $370,000
+    cite:   Fannie B4-1.1-01
+    fix:    Fix LTV calc: use min(appraised, purchase)
+  [P7-PROPERTY] APP-MRID-SC15: flood_zone not in entity_states
+    detail: Cannot determine flood insurance requirement
+    cite:   Fannie B7-3-02
+    fix:    Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  [P8-EVIDENCE] APP-MRID-SC15: Conflict detected: verified_assets
+    detail: Multiple sources disagree. Use conservative value.
+  [P8-EVIDENCE] APP-MRID-SC15: Conflict detected: verified_assets
+    detail: Multiple sources disagree. Use conservative value.
+  [P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+    detail: Personas read raw entity_states. Decisions not evidence-based.
+    cite:   EV-F
+    fix:    Wire fact_nodes into vw_*_context views
+  [P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+    detail: core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+    fix:    Phase RA-4: rewrite resolvers to use rule_loader
+  [P1-DOCS] APP-MRID-SC16: Recommended missing: Tax return (TAX_RETURN_1040)
+    detail: Needed for complete income/credit analysis
+  [P1-DOCS] APP-MRID-SC16: Recommended missing: Employment verification (VOE)
+    detail: Needed for complete income/credit analysis
+  [P5-DTI] APP-MRID-SC16: DTI mismatch: stored 42.0% vs recomputed 36.6%
+    detail: Delta: 5.4%
+    fix:    Fix DTI calculation in golden_record_builder
+  [P5-LTV] APP-MRID-SC16: LTV wrong: stored 85.000% vs correct 86.735%
+    detail: Lesser-of rule not applied. Should use $431,200 not $440,000
+    cite:   Fannie B4-1.1-01
+    fix:    Fix LTV calc: use min(appraised, purchase)
+  [P7-PROPERTY] APP-MRID-SC16: flood_zone not in entity_states
+    detail: Cannot determine flood insurance requirement
+    cite:   Fannie B7-3-02
+    fix:    Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  [P9-DECISION] ALL: EV-F missing: 14 context views not using fact_nodes
+    detail: Personas read raw entity_states. Decisions not evidence-based.
+    cite:   EV-F
+    fix:    Wire fact_nodes into vw_*_context views
+  [P9-DECISION] CODEBASE: 38 hardcoded rule violations in resolvers
+    detail: core\assets\asset_resolver.py:41: QUALIFYING_FACTORS = {
+core\assets\asset_resolver.py:62: MIN_RESERVES_MONTHS = 2.0
+core\assets\asset_resolver.py:66: LARGE_DEPOSIT_PCT = 0.50
+core\assets\asset_resolver.py:108: factor     = QUALIFYING_FACTORS.get(
+core\assets\asset_resolver.py:240: * LARGE_DEPOSIT_PCT
+...and 33 more
+    fix:    Phase RA-4: rewrite resolvers to use rule_loader
+
+🟡 MEDIUM FINDINGS:
+  [P1-EXTRACT] APP-MRID-SC01: property_type not in appraisal extracted_fields
+    detail: Cannot corroborate URLA-stated property_type
+    fix:    Add property_type to appraisal extraction prompt
+  [P1-EXTRACT] APP-MRID-SC02: property_type not in appraisal extracted_fields
+    detail: Cannot corroborate URLA-stated property_type
+    fix:    Add property_type to appraisal extraction prompt
+  [P1-EXTRACT] APP-MRID-SC03: property_type not in appraisal extracted_fields
+    detail: Cannot corroborate URLA-stated property_type
+    fix:    Add property_type to appraisal extraction prompt
+  [P1-EXTRACT] APP-MRID-SC04: property_type not in appraisal extracted_fields
+    detail: Cannot corroborate URLA-stated property_type
+    fix:    Add property_type to appraisal extraction prompt
+  [P1-EXTRACT] APP-MRID-SC05: property_type not in appraisal extracted_fields
+    detail: Cannot corroborate URLA-stated property_type
+    fix:    Add property_type to appraisal extraction prompt
+  [P1-EXTRACT] APP-MRID-SC06: property_type not in appraisal extracted_fields
+    detail: Cannot corroborate URLA-stated property_type
+    fix:    Add property_type to appraisal extraction prompt
+  [P1-EXTRACT] APP-MRID-SC07: property_type not in appraisal extracted_fields
+    detail: Cannot corroborate URLA-stated property_type
+    fix:    Add property_type to appraisal extraction prompt
+  [P1-EXTRACT] APP-MRID-SC08: property_type not in appraisal extracted_fields
+    detail: Cannot corroborate URLA-stated property_type
+    fix:    Add property_type to appraisal extraction prompt
+  [P8-EVIDENCE] APP-MRID-SC08: Low confidence: employment_continuity (0.00)
+    detail: Request additional docs to increase confidence
+  [P8-EVIDENCE] APP-MRID-SC08: Low confidence: governing_credit_score (0.00)
+    detail: Request additional docs to increase confidence
+  [P8-EVIDENCE] APP-MRID-SC08: Low confidence: governing_credit_score (0.00)
+    detail: Request additional docs to increase confidence
+  [P8-EVIDENCE] APP-MRID-SC08: Low confidence: qualifying_income (0.00)
+    detail: Request additional docs to increase confidence
+  [P8-EVIDENCE] APP-MRID-SC08: Low confidence: verified_assets (0.00)
+    detail: Request additional docs to increase confidence
+  [P1-EXTRACT] APP-MRID-SC09: property_type not in appraisal extracted_fields
+    detail: Cannot corroborate URLA-stated property_type
+    fix:    Add property_type to appraisal extraction prompt
+  [P2-FRAUD] APP-MRID-SC09: Income variance 23.1%
+    detail: Minor. Note in file.
+  [P1-EXTRACT] APP-MRID-SC10: property_type not in appraisal extracted_fields
+    detail: Cannot corroborate URLA-stated property_type
+    fix:    Add property_type to appraisal extraction prompt
+  [P1-EXTRACT] APP-MRID-SC11: property_type not in appraisal extracted_fields
+    detail: Cannot corroborate URLA-stated property_type
+    fix:    Add property_type to appraisal extraction prompt
+  [P1-EXTRACT] APP-MRID-SC12: property_type not in appraisal extracted_fields
+    detail: Cannot corroborate URLA-stated property_type
+    fix:    Add property_type to appraisal extraction prompt
+  [P1-EXTRACT] APP-MRID-SC13: property_type not in appraisal extracted_fields
+    detail: Cannot corroborate URLA-stated property_type
+    fix:    Add property_type to appraisal extraction prompt
+  [P1-EXTRACT] APP-MRID-SC14: property_type not in appraisal extracted_fields
+    detail: Cannot corroborate URLA-stated property_type
+    fix:    Add property_type to appraisal extraction prompt
+  [P1-EXTRACT] APP-MRID-SC15: property_type not in appraisal extracted_fields
+    detail: Cannot corroborate URLA-stated property_type
+    fix:    Add property_type to appraisal extraction prompt
+  [P1-EXTRACT] APP-MRID-SC16: property_type not in appraisal extracted_fields
+    detail: Cannot corroborate URLA-stated property_type
+    fix:    Add property_type to appraisal extraction prompt
+
+ℹ️  INFO FINDINGS:
+  [P3-ASSETS] APP-MRID-SC01: Large deposit threshold: $4,000 (50% of $8,000/mo)
+    detail: Manual review: check bank statements for deposits > $4,000
+    cite:   Fannie B3-4.3-04
+  [P3-ASSETS] APP-MRID-SC02: Large deposit threshold: $4,500 (50% of $9,000/mo)
+    detail: Manual review: check bank statements for deposits > $4,500
+    cite:   Fannie B3-4.3-04
+  [P3-ASSETS] APP-MRID-SC03: Large deposit threshold: $4,969 (50% of $9,938/mo)
+    detail: Manual review: check bank statements for deposits > $4,969
+    cite:   Fannie B3-4.3-04
+  [P3-ASSETS] APP-MRID-SC04: Large deposit threshold: $3,667 (50% of $7,333/mo)
+    detail: Manual review: check bank statements for deposits > $3,667
+    cite:   Fannie B3-4.3-04
+  [P3-ASSETS] APP-MRID-SC05: Large deposit threshold: $6,042 (50% of $12,083/mo)
+    detail: Manual review: check bank statements for deposits > $6,042
+    cite:   Fannie B3-4.3-04
+  [P3-ASSETS] APP-MRID-SC06: Large deposit threshold: $3,250 (50% of $6,500/mo)
+    detail: Manual review: check bank statements for deposits > $3,250
+    cite:   Fannie B3-4.3-04
+  [P3-ASSETS] APP-MRID-SC07: Large deposit threshold: $4,250 (50% of $8,500/mo)
+    detail: Manual review: check bank statements for deposits > $4,250
+    cite:   Fannie B3-4.3-04
+  [P3-ASSETS] APP-MRID-SC09: Large deposit threshold: $4,667 (50% of $9,333/mo)
+    detail: Manual review: check bank statements for deposits > $4,667
+    cite:   Fannie B3-4.3-04
+  [P3-ASSETS] APP-MRID-SC10: Large deposit threshold: $4,917 (50% of $9,833/mo)
+    detail: Manual review: check bank statements for deposits > $4,917
+    cite:   Fannie B3-4.3-04
+  [P3-ASSETS] APP-MRID-SC11: Large deposit threshold: $4,250 (50% of $8,500/mo)
+    detail: Manual review: check bank statements for deposits > $4,250
+    cite:   Fannie B3-4.3-04
+  [P3-ASSETS] APP-MRID-SC12: Large deposit threshold: $3,925 (50% of $7,850/mo)
+    detail: Manual review: check bank statements for deposits > $3,925
+    cite:   Fannie B3-4.3-04
+  [P3-ASSETS] APP-MRID-SC13: Large deposit threshold: $3,833 (50% of $7,667/mo)
+    detail: Manual review: check bank statements for deposits > $3,833
+    cite:   Fannie B3-4.3-04
+  [P3-ASSETS] APP-MRID-SC15: Large deposit threshold: $3,500 (50% of $7,000/mo)
+    detail: Manual review: check bank statements for deposits > $3,500
+    cite:   Fannie B3-4.3-04
+
+============================================================
+CRITICAL PATH — Fix in this order:
+============================================================
+
+P1-DOCS (33 issues):
+  🟠 APP-MRID-SC01: Recommended missing: Tax return (TAX_RETURN_1040)
+  🟠 APP-MRID-SC01: Recommended missing: Employment verification (VOE)
+  🟠 APP-MRID-SC02: Recommended missing: Tax return (TAX_RETURN_1040)
+  🟠 APP-MRID-SC02: Recommended missing: Employment verification (VOE)
+  🟠 APP-MRID-SC03: Recommended missing: Tax return (TAX_RETURN_1040)
+  🟠 APP-MRID-SC03: Recommended missing: Employment verification (VOE)
+  🟠 APP-MRID-SC04: Recommended missing: Tax return (TAX_RETURN_1040)
+  🟠 APP-MRID-SC04: Recommended missing: Employment verification (VOE)
+  🟠 APP-MRID-SC05: Recommended missing: Tax return (TAX_RETURN_1040)
+  🟠 APP-MRID-SC05: Recommended missing: Employment verification (VOE)
+  🟠 APP-MRID-SC06: Recommended missing: Tax return (TAX_RETURN_1040)
+  🟠 APP-MRID-SC06: Recommended missing: Employment verification (VOE)
+  🟠 APP-MRID-SC07: Recommended missing: Tax return (TAX_RETURN_1040)
+  🟠 APP-MRID-SC07: Recommended missing: Employment verification (VOE)
+  🟠 APP-MRID-SC08: Recommended missing: Prior year W2 (W2_PRIOR)
+  🟠 APP-MRID-SC08: Recommended missing: Tax return (TAX_RETURN_1040)
+  🟠 APP-MRID-SC08: Recommended missing: Employment verification (VOE)
+  🟠 APP-MRID-SC09: Recommended missing: Tax return (TAX_RETURN_1040)
+  🟠 APP-MRID-SC09: Recommended missing: Employment verification (VOE)
+  🟠 APP-MRID-SC10: Recommended missing: Tax return (TAX_RETURN_1040)
+  🟠 APP-MRID-SC10: Recommended missing: Employment verification (VOE)
+  🟠 APP-MRID-SC11: Recommended missing: Tax return (TAX_RETURN_1040)
+  🟠 APP-MRID-SC11: Recommended missing: Employment verification (VOE)
+  🟠 APP-MRID-SC12: Recommended missing: Tax return (TAX_RETURN_1040)
+  🟠 APP-MRID-SC12: Recommended missing: Employment verification (VOE)
+  🟠 APP-MRID-SC13: Recommended missing: Tax return (TAX_RETURN_1040)
+  🟠 APP-MRID-SC13: Recommended missing: Employment verification (VOE)
+  🟠 APP-MRID-SC14: Recommended missing: Tax return (TAX_RETURN_1040)
+  🟠 APP-MRID-SC14: Recommended missing: Employment verification (VOE)
+  🟠 APP-MRID-SC15: Recommended missing: Tax return (TAX_RETURN_1040)
+  🟠 APP-MRID-SC15: Recommended missing: Employment verification (VOE)
+  🟠 APP-MRID-SC16: Recommended missing: Tax return (TAX_RETURN_1040)
+  🟠 APP-MRID-SC16: Recommended missing: Employment verification (VOE)
+
+P1-EXTRACT (4 issues):
+  🔴 APP-MRID-SC03: W2_CURRENT: critical fields not extracted
+    → Fix extraction prompt or re-upload document
+  🔴 APP-MRID-SC08: BANK_STATEMENT_M1: critical fields not extracted
+    → Fix extraction prompt or re-upload document
+  🔴 APP-MRID-SC14: BANK_STATEMENT_M1: critical fields not extracted
+    → Fix extraction prompt or re-upload document
+  🔴 APP-MRID-SC16: BANK_STATEMENT_M1: critical fields not extracted
+    → Fix extraction prompt or re-upload document
+
+P1-NULL (1 issues):
+  🔴 APP-MRID-SC03: entity_states.dti_back is NULL
+    → Fix golden_record_builder mapping for dti_back
+
+P3-ASSETS (14 issues):
+  🔴 APP-MRID-SC01: Insufficient funds to close: $24,500 available vs $51,457 needed
+    → Request additional asset documentation
+  🔴 APP-MRID-SC03: Insufficient funds to close: $52,000 available vs $133,154 needed
+    → Request additional asset documentation
+  🔴 APP-MRID-SC04: Insufficient funds to close: $34,500 available vs $83,357 needed
+    → Request additional asset documentation
+  🔴 APP-MRID-SC05: Insufficient funds to close: $67,000 available vs $114,779 needed
+    → Request additional asset documentation
+  🔴 APP-MRID-SC07: Insufficient funds to close: $41,000 available vs $53,878 needed
+    → Request additional asset documentation
+  🔴 APP-MRID-SC08: Insufficient funds to close: $0 available vs $72,039 needed
+    → Request additional asset documentation
+  🔴 APP-MRID-SC09: Insufficient funds to close: $31,000 available vs $59,327 needed
+    → Request additional asset documentation
+  🔴 APP-MRID-SC10: Insufficient funds to close: $59,000 available vs $110,421 needed
+    → Request additional asset documentation
+  🔴 APP-MRID-SC11: Insufficient funds to close: $36,000 available vs $98,512 needed
+    → Request additional asset documentation
+  🔴 APP-MRID-SC12: Insufficient funds to close: $30,500 available vs $47,825 needed
+    → Request additional asset documentation
+  🔴 APP-MRID-SC13: Insufficient reserves after closing: $2,729 vs $4,856 needed
+    → Request gift funds or additional assets
+  🔴 APP-MRID-SC14: Insufficient funds to close: $0 available vs $50,851 needed
+    → Request additional asset documentation
+  🔴 APP-MRID-SC15: Insufficient funds to close: $42,000 available vs $62,453 needed
+    → Request additional asset documentation
+  🔴 APP-MRID-SC16: Insufficient funds to close: $0 available vs $74,269 needed
+    → Request additional asset documentation
+
+P5-DTI (14 issues):
+  🟠 APP-MRID-SC01: DTI mismatch: stored 56.0% vs recomputed 37.4%
+    → Fix DTI calculation in golden_record_builder
+  🟠 APP-MRID-SC02: DTI mismatch: stored 80.2% vs recomputed 40.7%
+    → Fix DTI calculation in golden_record_builder
+  🟠 APP-MRID-SC04: DTI mismatch: stored 57.6% vs recomputed 32.8%
+    → Fix DTI calculation in golden_record_builder
+  🟠 APP-MRID-SC05: DTI mismatch: stored 59.2% vs recomputed 37.4%
+    → Fix DTI calculation in golden_record_builder
+  🟠 APP-MRID-SC06: DTI mismatch: stored 64.4% vs recomputed 37.1%
+    → Fix DTI calculation in golden_record_builder
+  🟠 APP-MRID-SC07: DTI mismatch: stored 42.0% vs recomputed 36.8%
+    → Fix DTI calculation in golden_record_builder
+  🟠 APP-MRID-SC08: DTI mismatch: stored 83.1% vs recomputed 37.2%
+    → Fix DTI calculation in golden_record_builder
+  🟠 APP-MRID-SC09: DTI mismatch: stored 61.5% vs recomputed 36.9%
+    → Fix DTI calculation in golden_record_builder
+  🟠 APP-MRID-SC10: DTI mismatch: stored 56.7% vs recomputed 32.4%
+    → Fix DTI calculation in golden_record_builder
+  🟠 APP-MRID-SC11: DTI mismatch: stored 72.9% vs recomputed 33.5%
+    → Fix DTI calculation in golden_record_builder
+  🟠 APP-MRID-SC12: DTI mismatch: stored 88.2% vs recomputed 35.4%
+    → Fix DTI calculation in golden_record_builder
+  🟠 APP-MRID-SC13: DTI mismatch: stored 58.4% vs recomputed 31.7%
+    → Fix DTI calculation in golden_record_builder
+  🟠 APP-MRID-SC15: DTI mismatch: stored 60.7% vs recomputed 35.1%
+    → Fix DTI calculation in golden_record_builder
+  🟠 APP-MRID-SC16: DTI mismatch: stored 42.0% vs recomputed 36.6%
+    → Fix DTI calculation in golden_record_builder
+
+P5-LTV (17 issues):
+  🔴 APP-MRID-SC06: LTV exceeds limit: 96.9% > 95.0%
+    → Increase down payment.
+  🟠 APP-MRID-SC01: LTV wrong: stored 90.000% vs correct 91.837%
+    → Fix LTV calc: use min(appraised, purchase)
+  🟠 APP-MRID-SC02: LTV wrong: stored 90.000% vs correct 91.837%
+    → Fix LTV calc: use min(appraised, purchase)
+  🟠 APP-MRID-SC03: LTV wrong: stored 80.000% vs correct 81.633%
+    → Fix LTV calc: use min(appraised, purchase)
+  🟠 APP-MRID-SC04: LTV wrong: stored 80.000% vs correct 81.633%
+    → Fix LTV calc: use min(appraised, purchase)
+  🟠 APP-MRID-SC05: LTV wrong: stored 85.000% vs correct 86.735%
+    → Fix LTV calc: use min(appraised, purchase)
+  🟠 APP-MRID-SC06: LTV wrong: stored 95.000% vs correct 96.939%
+    → Fix LTV calc: use min(appraised, purchase)
+  🟠 APP-MRID-SC07: LTV wrong: stored 90.000% vs correct 91.837%
+    → Fix LTV calc: use min(appraised, purchase)
+  🟠 APP-MRID-SC08: LTV wrong: stored 90.000% vs correct 91.837%
+    → Fix LTV calc: use min(appraised, purchase)
+  🟠 APP-MRID-SC09: LTV wrong: stored 90.000% vs correct 91.837%
+    → Fix LTV calc: use min(appraised, purchase)
+  🟠 APP-MRID-SC10: LTV wrong: stored 80.000% vs correct 81.633%
+    → Fix LTV calc: use min(appraised, purchase)
+  🟠 APP-MRID-SC11: LTV wrong: stored 80.000% vs correct 81.633%
+    → Fix LTV calc: use min(appraised, purchase)
+  🟠 APP-MRID-SC12: LTV wrong: stored 90.000% vs correct 91.837%
+    → Fix LTV calc: use min(appraised, purchase)
+  🟠 APP-MRID-SC13: LTV wrong: stored 90.000% vs correct 91.837%
+    → Fix LTV calc: use min(appraised, purchase)
+  🟠 APP-MRID-SC14: LTV wrong: stored 90.000% vs correct 91.837%
+    → Fix LTV calc: use min(appraised, purchase)
+  🟠 APP-MRID-SC15: LTV wrong: stored 85.000% vs correct 86.735%
+    → Fix LTV calc: use min(appraised, purchase)
+  🟠 APP-MRID-SC16: LTV wrong: stored 85.000% vs correct 86.735%
+    → Fix LTV calc: use min(appraised, purchase)
+
+P6-CREDIT (3 issues):
+  🔴 APP-MRID-SC06: Credit score below floor: 627 < 660
+    → Loan does not qualify.
+  🔴 APP-MRID-SC08: Mid score wrong: stored 578 vs correct 760
+    → Fix mid score calculation: use middle of 3 bureaus
+  🔴 APP-MRID-SC08: Credit score below floor: 578 < 660
+    → Loan does not qualify.
+
+P7-PROPERTY (16 issues):
+  🟠 APP-MRID-SC01: flood_zone not in entity_states
+    → Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  🟠 APP-MRID-SC02: flood_zone not in entity_states
+    → Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  🟠 APP-MRID-SC03: flood_zone not in entity_states
+    → Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  🟠 APP-MRID-SC04: flood_zone not in entity_states
+    → Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  🟠 APP-MRID-SC05: flood_zone not in entity_states
+    → Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  🟠 APP-MRID-SC06: flood_zone not in entity_states
+    → Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  🟠 APP-MRID-SC07: flood_zone not in entity_states
+    → Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  🟠 APP-MRID-SC08: flood_zone not in entity_states
+    → Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  🟠 APP-MRID-SC09: flood_zone not in entity_states
+    → Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  🟠 APP-MRID-SC10: flood_zone not in entity_states
+    → Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  🟠 APP-MRID-SC11: flood_zone not in entity_states
+    → Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  🟠 APP-MRID-SC12: flood_zone not in entity_states
+    → Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  🟠 APP-MRID-SC13: flood_zone not in entity_states
+    → Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  🟠 APP-MRID-SC14: flood_zone not in entity_states
+    → Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  🟠 APP-MRID-SC15: flood_zone not in entity_states
+    → Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+  🟠 APP-MRID-SC16: flood_zone not in entity_states
+    → Extract flood_zone from APPRAISAL_URAR or FLOOD_CERT
+
+P8-EVIDENCE (9 issues):
+  🟠 APP-MRID-SC03: Conflict detected: employment_continuity
+  🟠 APP-MRID-SC03: Conflict detected: employment_continuity
+  🟠 APP-MRID-SC08: Conflict detected: employment_continuity
+  🟠 APP-MRID-SC08: Conflict detected: employment_continuity
+  🟠 APP-MRID-SC08: Conflict detected: governing_credit_score
+  🟠 APP-MRID-SC08: Conflict detected: governing_credit_score
+  🟠 APP-MRID-SC08: Conflict detected: governing_credit_score
+  🟠 APP-MRID-SC15: Conflict detected: verified_assets
+  🟠 APP-MRID-SC15: Conflict detected: verified_assets
+
+P9-DECISION (32 issues):
+  🟠 ALL: EV-F missing: 14 context views not using fact_nodes
+    → Wire fact_nodes into vw_*_context views
+  🟠 CODEBASE: 38 hardcoded rule violations in resolvers
+    → Phase RA-4: rewrite resolvers to use rule_loader
+  🟠 ALL: EV-F missing: 14 context views not using fact_nodes
+    → Wire fact_nodes into vw_*_context views
+  🟠 CODEBASE: 38 hardcoded rule violations in resolvers
+    → Phase RA-4: rewrite resolvers to use rule_loader
+  🟠 ALL: EV-F missing: 14 context views not using fact_nodes
+    → Wire fact_nodes into vw_*_context views
+  🟠 CODEBASE: 38 hardcoded rule violations in resolvers
+    → Phase RA-4: rewrite resolvers to use rule_loader
+  🟠 ALL: EV-F missing: 14 context views not using fact_nodes
+    → Wire fact_nodes into vw_*_context views
+  🟠 CODEBASE: 38 hardcoded rule violations in resolvers
+    → Phase RA-4: rewrite resolvers to use rule_loader
+  🟠 ALL: EV-F missing: 14 context views not using fact_nodes
+    → Wire fact_nodes into vw_*_context views
+  🟠 CODEBASE: 38 hardcoded rule violations in resolvers
+    → Phase RA-4: rewrite resolvers to use rule_loader
+  🟠 ALL: EV-F missing: 14 context views not using fact_nodes
+    → Wire fact_nodes into vw_*_context views
+  🟠 CODEBASE: 38 hardcoded rule violations in resolvers
+    → Phase RA-4: rewrite resolvers to use rule_loader
+  🟠 ALL: EV-F missing: 14 context views not using fact_nodes
+    → Wire fact_nodes into vw_*_context views
+  🟠 CODEBASE: 38 hardcoded rule violations in resolvers
+    → Phase RA-4: rewrite resolvers to use rule_loader
+  🟠 ALL: EV-F missing: 14 context views not using fact_nodes
+    → Wire fact_nodes into vw_*_context views
+  🟠 CODEBASE: 38 hardcoded rule violations in resolvers
+    → Phase RA-4: rewrite resolvers to use rule_loader
+  🟠 ALL: EV-F missing: 14 context views not using fact_nodes
+    → Wire fact_nodes into vw_*_context views
+  🟠 CODEBASE: 38 hardcoded rule violations in resolvers
+    → Phase RA-4: rewrite resolvers to use rule_loader
+  🟠 ALL: EV-F missing: 14 context views not using fact_nodes
+    → Wire fact_nodes into vw_*_context views
+  🟠 CODEBASE: 38 hardcoded rule violations in resolvers
+    → Phase RA-4: rewrite resolvers to use rule_loader
+  🟠 ALL: EV-F missing: 14 context views not using fact_nodes
+    → Wire fact_nodes into vw_*_context views
+  🟠 CODEBASE: 38 hardcoded rule violations in resolvers
+    → Phase RA-4: rewrite resolvers to use rule_loader
+  🟠 ALL: EV-F missing: 14 context views not using fact_nodes
+    → Wire fact_nodes into vw_*_context views
+  🟠 CODEBASE: 38 hardcoded rule violations in resolvers
+    → Phase RA-4: rewrite resolvers to use rule_loader
+  🟠 ALL: EV-F missing: 14 context views not using fact_nodes
+    → Wire fact_nodes into vw_*_context views
+  🟠 CODEBASE: 38 hardcoded rule violations in resolvers
+    → Phase RA-4: rewrite resolvers to use rule_loader
+  🟠 ALL: EV-F missing: 14 context views not using fact_nodes
+    → Wire fact_nodes into vw_*_context views
+  🟠 CODEBASE: 38 hardcoded rule violations in resolvers
+    → Phase RA-4: rewrite resolvers to use rule_loader
+  🟠 ALL: EV-F missing: 14 context views not using fact_nodes
+    → Wire fact_nodes into vw_*_context views
+  🟠 CODEBASE: 38 hardcoded rule violations in resolvers
+    → Phase RA-4: rewrite resolvers to use rule_loader
+  🟠 ALL: EV-F missing: 14 context views not using fact_nodes
+    → Wire fact_nodes into vw_*_context views
+  🟠 CODEBASE: 38 hardcoded rule violations in resolvers
+    → Phase RA-4: rewrite resolvers to use rule_loader
+
+============================================================
+END OF AUDIT
+============================================================
