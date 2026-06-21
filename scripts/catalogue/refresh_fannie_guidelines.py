@@ -296,27 +296,81 @@ def extract_rules(
         text=text,
     )
 
+    model = os.environ.get('CLAUDE_MODEL_ID', 'claude-sonnet-4-6')
     try:
         resp = client.messages.create(
-            model='claude-sonnet-4-6',
-            max_tokens=2000,
+            model=model,
+            max_tokens=8000,
             messages=[{
                 'role': 'user',
                 'content': prompt,
             }]
         )
         raw = resp.content[0].text.strip()
-        # Strip markdown fences if present
-        if '```' in raw:
-            parts = raw.split('```')
-            raw = parts[1]
-            if raw.startswith('json'):
-                raw = raw[4:]
-        rules = json.loads(raw.strip())
+        rules = _parse_rules_json(raw)
+        if resp.stop_reason == 'max_tokens':
+            print('  WARN: hit max_tokens (response may be '
+                  'truncated; salvaged complete elements)')
         print(f'  Extracted {len(rules)} rules')
         return rules
     except Exception as e:
         print(f'  EXTRACTION ERROR: {e}')
+        return []
+
+
+def _parse_rules_json(raw: str) -> list:
+    """Parse the model's JSON array of rules, robust to markdown fences and
+    truncation (a response cut off by max_tokens leaves a dangling element)."""
+    # Strip markdown fences if present
+    if '```' in raw:
+        parts = raw.split('```')
+        # Use the largest fenced block (the JSON payload)
+        raw = max(parts[1:], key=len) if len(parts) > 1 else raw
+        if raw.lstrip().startswith('json'):
+            raw = raw.lstrip()[4:]
+
+    # Narrow to the JSON array bounds
+    start = raw.find('[')
+    if start == -1:
+        return []
+    body = raw[start:]
+
+    # Fast path: well-formed
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        pass
+
+    # Salvage path: truncated array — keep complete objects only. Walk to the
+    # last balanced '}' at array depth and close the array there.
+    depth = 0
+    last_complete = -1
+    in_str = False
+    esc = False
+    for i, ch in enumerate(body):
+        if esc:
+            esc = False
+            continue
+        if ch == '\\':
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                last_complete = i
+    if last_complete == -1:
+        return []
+    salvaged = body[:last_complete + 1] + ']'
+    try:
+        return json.loads(salvaged)
+    except json.JSONDecodeError:
         return []
 
 
@@ -328,20 +382,24 @@ async def type2_upsert(
     rule: dict,
     source_url: str,
     today: date,
+    force: bool = False,
 ) -> str:
     """
     Type 2 SCD upsert into agency_guidelines.
 
     LOGIC:
       Find current row (valid_to IS NULL).
-      Same value → skip (unchanged).
+      Same value → skip (unchanged); with force, re-stamp the current row
+        in place (downloaded_at / source_revision / last_verified) to record
+        that it was re-verified from source today — no new version (history
+        stays clean and repeated --force runs are idempotent).
       Different value:
         Close current: valid_to = yesterday
         Insert new: valid_from = today
       No current row:
         Insert new: valid_from = today
 
-    Returns: inserted | versioned | unchanged | skipped
+    Returns: inserted | versioned | unchanged | refreshed | skipped
     """
     name  = (rule.get('guideline_name') or '').strip()
     value = rule.get('guideline_value')
@@ -382,6 +440,18 @@ async def type2_upsert(
 
         # Same value — no change needed
         if str(existing_val) == str(value):
+            if force:
+                # Re-verify from source: re-stamp current row in place.
+                await conn.execute('''
+                    UPDATE agency_guidelines
+                    SET downloaded_at   = NOW(),
+                        source_revision = $1,
+                        last_verified   = CURRENT_DATE,
+                        source_url      = $2,
+                        updated_at      = NOW()
+                    WHERE version_id = $3
+                ''', section_id, source_url, current['version_id'])
+                return 'refreshed'
             return 'unchanged'
 
         # Different value — Type 2 close old version. Clamp the close date so
@@ -533,6 +603,12 @@ async def main():
         action='store_true',
         help='Show all current rules'
     )
+    parser.add_argument(
+        '--force',
+        action='store_true',
+        help='Re-verify unchanged rules from source '
+             '(re-stamp in place, no new version)'
+    )
     args = parser.parse_args()
 
     import asyncpg
@@ -583,6 +659,7 @@ async def main():
             'inserted':  0,
             'versioned': 0,
             'unchanged': 0,
+            'refreshed': 0,
             'skipped':   0,
         }
 
@@ -609,6 +686,7 @@ async def main():
                     sid, rule,
                     info['url'],
                     today,
+                    force=args.force,
                 )
                 stats[status] = (
                     stats.get(status, 0) + 1
