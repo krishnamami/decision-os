@@ -118,59 +118,118 @@ SECTIONS = {
 }
 
 
+# Canonical guideline names resolvers expect. Claude must map extracted
+# content to ONLY these names — no free-form naming — so the catalogue layer
+# matches the resolver contract (see core/catalogue/rule_loader.SAFE_DEFAULTS).
+# Content that doesn't map to a canonical name is skipped, not invented.
+CANONICAL_NAMES = {
+    # Asset (resolvers read these)
+    'qualifying_factor_checking',
+    'qualifying_factor_savings',
+    'qualifying_factor_cd',
+    'qualifying_factor_retirement',
+    'qualifying_factor_stocks_bonds',
+    'qualifying_factor_crypto',
+    'minimum_reserves_months',
+    'large_deposit_threshold_pct',
+    'seasoning_days_required',
+    # Credit
+    'bankruptcy_ch7_waiting_years',
+    'bankruptcy_ch13_waiting_years',
+    'foreclosure_waiting_years',
+    'short_sale_waiting_years',
+    'deed_in_lieu_waiting_years',
+    'min_credit_score',
+    # Income
+    'dti_back_max',
+    'student_loan_deferred_rate_pct',
+    'medical_collection_excluded',
+    'rental_vacancy_factor_pct',
+    'se_income_years_required',
+    'se_declining_use_lower_year',
+    # Property
+    'ltv_purchase_max',
+    'ltv_cashout_max',
+    'ltv_refi_max',
+    'max_units_conventional',
+    'ineligible_property_types',
+    'flood_zones_requiring_insurance',
+    'condo_warrantability_required',
+    'appraisal_gap_major_pct',
+    'appraisal_gap_minor_pct',
+    # MI
+    'mi_required_ltv_threshold',
+    # Fees
+    'fha_ufmip_pct',
+    'fha_annual_mip_pct',
+    'va_funding_fee_first_use_pct',
+    # Conforming
+    'conforming_loan_limit',
+}
+
+
 EXTRACTION_PROMPT = """
 You are a mortgage underwriting expert.
 Read this Fannie Mae Selling Guide section.
-Extract ALL specific numeric thresholds,
-percentages, time periods, lists, and
-boolean eligibility rules.
+Extract rules that match the CANONICAL NAMES
+listed below. Use ONLY these exact names.
+Do NOT invent new names.
+Skip any content that does not match
+a canonical name below.
 
-Return ONLY a valid JSON array.
-No preamble. No markdown. No explanation.
+CANONICAL NAMES (use exactly as written):
+{canonical_names}
+
+Return ONLY a valid JSON array. No markdown.
 
 Each element:
 {{
-  "guideline_name": "snake_case_key",
+  "guideline_name": "<exact canonical name>",
   "guideline_value": <number|boolean|array>,
   "display_value": "human readable string",
   "description": "plain English explanation",
   "conditions": "any exceptions or empty string"
 }}
 
-Examples:
+Mapping guidance:
   "retirement accounts 60% of vested balance"
-  -> guideline_name: qualifying_factor_retirement
-  -> guideline_value: 0.60
+  -> qualifying_factor_retirement = 0.60
 
   "4-year waiting period Chapter 7 bankruptcy"
-  -> guideline_name: bankruptcy_ch7_waiting_years
-  -> guideline_value: 4
+  -> bankruptcy_ch7_waiting_years = 4
 
   "25% vacancy factor for rental income"
-  -> guideline_name: rental_vacancy_factor_pct
-  -> guideline_value: 25
+  -> rental_vacancy_factor_pct = 25
 
   "zones A, AE, AH, AO, V, VE require flood insurance"
-  -> guideline_name: flood_zones_requiring_insurance
-  -> guideline_value: ["A","AE","AH","AO","V","VE"]
+  -> flood_zones_requiring_insurance =
+    ["A","AE","AH","AO","V","VE"]
 
   "crypto not eligible"
-  -> guideline_name: qualifying_factor_crypto
-  -> guideline_value: 0.0
+  -> qualifying_factor_crypto = 0.0
 
   "minimum 2 months reserves"
-  -> guideline_name: minimum_reserves_months
-  -> guideline_value: 2
+  -> minimum_reserves_months = 2
 
   "deposits exceeding 50% of qualifying income"
-  -> guideline_name: large_deposit_threshold_pct
-  -> guideline_value: 50
+  -> large_deposit_threshold_pct = 50
 
   "60-day seasoning requirement"
-  -> guideline_name: seasoning_days_required
-  -> guideline_value: 60
+  -> seasoning_days_required = 60
 
-If nothing specific found -> return []
+  "stocks qualify at 70%"
+  -> qualifying_factor_stocks_bonds = 0.70
+
+  "maximum DTI 50% with DU"
+  -> dti_back_max = 50
+
+  "maximum LTV 97% for 1-unit primary"
+  -> ltv_purchase_max = 97
+
+  "minimum credit score 620"
+  -> min_credit_score = 620
+
+If nothing matches a canonical name -> return []
 
 Citation: {citation}
 Category: {category}
@@ -291,6 +350,7 @@ def extract_rules(
 
     client = anthropic.Anthropic(api_key=api_key)
     prompt = EXTRACTION_PROMPT.format(
+        canonical_names='\n'.join(sorted(CANONICAL_NAMES)),
         citation=f'Fannie Mae {section_id}',
         category=info['category'],
         text=text,
