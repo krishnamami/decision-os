@@ -111,6 +111,31 @@ class ContextEnricher:
         except Exception:
             pass
 
+    async def _attach_fraud(
+        self, base: dict, application_id: str, tenant_id: str
+    ) -> None:
+        """Attach the current fraud_indicator fact (RA-3E) if one exists.
+        Best-effort: clean loans leave fraud_populated=False."""
+        try:
+            r = await self.conn.fetchrow(
+                """SELECT confidence, conflicts_found, resolution_method
+                   FROM fact_nodes
+                   WHERE application_id=$1 AND tenant_id=$2
+                   AND fact_type='fraud_indicator' AND superseded_by IS NULL
+                   ORDER BY computed_at DESC LIMIT 1""",
+                application_id, tenant_id,
+            )
+            if r:
+                base["fraud_populated"] = True
+                base["fraud_indicator_confidence"] = (
+                    float(r["confidence"])
+                    if r["confidence"] is not None else None
+                )
+                base["fraud_indicator_conflicts"] = bool(r["conflicts_found"])
+                base["fraud_indicator_method"] = r["resolution_method"]
+        except Exception:
+            pass
+
     async def evidence_facts(
         self, application_id: str, tenant_id: str
     ) -> dict:
@@ -152,10 +177,17 @@ class ContextEnricher:
             "income_confidence_min":       None,
             "income_confidence_floor":     None,
             "income_confidence_threshold_trace": None,
+            # Fraud evidence (RA-3E) — present only when a fraud_indicator
+            # fact exists; clean loans carry fraud_populated=False.
+            "fraud_indicator_confidence":  None,
+            "fraud_indicator_conflicts":   False,
+            "fraud_indicator_method":      None,
+            "fraud_populated":             False,
         }
 
-        # Thresholds first, so they ride on every return path (even no-facts).
+        # Thresholds + fraud first, so they ride on every return path.
         await self._attach_income_thresholds(base, tenant_id)
+        await self._attach_fraud(base, application_id, tenant_id)
 
         try:
             rows = await self.conn.fetch(
