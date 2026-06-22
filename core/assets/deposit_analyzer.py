@@ -32,13 +32,8 @@ from datetime import date
 from typing import List
 
 
-# Days to look back for deposit history
-LOOKBACK_DAYS = 60
-
-# Large deposit threshold (% of qualifying monthly)
-LARGE_DEPOSIT_PCT = 0.50
-
-# Transfer match window (days)
+# Transfer match window (days) — STRUCTURAL algorithm param (deposit↔withdrawal
+# correlation window), not a lending threshold. Stays in code.
 TRANSFER_MATCH_DAYS = 3
 
 
@@ -60,6 +55,24 @@ class DepositFinding:
 
 class DepositAnalyzer:
 
+    def __init__(self, rules: dict = None):
+        """`rules` is the catalogue-resolved {key: value} map (large_deposit
+        _threshold_pct). Falls back to rule_loader.SAFE_DEFAULTS — the single
+        sanctioned fallback; no resolver-local hardcoded lending value."""
+        from core.catalogue.rule_loader import SAFE_DEFAULTS
+        self._rules = dict(SAFE_DEFAULTS)
+        if rules:
+            self._rules.update(
+                {k: v for k, v in rules.items() if v is not None}
+            )
+
+    @property
+    def _large_deposit_frac(self) -> float:
+        # catalogue stores percent (50); the math wants the fraction.
+        return float(
+            self._rules.get('large_deposit_threshold_pct', 50)
+        ) / 100.0
+
     def analyze_deposits(
         self,
         deposits: list,
@@ -74,7 +87,7 @@ class DepositAnalyzer:
         all_accounts: to detect own-account transfers
         """
         threshold = qualifying_monthly \
-                  * LARGE_DEPOSIT_PCT
+                  * self._large_deposit_frac
         findings  = []
         total_unsourced = 0.0
         gift_deposits   = []
@@ -229,7 +242,5 @@ class DepositAnalyzer:
 __all__ = [
     "DepositAnalyzer",
     "DepositFinding",
-    "LOOKBACK_DAYS",
-    "LARGE_DEPOSIT_PCT",
     "TRANSFER_MATCH_DAYS",
 ]

@@ -38,32 +38,56 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 
-QUALIFYING_FACTORS = {
-    'checking':       1.00,
-    'savings':        1.00,
-    'money_market':   1.00,
-    'cd':             1.00,
-    'brokerage':      0.70,
-    'stocks_bonds':   0.70,
-    'ira':            0.60,
-    '401k':           0.60,
-    '403b':           0.60,
-    'pension':        0.60,
-    'annuity':        0.60,
-    'business_account': 0.00,  # needs CPA letter
-    'crypto':         0.00,    # excluded
-    'gift_funds':     1.00,    # if documented
-    'proceeds_sale':  1.00,    # if verified
-    'bridge_loan':    0.00,    # excluded
-    'other':          1.00,
+# Asset-type -> canonical catalogue factor key. STRUCTURAL classifier (not a
+# lending value): the factor VALUES come from agency_guidelines via rule_loader
+# (Fannie B3-4.3-04). Liquid-equivalent types map to the checking factor.
+ACCT_TYPE_TO_FACTOR_KEY = {
+    'checking':       'qualifying_factor_checking',
+    'savings':        'qualifying_factor_savings',
+    'money_market':   'qualifying_factor_checking',
+    'cd':             'qualifying_factor_cd',
+    'gift_funds':     'qualifying_factor_checking',   # liquid once documented
+    'proceeds_sale':  'qualifying_factor_checking',   # liquid once verified
+    'other':          'qualifying_factor_checking',
+    'brokerage':      'qualifying_factor_stocks_bonds',
+    'stocks_bonds':   'qualifying_factor_stocks_bonds',
+    'ira':            'qualifying_factor_retirement',
+    '401k':           'qualifying_factor_retirement',
+    '403b':           'qualifying_factor_retirement',
+    'pension':        'qualifying_factor_retirement',
+    'annuity':        'qualifying_factor_retirement',
+    'crypto':         'qualifying_factor_crypto',
 }
+# Excluded from qualifying assets (factor 0) unless special-case logic
+# (business ownership tiers) applies — structural eligibility, not a value.
+EXCLUDED_ACCT_TYPES = {'business_account', 'bridge_loan'}
 
-# Minimum reserves in months of PITI
-MIN_RESERVES_MONTHS = 2.0
+# Catalogue rule names this resolver reads through rule_loader.
+ASSET_RULE_KEYS = [
+    'qualifying_factor_checking', 'qualifying_factor_savings',
+    'qualifying_factor_cd', 'qualifying_factor_retirement',
+    'qualifying_factor_stocks_bonds', 'qualifying_factor_crypto',
+    'minimum_reserves_months', 'large_deposit_threshold_pct',
+    'seasoning_days_required',
+]
 
-# Large deposit threshold
-# Any deposit > X% of qualifying monthly income
-LARGE_DEPOSIT_PCT = 0.50
+
+async def load_asset_rules(conn, tenant_id: str, agency: str = 'fannie') -> dict:
+    """Resolve every asset rule from the catalogue via rule_loader. Returns
+    {'values': {key: applied}, 'trace': {key: {applied, governed_by, layers}}}.
+    Called on the ASYNC snapshot path (runner) — never inside the sync persona —
+    and injected into AssetResolver / DepositAnalyzer."""
+    from core.catalogue.rule_loader import get_rule
+    values, trace = {}, {}
+    for key in ASSET_RULE_KEYS:
+        r = await get_rule(conn, key, tenant_id, agency=agency)
+        values[key] = r.get('applied')
+        trace[key] = {
+            'applied':     r.get('applied'),
+            'governed_by': r.get('governed_by'),
+            'layers':      r.get('layers', {}),
+        }
+    return {'values': values, 'trace': trace}
 
 
 @dataclass
@@ -91,6 +115,41 @@ class AccountAnalysis:
 
 class AssetResolver:
 
+    def __init__(self, rules: Optional[dict] = None):
+        """`rules` is the catalogue-resolved {key: value} map (from
+        load_asset_rules, attached to the bundle by the runner). When absent
+        (tests / non-enriched callers), fall back to rule_loader.SAFE_DEFAULTS —
+        the single sanctioned fallback; no resolver-local hardcoded values."""
+        from core.catalogue.rule_loader import SAFE_DEFAULTS
+        self._rules = dict(SAFE_DEFAULTS)
+        if rules:
+            self._rules.update(
+                {k: v for k, v in rules.items() if v is not None}
+            )
+
+    def _factor(self, acct_type: str) -> float:
+        if acct_type in EXCLUDED_ACCT_TYPES:
+            return 0.0
+        key = ACCT_TYPE_TO_FACTOR_KEY.get(
+            acct_type, 'qualifying_factor_checking'
+        )
+        return float(self._rules.get(key, 1.0))
+
+    @property
+    def _reserves_months(self) -> float:
+        return float(self._rules.get('minimum_reserves_months', 2))
+
+    @property
+    def _large_deposit_frac(self) -> float:
+        # catalogue stores percent (50); the math wants the fraction.
+        return float(
+            self._rules.get('large_deposit_threshold_pct', 50)
+        ) / 100.0
+
+    @property
+    def _seasoning_days(self) -> int:
+        return int(self._rules.get('seasoning_days_required', 60))
+
     def analyze_account(
         self,
         account: dict,
@@ -105,9 +164,7 @@ class AssetResolver:
         balance    = float(
             account.get('current_balance') or 0
         )
-        factor     = QUALIFYING_FACTORS.get(
-            acct_type, 1.00
-        )
+        factor     = self._factor(acct_type)
         seasoned   = account.get(
             'is_seasoned', True
         )
@@ -155,7 +212,7 @@ class AssetResolver:
                 'Crypto assets excluded per '
                 'Fannie Mae policy'
             )
-            factor = 0.0
+            factor = self._factor('crypto')
             flags.append('crypto_excluded')
 
         # ── Gift funds: need full chain ────────
@@ -213,7 +270,7 @@ class AssetResolver:
 
         # ── Seasoning check ────────────────────
         if included and not seasoned \
-                and seas_days < 60:
+                and seas_days < self._seasoning_days:
             flags.append(
                 f'not_seasoned_{seas_days}d'
             )
@@ -223,7 +280,7 @@ class AssetResolver:
                     f'Account at {institution}: '
                     f'${balance:,.0f} has only '
                     f'{seas_days} days of history '
-                    f'(60 required). Provide '
+                    f'({self._seasoning_days} required). Provide '
                     f'additional statements or '
                     f'source of funds.'
                 ),
@@ -237,7 +294,7 @@ class AssetResolver:
                 and dep_amount > 0:
             threshold = (
                 qualifying_monthly
-                * LARGE_DEPOSIT_PCT
+                * self._large_deposit_frac
                 if qualifying_monthly > 0
                 else 5000
             )
@@ -328,7 +385,7 @@ class AssetResolver:
             piti_monthly * 2, 2
         ) if piti_monthly else 0
         reserves = round(
-            piti_monthly * MIN_RESERVES_MONTHS, 2
+            piti_monthly * self._reserves_months, 2
         ) if piti_monthly else 0
 
         funds_needed = (
@@ -405,7 +462,7 @@ class AssetResolver:
 __all__ = [
     "AssetResolver",
     "AccountAnalysis",
-    "QUALIFYING_FACTORS",
-    "MIN_RESERVES_MONTHS",
-    "LARGE_DEPOSIT_PCT",
+    "load_asset_rules",
+    "ACCT_TYPE_TO_FACTOR_KEY",
+    "ASSET_RULE_KEYS",
 ]

@@ -162,6 +162,11 @@ class AssetVerificationAgent(LendingPersona):
         total_qualifying_assets = None
         funds_sufficient = None
         asset_conditions: list[dict] = []
+        # RA-4A: catalogue-resolved asset rules injected via the bundle (the
+        # runner loaded them through rule_loader; resolvers stay sync/DB-less).
+        asset_rules_obj = latest_object(bundle, "asset_rules") or {}
+        asset_rule_values = asset_rules_obj.get("values")
+        asset_rule_trace = asset_rules_obj.get("trace")
 
         if asset_accounts:
             from core.assets.asset_resolver import AssetResolver
@@ -176,14 +181,14 @@ class AssetVerificationAgent(LendingPersona):
             down_payment = float(assets.get("down_payment_computed") or 0)
             qualifying_monthly = float(assets.get("qualifying_monthly") or 0)
 
-            asset_result = AssetResolver().resolve_all(
+            asset_result = AssetResolver(asset_rule_values).resolve_all(
                 asset_accounts,
                 qualifying_monthly=qualifying_monthly,
                 piti_monthly=piti_monthly,
                 loan_amount=loan_amount,
                 down_payment=down_payment,
             )
-            dep_result = DepositAnalyzer().analyze_deposits(
+            dep_result = DepositAnalyzer(asset_rule_values).analyze_deposits(
                 unsourced_deposits,
                 qualifying_monthly=qualifying_monthly,
             )
@@ -226,6 +231,9 @@ class AssetVerificationAgent(LendingPersona):
                 "total_qualifying_assets": total_qualifying_assets,
                 "funds_sufficient": funds_sufficient,
                 "asset_conditions": asset_conditions,
+                # RA-4A: catalogue provenance for every asset rule applied
+                # (federal/agency/overlay layers per rule) for the workbench.
+                "asset_rule_trace": asset_rule_trace,
             },
             proposed_outcome=outcome,
             confidence=confidence,

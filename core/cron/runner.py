@@ -349,7 +349,15 @@ class PersonaRunner:
                 facts = await ContextEnricher(conn).evidence_facts(
                     app_id, tenant_id
                 )
-            snapshot.context["evidence"] = {app_id: facts}
+                snapshot.context["evidence"] = {app_id: facts}
+                # RA-4A: resolvers are sync/DB-less, so catalogue rules they
+                # need are resolved here (async, has conn) and injected via the
+                # bundle. Loaded only for the decision that uses them.
+                if decision_id == "asset_verification":
+                    from core.assets.asset_resolver import load_asset_rules
+                    snapshot.context["asset_rules"] = {
+                        app_id: await load_asset_rules(conn, tenant_id)
+                    }
         except Exception:  # noqa: BLE001 — enrichment must never break a decision
             pass
 
