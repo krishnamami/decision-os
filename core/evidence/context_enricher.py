@@ -94,12 +94,21 @@ class ContextEnricher:
             "evidence_overall_confidence": None,
             "evidence_any_conflicts":      False,
             "evidence_populated":          False,
+            # Per-fact detail for persona consumption (RA-3D onward).
+            "ev_income_value":             None,
+            "ev_income_confidence":        None,
+            "ev_income_method":            None,
+            "ev_income_conflicts":         False,
+            "ev_income_conflict_ids":      None,
+            "ev_employment_confidence":    None,
+            "ev_employment_conflicts":     False,
         }
         try:
             rows = await self.conn.fetch(
                 """
                 SELECT fact_type, fact_value, fact_text,
-                       confidence, conflicts_found
+                       confidence, conflicts_found,
+                       resolution_method, conflict_ids
                 FROM fact_nodes
                 WHERE application_id = $1
                   AND tenant_id = $2
@@ -143,6 +152,28 @@ class ContextEnricher:
                 confidences.append(float(r["confidence"]))
             if r["conflicts_found"]:
                 any_conflict = True
+
+            # Per-fact detail the personas read (income + employment first).
+            if ft == "qualifying_income":
+                base["ev_income_value"] = (
+                    float(r["fact_value"])
+                    if r["fact_value"] is not None else None
+                )
+                base["ev_income_confidence"] = (
+                    float(r["confidence"])
+                    if r["confidence"] is not None else None
+                )
+                base["ev_income_method"] = r["resolution_method"]
+                base["ev_income_conflicts"] = bool(r["conflicts_found"])
+                base["ev_income_conflict_ids"] = (
+                    list(r["conflict_ids"]) if r["conflict_ids"] else None
+                )
+            elif ft == "employment_continuity":
+                base["ev_employment_confidence"] = (
+                    float(r["confidence"])
+                    if r["confidence"] is not None else None
+                )
+                base["ev_employment_conflicts"] = bool(r["conflicts_found"])
 
         base["evidence_populated"] = True
         base["evidence_any_conflicts"] = any_conflict

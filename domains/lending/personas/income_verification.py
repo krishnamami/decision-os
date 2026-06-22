@@ -249,11 +249,80 @@ class IncomeVerificationAgent(LendingPersona):
                 )
             )
 
+        # ── Evidence quality (RA-3D / EV-F) ────────────────────────────
+        # Read the evidence facts the enricher placed on the bundle
+        # (bundle.objects["evidence"]). This is ADVISORY and OUTCOME-NEUTRAL:
+        # it prefers the evidence-qualified income for the REPORTED figure
+        # and raises quality flags, but does NOT move the reconciliation-
+        # driven outcome or the verified_income downstream DTI consumes —
+        # so 16/16 and income-sufficiency amounts are unchanged. Graceful:
+        # non-meridian apps have no evidence object → stated path, no flags.
+        ev = latest_object(bundle, "evidence") or {}
+        evidence_populated = bool(ev.get("evidence_populated"))
+        ev_income_value = ev.get("ev_income_value")
+        ev_income_conf = ev.get("ev_income_confidence")
+        ev_income_conflicts = bool(ev.get("ev_income_conflicts"))
+        ev_income_method = ev.get("ev_income_method") or "unknown"
+        ev_emp_conf = ev.get("ev_employment_confidence")
+        ev_emp_conflicts = bool(ev.get("ev_employment_conflicts"))
+
+        # RULE 1 — prefer evidence-qualified income (reported figure only).
+        income_source = "stated"
+        income_method = "entity_states"
+        evidence_income_confidence = None
+        if (
+            evidence_populated and ev_income_value
+            and ev_income_conf is not None and ev_income_conf >= 0.75
+        ):
+            income_source = "evidence"
+            income_method = ev_income_method
+            evidence_income_confidence = round(float(ev_income_conf), 3)
+
+        # RULES 2/3/4 — quality flags as advisory CONTRADICTS signals.
+        if evidence_populated and ev_income_conf is not None:
+            if 0.50 <= ev_income_conf < 0.75:
+                signals.append(make_signal(
+                    "INC_LOW_CONFIDENCE", round(float(ev_income_conf), 3),
+                    direction=SignalDirection.CONTRADICTS, source="evidence",
+                    notes=(f"Income confidence {ev_income_conf:.0%}; method "
+                           f"{ev_income_method}. Request additional docs."),
+                ))
+            elif ev_income_conf < 0.50:
+                income_source = "stated"
+                income_method = "entity_states"
+                signals.append(make_signal(
+                    "INC_VERY_LOW_CONFIDENCE", round(float(ev_income_conf), 3),
+                    direction=SignalDirection.CONTRADICTS, source="evidence",
+                    notes=(f"Income confidence {ev_income_conf:.0%} too low to "
+                           "use evidence value. Manual verification required."),
+                ))
+        if ev_income_conflicts:
+            signals.append(make_signal(
+                "INC_CONFLICT_DETECTED", True,
+                direction=SignalDirection.CONTRADICTS, source="evidence",
+                notes="Income conflict across documents. Manual review required.",
+            ))
+        if ev_emp_conflicts:
+            signals.append(make_signal(
+                "EMP_CONTINUITY_CONFLICT", True,
+                direction=SignalDirection.CONTRADICTS, source="evidence",
+                notes=(f"Employment continuity conflict; confidence "
+                       f"{(ev_emp_conf or 0):.0%}. Verify employment history."),
+            ))
+
         return OfflineReasoning(
             output_payload={
                 "verified_income": verified,
                 "income_confidence_score": round(confidence_score, 3),
                 "employment_type": employment_type,
+                # RULE 5 — evidence resolution visible to auditors.
+                "income_source": income_source,
+                "income_method": income_method,
+                "evidence_income_confidence": evidence_income_confidence,
+                "evidence_qualifying_monthly": (
+                    float(ev_income_value) if ev_income_value else None
+                ),
+                "evidence_populated": evidence_populated,
                 "payroll_verified": reconciled_attempts > 0,
                 "income_discrepancy_pct": round(discrepancy, 3),
                 "multiple_income_sources": multiple_sources,
