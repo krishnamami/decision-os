@@ -58,7 +58,6 @@ class TitleAssessmentAgent(LendingPersona):
             use_anthropic=use_anthropic,
             **kw,
         )
-        self._resolver = LienResolver()
 
     def _compute_offline(
         self, bundle: ContextBundle, policy: Optional[PolicyDecision]
@@ -68,7 +67,11 @@ class TitleAssessmentAgent(LendingPersona):
         non_borrower_owners = _as_list(title.get("non_borrower_owners"))
         title_clear = title.get("title_clear")
 
-        resolution = self._resolver.resolve_all(encumbrances)
+        # RA-4D: catalogue-resolved lien treatments injected via the bundle
+        # (the runner loaded them through rule_loader; resolver stays sync).
+        lien_obj = first_object(bundle, "lien_rules") or {}
+        lien_rule_trace = lien_obj.get("trace")
+        resolution = LienResolver(lien_obj.get("values")).resolve_all(encumbrances)
         overall = resolution["overall_status"]          # clear/conditions/block/fatal_block
         blocking = resolution["blocking_count"]
         payoff = resolution["total_payoff"]
@@ -122,6 +125,8 @@ class TitleAssessmentAgent(LendingPersona):
                 "conditions_generated": conditions,
                 "non_borrower_owners": non_borrower_owners,
                 "title_clear": title_clear,
+                # RA-4D: catalogue provenance per lien treatment.
+                "lien_rule_trace": lien_rule_trace,
             },
             proposed_outcome=outcome,
             confidence=confidence,

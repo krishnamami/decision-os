@@ -14,7 +14,24 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional
 
-LIEN_RULES = {
+# Lien type -> catalogue guideline_name for its AGENCY TREATMENT (Fannie
+# B8-1-01/02). Whether a lien blocks closing is the agency value -> derived
+# from the catalogue treatment string. Lien types NOT mapped here are
+# uncatalogued — their structural blocks_closing in LIEN_META is used and
+# flagged (seed pass needed).
+LIEN_TYPE_TO_RULE_KEY = {
+    "tax_lien_irs":   "lien_irs_tax_treatment",
+    "hoa_lien":       "lien_hoa_treatment",
+    "mechanics_lien": "lien_mechanics_treatment",
+    "solar_panel":    "lien_solar_panel_treatment",
+}
+
+# Structural lien metadata (priority, docs, condition text, agency_treatment,
+# auto_block, resolution_method) — NOT the catalogued blocks_closing decision.
+# Catalogued types (irs/hoa/mechanics) intentionally omit blocks_closing: it is
+# resolved from the catalogue treatment. Uncatalogued types keep
+# blocks_closing here as their structural value (flagged).
+LIEN_META = {
     "tax_lien_property": {
         "priority": 1, "super_priority": True, "blocks_closing": True,
         "resolvable": True, "resolution_method": "pay_at_closing",
@@ -27,7 +44,7 @@ LIEN_RULES = {
         "auto_block": True,
     },
     "tax_lien_irs": {
-        "priority": 2, "super_priority": False, "blocks_closing": True,
+        "priority": 2, "super_priority": False,
         "resolvable": True, "resolution_method": "payoff_letter",
         "required_docs": ["IRS_PAYOFF_LETTER", "IRS_LIEN_RELEASE"],
         "condition_code": "TITLE_IRS_LIEN",
@@ -64,7 +81,7 @@ LIEN_RULES = {
         "auto_block": True,
     },
     "hoa_lien": {
-        "priority": 5, "super_priority": True, "blocks_closing": False,
+        "priority": 5, "super_priority": True,
         "resolvable": True, "resolution_method": "pay_at_closing",
         "required_docs": ["HOA_ESTOPPEL_LETTER", "HOA_PAYOFF"],
         "condition_code": "TITLE_HOA_LIEN",
@@ -75,7 +92,7 @@ LIEN_RULES = {
         "auto_block": False, "escalate": True,
     },
     "mechanics_lien": {
-        "priority": 4, "super_priority": False, "blocks_closing": True,
+        "priority": 4, "super_priority": False,
         "resolvable": True, "resolution_method": "release_required",
         "required_docs": ["MECHANICS_LIEN_RELEASE", "CONTRACTOR_WAIVER"],
         "condition_code": "TITLE_MECHANICS_LIEN",
@@ -158,6 +175,24 @@ LIEN_RULES = {
 _NO_PRIORITY = 999
 
 
+async def load_lien_rules(conn, tenant_id: str, agency: str = "fannie") -> dict:
+    """Resolve lien treatments from the catalogue via rule_loader. Returns
+    {'values': {key: applied}, 'trace': {key: {applied, governed_by, layers}}}.
+    Called on the ASYNC snapshot path (runner) — never inside the sync persona —
+    and injected into LienResolver."""
+    from core.catalogue.rule_loader import get_rule
+    values, trace = {}, {}
+    for key in dict.fromkeys(LIEN_TYPE_TO_RULE_KEY.values()):
+        r = await get_rule(conn, key, tenant_id, agency=agency)
+        values[key] = r.get("applied")
+        trace[key] = {
+            "applied":     r.get("applied"),
+            "governed_by": r.get("governed_by"),
+            "layers":      r.get("layers", {}),
+        }
+    return {"values": values, "trace": trace}
+
+
 @dataclass
 class LienResolution:
     lien_type: str
@@ -177,9 +212,35 @@ class LienResolution:
 
 
 class LienResolver:
+    def __init__(self, rules: Optional[dict] = None):
+        """`rules` is the catalogue-resolved {key: treatment} map (from
+        load_lien_rules, injected via the bundle). Falls back to
+        rule_loader.SAFE_DEFAULTS (now seeded with the 4 lien treatments) — the
+        single sanctioned fallback; no resolver-local hardcoded treatment."""
+        from core.catalogue.rule_loader import SAFE_DEFAULTS
+        self._rules = dict(SAFE_DEFAULTS)
+        if rules:
+            self._rules.update(
+                {k: v for k, v in rules.items() if v is not None}
+            )
+
+    def _blocks_closing(self, lien_type: str, meta: dict) -> bool:
+        """Catalogued types: derive from the agency treatment string.
+        Uncatalogued types: structural blocks_closing from LIEN_META (flagged)."""
+        key = LIEN_TYPE_TO_RULE_KEY.get(lien_type)
+        if key:
+            return str(self._rules.get(key) or "") == "blocks_closing"
+        if "blocks_closing" not in meta:
+            import logging
+            logging.warning(
+                "LienResolver: lien_%s_treatment not in catalogue — using "
+                "structural default", lien_type,
+            )
+        return bool(meta.get("blocks_closing", True))
+
     def resolve_lien(self, lien_type: str, lien_holder: str = "",
                      lien_amount: float = 0) -> LienResolution:
-        rules = LIEN_RULES.get(lien_type, LIEN_RULES["other"])
+        rules = LIEN_META.get(lien_type, LIEN_META["other"])
         condition_text = rules["condition_text"].format(
             amount=lien_amount, holder=lien_holder or "unknown holder", county="",
         )
@@ -187,7 +248,8 @@ class LienResolver:
         priority = prio if prio is not None else _NO_PRIORITY
         return LienResolution(
             lien_type=lien_type, lien_holder=lien_holder, lien_amount=lien_amount,
-            priority=priority, blocks_closing=rules["blocks_closing"],
+            priority=priority,
+            blocks_closing=self._blocks_closing(lien_type, rules),
             resolvable=rules.get("resolvable", True),
             resolution_method=rules["resolution_method"],
             condition_code=rules["condition_code"], condition_text=condition_text,
@@ -243,4 +305,7 @@ class LienResolver:
         }
 
 
-__all__ = ["LienResolver", "LienResolution", "LIEN_RULES"]
+__all__ = [
+    "LienResolver", "LienResolution",
+    "load_lien_rules", "LIEN_META", "LIEN_TYPE_TO_RULE_KEY",
+]

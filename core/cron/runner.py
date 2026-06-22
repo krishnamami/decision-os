@@ -370,6 +370,11 @@ class PersonaRunner:
                     snapshot.context["collateral_rules"] = {
                         app_id: await load_collateral_rules(conn, tenant_id)
                     }
+                elif decision_id == "title_assessment":
+                    from core.title.lien_resolver import load_lien_rules
+                    snapshot.context["lien_rules"] = {
+                        app_id: await load_lien_rules(conn, tenant_id)
+                    }
         except Exception:  # noqa: BLE001 — enrichment must never break a decision
             pass
 

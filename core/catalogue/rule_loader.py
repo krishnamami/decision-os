@@ -80,6 +80,11 @@ SAFE_DEFAULTS = {
     'undisclosed_debt_medium_mo':      200,
     'undisclosed_debt_high_mo':        500,
     'undisclosed_debt_critical_mo':    1000,
+    # Title lien treatments (Fannie B8-1-01/02) — string values.
+    'lien_solar_panel_treatment':      'acceptable_if_leased_or_owned',
+    'lien_irs_tax_treatment':          'blocks_closing',
+    'lien_hoa_treatment':              'requires_payoff_if_superior',
+    'lien_mechanics_treatment':        'blocks_closing',
 }
 
 
