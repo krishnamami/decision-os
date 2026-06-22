@@ -47,6 +47,31 @@ class TradelineAnalysis:
 
 class TradelineAnalyzer:
 
+    def __init__(self, rules: dict = None):
+        """`rules` is the catalogue-resolved {key: value} map
+        (student_loan_deferred_rate_pct, medical_collection_excluded), injected
+        via the bundle. Falls back to rule_loader.SAFE_DEFAULTS — the single
+        sanctioned fallback; no resolver-local hardcoded lending values."""
+        from core.catalogue.rule_loader import SAFE_DEFAULTS
+        self._rules = dict(SAFE_DEFAULTS)
+        if rules:
+            self._rules.update({
+                k: (v.get('value') if isinstance(v, dict) else v)
+                for k, v in rules.items()
+                if (v.get('value') if isinstance(v, dict) else v) is not None
+            })
+
+    @property
+    def _student_loan_rate(self) -> float:
+        # catalogue stores percent (1.0); the math wants the fraction.
+        return float(
+            self._rules.get('student_loan_deferred_rate_pct', 1.0)
+        ) / 100.0
+
+    @property
+    def _medical_excluded(self) -> bool:
+        return bool(self._rules.get('medical_collection_excluded', True))
+
     def analyze_tradeline(
         self,
         tradeline: dict,
@@ -147,7 +172,7 @@ class TradelineAnalyzer:
                 # Fannie: 1% of balance per month
                 # Cannot use $0 payment
                 computed_payment = round(
-                    balance * 0.01, 2
+                    balance * self._student_loan_rate, 2
                 )
                 flags.append(
                     f'student_loan_deferred_'
@@ -213,7 +238,8 @@ class TradelineAnalyzer:
 
         # ── RULE 5: Medical collection ─────────
         if is_medical and \
-                acct_type == 'collection':
+                acct_type == 'collection' and \
+                self._medical_excluded:
             included = False
             exclusion_reason = (
                 'Medical collection — '

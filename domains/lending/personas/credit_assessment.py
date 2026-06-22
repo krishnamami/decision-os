@@ -124,10 +124,19 @@ class CreditRiskAgent(LendingPersona):
         tradeline_obligations = None
         extra_reason = ""
 
+        # RA-4B: catalogue-resolved credit rules injected via the bundle (the
+        # runner loaded them through rule_loader; resolvers stay sync/DB-less).
+        credit_rules_obj = latest_object(bundle, "credit_rules") or {}
+        credit_rule_values = credit_rules_obj or None
+        credit_rule_trace = {
+            k: {"governed_by": v.get("governed_by"), "layers": v.get("layers")}
+            for k, v in credit_rules_obj.items()
+        } if credit_rules_obj else None
+
         if tradelines:
             from core.credit.tradeline_analyzer import TradelineAnalyzer
 
-            tl_result = TradelineAnalyzer().analyze_all(tradelines)
+            tl_result = TradelineAnalyzer(credit_rule_values).analyze_all(tradelines)
             conditions.extend(tl_result.get("all_conditions", []))
             if tl_result["total_obligations"] > 0:
                 tradeline_obligations = tl_result["total_obligations"]
@@ -142,7 +151,7 @@ class CreditRiskAgent(LendingPersona):
         if findings:
             from core.credit.findings_resolver import CreditFindingsResolver
 
-            fnd_result = CreditFindingsResolver().resolve_all(findings)
+            fnd_result = CreditFindingsResolver(credit_rule_values).resolve_all(findings)
             conditions.extend(fnd_result.get("conditions", []))
             if fnd_result["overall_status"] == "block":
                 outcome = DecisionOutcome.BLOCK
@@ -178,6 +187,9 @@ class CreditRiskAgent(LendingPersona):
                 "tradeline_obligations": tradeline_obligations,
                 "credit_findings_count": len(findings),
                 "disputed_derogatory_count": disputed_count,
+                # RA-4B: catalogue provenance per credit rule (governed_by +
+                # federal/agency/overlay layers) for the workbench.
+                "credit_rule_trace": credit_rule_trace,
             },
             proposed_outcome=outcome,
             confidence=confidence,

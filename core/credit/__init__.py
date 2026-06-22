@@ -2,7 +2,9 @@
 from .findings_resolver import (
     CreditFindingsResolver,
     FindingResolution,
-    WAITING_PERIODS,
+    load_credit_rules,
 )
 
-__all__ = ["CreditFindingsResolver", "FindingResolution", "WAITING_PERIODS"]
+__all__ = [
+    "CreditFindingsResolver", "FindingResolution", "load_credit_rules",
+]

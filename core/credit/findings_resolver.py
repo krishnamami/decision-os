@@ -67,160 +67,125 @@ from datetime import date
 from typing import Optional
 
 
-WAITING_PERIODS = {
+# Derogatory event -> catalogue guideline_name for the BASE waiting period.
+# Years are read per agency (key + '_' + agency) from agency_guidelines via
+# rule_loader, injected through the bundle (RA-4B). Events not listed here have
+# no agency waiting period (0) — LOE-only / structural.
+EVENT_RULE_KEY = {
+    'bankruptcy_ch7':  'bankruptcy_ch7_waiting_years',
+    'bankruptcy_ch13': 'bankruptcy_ch13_waiting_years',
+    'foreclosure':     'foreclosure_waiting_years',
+    'short_sale':      'short_sale_waiting_years',
+    'deed_in_lieu':    'deed_in_lieu_waiting_years',
+}
 
+# Structural metadata per event — NO catalogued waiting years (those come from
+# the catalogue). Keeps per-agency notes + loe_required / blocks_if_active /
+# severity / condition_code / fannie_hard_block. (extenuating reductions were
+# dead data — never read by resolve_finding — and were dropped.)
+# NOTE: 'judgment' is an agency waiting period (Fannie B3-5.3-07) NOT yet in the
+# catalogue — its years stay here under `years` as a flagged follow-up.
+WAITING_META = {
     'bankruptcy_ch7': {
-        'fannie': {'years': 4, 'from': 'discharge'},
-        'fha':    {'years': 2, 'from': 'discharge'},
-        'va':     {'years': 2, 'from': 'discharge'},
-        'extenuating': {
-            'fannie': {'years': 2},
-            'fha':    {'years': 1},
-        },
-        'loe_required':    True,
-        'blocks_if_active': True,
-        'severity':        'fatal',
-        'condition_code':  'CREDIT_LOE_BANKRUPTCY',
+        'loe_required': True, 'blocks_if_active': True,
+        'severity': 'fatal', 'condition_code': 'CREDIT_LOE_BANKRUPTCY',
     },
-
     'bankruptcy_ch13': {
-        'fannie': {'years': 2, 'from': 'discharge'},
-        'fha':    {'years': 1, 'from': 'filing',
-                   'note': 'satisfactory payments'},
-        'va':     {'years': 1, 'from': 'filing',
-                   'note': 'satisfactory payments'},
-        'loe_required':    True,
-        'blocks_if_active': True,
-        'severity':        'major',
-        'condition_code':  'CREDIT_LOE_BANKRUPTCY',
+        'fha': {'note': 'satisfactory payments'},
+        'va':  {'note': 'satisfactory payments'},
+        'loe_required': True, 'blocks_if_active': True,
+        'severity': 'major', 'condition_code': 'CREDIT_LOE_BANKRUPTCY',
     },
-
     'foreclosure': {
-        'fannie': {'years': 7, 'from': 'completion'},
-        'fha':    {'years': 3, 'from': 'completion'},
-        'va':     {'years': 2, 'from': 'completion'},
-        'extenuating': {
-            'fannie': {'years': 3},
-        },
-        'loe_required':    True,
-        'blocks_if_active': True,
-        'severity':        'fatal',
-        'condition_code':  'CREDIT_LOE_FORECLOSURE',
+        'loe_required': True, 'blocks_if_active': True,
+        'severity': 'fatal', 'condition_code': 'CREDIT_LOE_FORECLOSURE',
     },
-
     'short_sale': {
-        'fannie': {'years': 4, 'from': 'completion'},
-        'fha':    {'years': 3, 'from': 'completion'},
-        'va':     {'years': 2, 'from': 'completion'},
-        'loe_required':    True,
-        'blocks_if_active': False,
-        'severity':        'major',
-        'condition_code':  'CREDIT_LOE_SHORT_SALE',
+        'loe_required': True, 'blocks_if_active': False,
+        'severity': 'major', 'condition_code': 'CREDIT_LOE_SHORT_SALE',
     },
-
     'deed_in_lieu': {
-        'fannie': {'years': 4, 'from': 'completion'},
-        'fha':    {'years': 3, 'from': 'completion'},
-        'va':     {'years': 2, 'from': 'completion'},
-        'loe_required':    True,
-        'blocks_if_active': False,
-        'severity':        'major',
-        'condition_code':  'CREDIT_LOE_DEED_IN_LIEU',
+        'loe_required': True, 'blocks_if_active': False,
+        'severity': 'major', 'condition_code': 'CREDIT_LOE_DEED_IN_LIEU',
     },
-
     'collection_non_medical': {
-        'fannie': {'years': 0,
-                   'note': 'LOE if >$250'},
-        'fha':    {'years': 0,
-                   'note': 'pay if >$2K cumulative'},
-        'va':     {'years': 0},
-        'loe_required':    True,
-        'blocks_if_active': False,
-        'severity':        'moderate',
-        'condition_code':  'CREDIT_LOE_COLLECTION',
+        'fannie': {'note': 'LOE if >$250'},
+        'fha': {'note': 'pay if >$2K cumulative'},
+        'loe_required': True, 'blocks_if_active': False,
+        'severity': 'moderate', 'condition_code': 'CREDIT_LOE_COLLECTION',
     },
-
     'collection_medical': {
-        'fannie': {'years': 0,
-                   'note': 'ignore (post-2023)'},
-        'fha':    {'years': 0,
-                   'note': 'ignore'},
-        'va':     {'years': 0,
-                   'note': 'ignore'},
-        'loe_required':    False,
-        'blocks_if_active': False,
-        'severity':        'informational',
-        'condition_code':  None,
+        'fannie': {'note': 'ignore (post-2023)'},
+        'fha': {'note': 'ignore'}, 'va': {'note': 'ignore'},
+        'loe_required': False, 'blocks_if_active': False,
+        'severity': 'informational', 'condition_code': None,
     },
-
     'charge_off': {
-        'fannie': {'years': 0, 'note': 'LOE required'},
-        'fha':    {'years': 0,
-                   'note': 'pay off or LOE'},
-        'va':     {'years': 0},
-        'loe_required':    True,
-        'blocks_if_active': False,
-        'severity':        'moderate',
-        'condition_code':  'CREDIT_LOE_CHARGE_OFF',
+        'fannie': {'note': 'LOE required'},
+        'fha': {'note': 'pay off or LOE'},
+        'loe_required': True, 'blocks_if_active': False,
+        'severity': 'moderate', 'condition_code': 'CREDIT_LOE_CHARGE_OFF',
     },
-
     'mortgage_late_12mo': {
-        'fannie': {'years': 0,
-                   'note': 'hard block most products'},
-        'fha':    {'years': 0, 'note': 'LOE required'},
-        'va':     {'years': 0, 'note': 'LOE required'},
-        'loe_required':    True,
-        'blocks_if_active': True,
-        'fannie_hard_block': True,
-        'severity':        'major',
-        'condition_code':  'CREDIT_LOE_MORTGAGE_LATE',
+        'fannie': {'note': 'hard block most products'},
+        'fha': {'note': 'LOE required'}, 'va': {'note': 'LOE required'},
+        'loe_required': True, 'blocks_if_active': True,
+        'fannie_hard_block': True, 'severity': 'major',
+        'condition_code': 'CREDIT_LOE_MORTGAGE_LATE',
     },
-
     'mortgage_late_24mo': {
-        'fannie': {'years': 0, 'note': 'LOE required'},
-        'fha':    {'years': 0, 'note': 'LOE required'},
-        'va':     {'years': 0, 'note': 'LOE required'},
-        'loe_required':    True,
-        'blocks_if_active': False,
-        'severity':        'minor',
-        'condition_code':  'CREDIT_LOE_MORTGAGE_LATE',
+        'fannie': {'note': 'LOE required'}, 'fha': {'note': 'LOE required'},
+        'va': {'note': 'LOE required'},
+        'loe_required': True, 'blocks_if_active': False,
+        'severity': 'minor', 'condition_code': 'CREDIT_LOE_MORTGAGE_LATE',
     },
-
     'judgment': {
-        'fannie': {'years': 7, 'from': 'filed'},
-        'fha':    {'years': 3, 'from': 'filed'},
-        'va':     {'years': 2, 'from': 'filed'},
-        'loe_required':    True,
-        'blocks_if_active': True,
-        'severity':        'major',
-        'condition_code':  'CREDIT_LOE_JUDGMENT',
+        # UNCATALOGUED agency waiting period (Fannie B3-5.3-07) — TODO seed.
+        'years': {'fannie': 7, 'fha': 3, 'va': 2},
+        'loe_required': True, 'blocks_if_active': True,
+        'severity': 'major', 'condition_code': 'CREDIT_LOE_JUDGMENT',
     },
-
     'thin_file': {
-        'fannie': {'years': 0,
-                   'note': 'nontraditional credit'},
-        'fha':    {'years': 0,
-                   'note': 'nontraditional credit'},
-        'va':     {'years': 0,
-                   'note': 'nontraditional credit'},
-        'loe_required':    False,
-        'blocks_if_active': False,
-        'severity':        'minor',
-        'condition_code':  'CREDIT_NONTRADITIONAL',
+        'fannie': {'note': 'nontraditional credit'},
+        'fha': {'note': 'nontraditional credit'},
+        'va': {'note': 'nontraditional credit'},
+        'loe_required': False, 'blocks_if_active': False,
+        'severity': 'minor', 'condition_code': 'CREDIT_NONTRADITIONAL',
     },
-
     'disputed_account': {
-        'fannie': {'years': 0,
-                   'note': 'remove dispute before closing'},
-        'fha':    {'years': 0,
-                   'note': 'remove dispute before closing'},
-        'va':     {'years': 0},
-        'loe_required':    False,
-        'blocks_if_active': True,
-        'severity':        'moderate',
-        'condition_code':  'CREDIT_DISPUTED_ACCOUNT',
+        'fannie': {'note': 'remove dispute before closing'},
+        'fha': {'note': 'remove dispute before closing'},
+        'loe_required': False, 'blocks_if_active': True,
+        'severity': 'moderate', 'condition_code': 'CREDIT_DISPUTED_ACCOUNT',
     },
 }
+
+
+async def load_credit_rules(conn, tenant_id: str) -> dict:
+    """Resolve credit rules from the catalogue via rule_loader. Waiting periods
+    differ per agency, so each is loaded per agency as
+    '{key}_{agency}'. Single-agency rules (student loan, medical) are loaded
+    once. Returns {key: {value, governed_by, layers}}. Called on the ASYNC
+    snapshot path (runner) — never in the sync persona — and injected into
+    CreditFindingsResolver / TradelineAnalyzer."""
+    from core.catalogue.rule_loader import get_rule
+    rules: dict = {}
+    for agency in ('fannie', 'fha', 'va'):
+        for key in EVENT_RULE_KEY.values():
+            r = await get_rule(conn, key, tenant_id, agency=agency)
+            rules[f'{key}_{agency}'] = {
+                'value':       r.get('applied'),
+                'governed_by': r.get('governed_by'),
+                'layers':      r.get('layers', {}),
+            }
+    for key in ('student_loan_deferred_rate_pct', 'medical_collection_excluded'):
+        r = await get_rule(conn, key, tenant_id, agency='fannie')
+        rules[key] = {
+            'value':       r.get('applied'),
+            'governed_by': r.get('governed_by'),
+            'layers':      r.get('layers', {}),
+        }
+    return rules
 
 
 def _add_years(ref_date: date, years: int) -> date:
@@ -256,6 +221,34 @@ class FindingResolution:
 
 class CreditFindingsResolver:
 
+    def __init__(self, rules: Optional[dict] = None):
+        """`rules` is the catalogue-resolved {f'{key}_{agency}': value} map of
+        base waiting years (from load_credit_rules, injected via the bundle).
+        Falls back to rule_loader.SAFE_DEFAULTS (the single sanctioned fallback;
+        per-agency variation collapses to the conservative agency default in
+        degraded mode). No resolver-local hardcoded waiting years."""
+        from core.catalogue.rule_loader import SAFE_DEFAULTS
+        self._defaults = SAFE_DEFAULTS
+        self._rules = {}
+        if rules:
+            self._rules = {
+                k: v.get('value') if isinstance(v, dict) else v
+                for k, v in rules.items()
+            }
+
+    def _years(self, finding_type: str, agency: str) -> int:
+        """Base waiting years for an event+agency: catalogue (injected) for the
+        catalogued events; structural WAITING_META years for the uncatalogued
+        'judgment'; 0 (no waiting period) for everything else."""
+        key = EVENT_RULE_KEY.get(finding_type)
+        if key:
+            val = self._rules.get(f'{key}_{agency}')
+            if val is None:
+                val = self._rules.get(key, self._defaults.get(key, 0))
+            return int(float(val or 0))
+        meta_years = WAITING_META.get(finding_type, {}).get('years', {})
+        return int(meta_years.get(agency, 0))
+
     def resolve_finding(
         self,
         finding_type: str,
@@ -268,16 +261,16 @@ class CreditFindingsResolver:
         Resolve a single credit finding.
         Determines eligibility per agency.
         """
-        rules = WAITING_PERIODS.get(
+        rules = WAITING_META.get(
             finding_type, {}
         )
         today = date.today()
 
         def calc_eligible(
-            agency_rules: dict,
+            agency: str,
             ref_date: Optional[date],
         ):
-            years = agency_rules.get('years', 0)
+            years = self._years(finding_type, agency)
             if years == 0:
                 return True, None
             if not ref_date:
@@ -291,13 +284,13 @@ class CreditFindingsResolver:
         ref_date = discharge_date or event_date
 
         fannie_elig, fannie_date = calc_eligible(
-            rules.get('fannie', {}), ref_date
+            'fannie', ref_date
         )
         fha_elig, fha_date = calc_eligible(
-            rules.get('fha', {}), ref_date
+            'fha', ref_date
         )
         va_elig, va_date = calc_eligible(
-            rules.get('va', {}), ref_date
+            'va', ref_date
         )
 
         blocks = (
@@ -418,4 +411,7 @@ class CreditFindingsResolver:
         }
 
 
-__all__ = ["CreditFindingsResolver", "FindingResolution", "WAITING_PERIODS"]
+__all__ = [
+    "CreditFindingsResolver", "FindingResolution",
+    "EVENT_RULE_KEY", "WAITING_META",
+]

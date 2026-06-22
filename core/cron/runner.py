@@ -358,6 +358,11 @@ class PersonaRunner:
                     snapshot.context["asset_rules"] = {
                         app_id: await load_asset_rules(conn, tenant_id)
                     }
+                elif decision_id == "credit_assessment":
+                    from core.credit.findings_resolver import load_credit_rules
+                    snapshot.context["credit_rules"] = {
+                        app_id: await load_credit_rules(conn, tenant_id)
+                    }
         except Exception:  # noqa: BLE001 — enrichment must never break a decision
             pass
 
