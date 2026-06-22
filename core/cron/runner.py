@@ -432,7 +432,7 @@ class PersonaRunner:
             outcome = reasoning.proposed_outcome.value
         actual = time.time() - start
 
-        await self.decision_store.write_decision(
+        decision_uuid = await self.decision_store.write_decision(
             application_id=app_id,
             decision_id=decision_id,
             wave=wave,
@@ -459,6 +459,106 @@ class PersonaRunner:
             tenant_id=tenant_id,
             governed_by=_governed_by_for(decision_id, outcome),
         )
+
+        # RA-3F: freeze exactly what THIS persona saw as a persona_bundles audit
+        # snapshot, then stamp decision_outputs.bundle_id. Runs AFTER the decision
+        # is committed and is strictly best-effort — the memory bundle is the live
+        # source of truth; the PG bundle is the audit/replay record. A failure
+        # here must never fail the decision (it is already written).
+        try:
+            await self._write_persona_bundle(
+                app_id, tenant_id, decision_id, decision_uuid, bundle,
+            )
+        except Exception as exc:  # noqa: BLE001 — bundle write never blocks a decision
+            logger.warning(
+                "%s: persona_bundle snapshot failed for %s "
+                "(decision already committed): %s",
+                decision_id, app_id, exc,
+            )
+
+    # ── RA-3F — persona bundle audit snapshot ─────────────────────────
+
+    async def _write_persona_bundle(
+        self,
+        application_id: str,
+        tenant_id: str,
+        decision_id: str,
+        decision_uuid: Any,
+        bundle: Any,
+    ) -> str:
+        """Freeze the ContextBundle the persona saw into persona_bundles and
+        point the just-written decision_outputs row at it.
+
+        Snapshots are taken from the REAL bundle structure (ContextBundle.objects
+        is ot_id->entity_id->fields, with the runner's injected ``evidence`` and
+        ``*_rules`` keys alongside; upstream_outputs is the prior-decision blobs):
+          evidence_snapshot ← objects['evidence']
+          rules_snapshot    ← objects['{asset,credit,collateral,lien}_rules']
+          entity_snapshot   ← the remaining (entity_states / view) objects
+          upstream_snapshot ← bundle.upstream_outputs
+
+        Same conn/transaction for the bundle insert + the FK back-write, keyed by
+        the exact decision_outputs.id so only the current version is stamped
+        (decision_outputs is append-only/versioned)."""
+        import json
+
+        objects = dict(getattr(bundle, "objects", None) or {})
+        evidence_snap = objects.pop("evidence", {})
+        rules_snap = {
+            k: objects.pop(k)
+            for k in ("asset_rules", "credit_rules", "collateral_rules", "lien_rules")
+            if k in objects
+        }
+        entity_snap = objects  # whatever remains = entity_states / view projection
+        upstream_snap = getattr(bundle, "upstream_outputs", None) or {}
+
+        pool = await self.decision_store._get_pool()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                cur = await conn.fetchval(
+                    """
+                    SELECT COALESCE(MAX(version), 0)
+                    FROM persona_bundles
+                    WHERE application_id = $1 AND persona_id = $2 AND tenant_id = $3
+                    """,
+                    application_id, decision_id, tenant_id,
+                )
+                next_version = (cur or 0) + 1
+
+                await conn.execute(
+                    """
+                    UPDATE persona_bundles SET is_current = false
+                    WHERE application_id = $1 AND persona_id = $2 AND tenant_id = $3
+                      AND is_current = true
+                    """,
+                    application_id, decision_id, tenant_id,
+                )
+
+                bundle_id = await conn.fetchval(
+                    """
+                    INSERT INTO persona_bundles (
+                        application_id, tenant_id, persona_id,
+                        version, is_current,
+                        entity_snapshot, evidence_snapshot,
+                        rules_snapshot, upstream_snapshot
+                    ) VALUES ($1,$2,$3,$4,true,$5,$6,$7,$8)
+                    RETURNING id
+                    """,
+                    application_id, tenant_id, decision_id, next_version,
+                    json.dumps(entity_snap, default=str),
+                    json.dumps(evidence_snap, default=str),
+                    json.dumps(rules_snap, default=str),
+                    json.dumps(upstream_snap, default=str),
+                )
+
+                # Stamp ONLY the row just written (versioned table — never the
+                # historical versions).
+                await conn.execute(
+                    "UPDATE decision_outputs SET bundle_id = $1 WHERE id = $2",
+                    bundle_id, decision_uuid,
+                )
+
+        return str(bundle_id)
 
     # ── Policy engine wiring (ThresholdResolver + PolicyEvaluator) ────
 
