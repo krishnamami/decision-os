@@ -29,6 +29,34 @@ class SelfEmployedResolver:
 
     def __init__(self, conn):
         self.conn = conn
+        # Catalogue-resolved SE rules (RA-4G). Loaded async before the sync
+        # _calculate_qualifying runs; never hardcoded.
+        self._depreciation_addback: Optional[bool] = None
+        self._use_lower_year: Optional[bool] = None
+        self._years_required: Optional[float] = None
+        self.rule_trace: Optional[dict] = None
+
+    async def load_rules(self, tenant_id: str) -> None:
+        """Resolve SE income rules from the catalogue (Fannie B3-3.4-01/02).
+        Async self-load (resolver holds a conn) — no bundle injection."""
+        from core.catalogue.rule_loader import get_rule, SAFE_DEFAULTS
+        trace = {}
+        for key, attr, default in (
+            ("se_depreciation_addback", "_depreciation_addback", True),
+            ("se_declining_use_lower_year", "_use_lower_year", True),
+            ("se_income_years_required", "_years_required", 2),
+        ):
+            r = await get_rule(self.conn, key, tenant_id)
+            val = r.get("applied")
+            if val is None:
+                val = SAFE_DEFAULTS.get(key, default)
+            setattr(self, attr, val)
+            trace[key] = {
+                "applied": r.get("applied"),
+                "governed_by": r.get("governed_by"),
+                "layers": sorted((r.get("layers") or {}).keys()),
+            }
+        self.rule_trace = trace
 
     async def resolve(
         self,
@@ -36,6 +64,8 @@ class SelfEmployedResolver:
         tenant_id: str,
     ) -> Optional[dict]:
         """Resolve SE income from Schedule C / K-1."""
+        if self._depreciation_addback is None:
+            await self.load_rules(tenant_id)
         docs = await self._load_se_docs(application_id, tenant_id)
         if not docs:
             return None
@@ -123,18 +153,25 @@ class SelfEmployedResolver:
         return data if data['has_schedule_c'] else None
 
     def _calculate_qualifying(self, data: dict) -> dict:
-        """2-year average unless declining; add back depreciation."""
+        """N-year average unless declining; depreciation add-back and the
+        declining→use-lower-year rule both come from the catalogue (RA-4G)."""
+        # Catalogue-resolved flags, set by load_rules before resolve calls this
+        # (no Python-hardcoded lending values).
+        addback = self._depreciation_addback
+        use_lower = self._use_lower_year
+        years_required = int(self._years_required)
+
         current = data['net_profit_current'] or 0
         prior = data['net_profit_prior'] or 0
-        depr_c = data['depreciation_current'] or 0
-        depr_p = data['depreciation_prior'] or 0
+        depr_c = (data['depreciation_current'] or 0) if addback else 0
+        depr_p = (data['depreciation_prior'] or 0) if addback else 0
 
         adjusted_current = current + depr_c
         adjusted_prior = prior + depr_p
 
         notes = []
         if adjusted_prior > 0 and adjusted_current > 0:
-            if adjusted_current < adjusted_prior:
+            if use_lower and adjusted_current < adjusted_prior:
                 qualifying_annual = adjusted_current
                 method = (
                     'Schedule C: current year only (declining income — '
@@ -146,25 +183,25 @@ class SelfEmployedResolver:
                 )
             else:
                 qualifying_annual = (adjusted_current + adjusted_prior) / 2
-                method = 'Schedule C: 2-year average (Fannie B3-3.4-01)'
+                method = f'Schedule C: {years_required}-year average (Fannie B3-3.4-01)'
                 notes.append(
-                    f'2-year average: (${adjusted_current:,.0f} + '
+                    f'{years_required}-year average: (${adjusted_current:,.0f} + '
                     f'${adjusted_prior:,.0f}) / 2 = ${qualifying_annual:,.0f}'
                 )
         elif adjusted_current > 0:
             qualifying_annual = adjusted_current
             method = 'Schedule C: current year only (prior year unavailable)'
             notes.append(
-                'Only one year available. Request prior-year Schedule C '
-                'for full 2-year analysis.'
+                f'Only one year available; {years_required} years required '
+                '(Fannie B3-3.4-01). Request prior-year Schedule C.'
             )
         else:
             qualifying_annual = 0
             method = 'No qualifying SE income found'
 
-        monthly = round(qualifying_annual / 12, 2)
+        years_available = 2 if adjusted_prior > 0 else 1
         return {
-            'monthly_qualifying_se': monthly,
+            'monthly_qualifying_se': round(qualifying_annual / 12, 2),
             'annual_qualifying': qualifying_annual,
             'method': method,
             'notes': '\n'.join(notes),
@@ -172,7 +209,9 @@ class SelfEmployedResolver:
                 adjusted_current < adjusted_prior
                 if adjusted_prior > 0 else False
             ),
-            'years_available': 2 if adjusted_prior > 0 else 1,
+            'years_available': years_available,
+            'years_required': years_required,
+            'meets_years_requirement': years_available >= years_required,
         }
 
 

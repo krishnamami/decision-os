@@ -33,6 +33,28 @@ class RentalIncomeResolver:
 
     def __init__(self, conn):
         self.conn = conn
+        # Catalogue-resolved vacancy fraction (RA-4G). Loaded async before the
+        # sync _calculate_qualifying runs; never hardcoded.
+        self._vacancy_frac: Optional[float] = None
+        self.rule_trace: Optional[dict] = None
+
+    async def load_rules(self, tenant_id: str) -> None:
+        """Resolve rental thresholds from the catalogue. The resolver is async
+        and holds a conn, so it self-loads (RA-4F-style) — no bundle injection.
+        rental_vacancy_factor_pct is a PERCENT (25) → stored as a fraction."""
+        from core.catalogue.rule_loader import get_rule, SAFE_DEFAULTS
+        r = await get_rule(self.conn, "rental_vacancy_factor_pct", tenant_id)
+        pct = r.get("applied")
+        if pct is None:
+            pct = SAFE_DEFAULTS.get("rental_vacancy_factor_pct", 25)
+        self._vacancy_frac = float(pct) / 100.0
+        self.rule_trace = {
+            "rental_vacancy_factor_pct": {
+                "applied": r.get("applied"),
+                "governed_by": r.get("governed_by"),
+                "layers": sorted((r.get("layers") or {}).keys()),
+            }
+        }
 
     async def resolve(
         self,
@@ -44,6 +66,9 @@ class RentalIncomeResolver:
         Returns monthly rental income to add
         to qualifying income (or loss to subtract).
         """
+        if self._vacancy_frac is None:
+            await self.load_rules(tenant_id)
+
         docs = await self._load_rental_docs(
             application_id, tenant_id
         )
@@ -173,7 +198,8 @@ class RentalIncomeResolver:
 
         Fannie Mae B3-3.1-08:
           Primary: (gross - expenses + depreciation) / 12
-          Fallback: lease * 0.75 / 12 (25% vacancy)
+          Fallback: lease * (1 - vacancy) / 12, vacancy from catalogue
+                    (rental_vacancy_factor_pct, Fannie B3-3.1-08)
         """
         monthly_qualifying = 0.0
         method = ''
@@ -208,14 +234,19 @@ class RentalIncomeResolver:
 
         elif data['lease_amount']:
             lease = data['lease_amount']
-            monthly_qualifying = round(lease * 0.75, 2)
+            # Vacancy factor from the catalogue (rental_vacancy_factor_pct,
+            # Fannie B3-3.1-08), loaded by load_rules before resolve calls this.
+            # occupancy = 1 - vacancy. No Python-hardcoded value.
+            vacancy_frac = self._vacancy_frac
+            occupancy = 1.0 - vacancy_frac
+            monthly_qualifying = round(lease * occupancy, 2)
             method = (
-                f'Lease ${lease:,.0f}/mo x 75% vacancy factor '
-                f'(Fannie Mae B3-3.1-08)'
+                f'Lease ${lease:,.0f}/mo x {occupancy:.0%} occupancy '
+                f'({vacancy_frac:.0%} vacancy factor, Fannie Mae B3-3.1-08)'
             )
             notes.append(
-                'No Schedule E - using lease amount with 25% vacancy '
-                'deduction. Request Schedule E for full analysis.'
+                f'No Schedule E - using lease amount with {vacancy_frac:.0%} '
+                'vacancy deduction. Request Schedule E for full analysis.'
             )
 
         return {
