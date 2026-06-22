@@ -266,13 +266,25 @@ class IncomeVerificationAgent(LendingPersona):
         ev_emp_conf = ev.get("ev_employment_confidence")
         ev_emp_conflicts = bool(ev.get("ev_employment_conflicts"))
 
+        # Confidence thresholds come from agency_guidelines (Fannie B3-3.1-01)
+        # via rule_loader, resolved by the enricher onto the bundle. The
+        # constants are a safety net ONLY (catalogue-unreachable degraded
+        # mode) — the governing values are the catalogue values.
+        confidence_min = ev.get("income_confidence_min")
+        confidence_floor = ev.get("income_confidence_floor")
+        if confidence_min is None:
+            confidence_min = 0.75
+        if confidence_floor is None:
+            confidence_floor = 0.50
+        threshold_trace = ev.get("income_confidence_threshold_trace")
+
         # RULE 1 — prefer evidence-qualified income (reported figure only).
         income_source = "stated"
         income_method = "entity_states"
         evidence_income_confidence = None
         if (
             evidence_populated and ev_income_value
-            and ev_income_conf is not None and ev_income_conf >= 0.75
+            and ev_income_conf is not None and ev_income_conf >= confidence_min
         ):
             income_source = "evidence"
             income_method = ev_income_method
@@ -280,14 +292,14 @@ class IncomeVerificationAgent(LendingPersona):
 
         # RULES 2/3/4 — quality flags as advisory CONTRADICTS signals.
         if evidence_populated and ev_income_conf is not None:
-            if 0.50 <= ev_income_conf < 0.75:
+            if confidence_floor <= ev_income_conf < confidence_min:
                 signals.append(make_signal(
                     "INC_LOW_CONFIDENCE", round(float(ev_income_conf), 3),
                     direction=SignalDirection.CONTRADICTS, source="evidence",
                     notes=(f"Income confidence {ev_income_conf:.0%}; method "
                            f"{ev_income_method}. Request additional docs."),
                 ))
-            elif ev_income_conf < 0.50:
+            elif ev_income_conf < confidence_floor:
                 income_source = "stated"
                 income_method = "entity_states"
                 signals.append(make_signal(
@@ -323,6 +335,8 @@ class IncomeVerificationAgent(LendingPersona):
                     float(ev_income_value) if ev_income_value else None
                 ),
                 "evidence_populated": evidence_populated,
+                # Catalogue threshold provenance (federal/agency/overlay/applied).
+                "threshold_trace": threshold_trace,
                 "payroll_verified": reconciled_attempts > 0,
                 "income_discrepancy_pct": round(discrepancy, 3),
                 "multiple_income_sources": multiple_sources,

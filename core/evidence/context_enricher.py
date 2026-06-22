@@ -67,6 +67,50 @@ class ContextEnricher:
         "employment_continuity":  "evidence_employment_status",
     }
 
+    @staticmethod
+    def _trace(result: dict, rule: str) -> dict:
+        """Flatten a rule_loader.get_rule result into a workbench-friendly
+        threshold trace: federal / agency / overlay / applied / citations."""
+        layers = result.get("layers", {}) if result else {}
+        citations = [
+            layers[k].get("citation")
+            for k in ("regulatory", "agency", "overlay")
+            if layers.get(k) and layers[k].get("citation")
+        ]
+        return {
+            "rule":     rule,
+            "federal":  (layers.get("regulatory") or {}).get("value"),
+            "agency":   (layers.get("agency") or {}).get("value"),
+            "overlay":  (layers.get("overlay") or {}).get("value"),
+            "applied":  result.get("applied") if result else None,
+            "governed_by": result.get("governed_by") if result else None,
+            "citations": citations,
+        }
+
+    async def _attach_income_thresholds(self, base: dict, tenant_id: str) -> None:
+        """Resolve income documentation confidence thresholds from the
+        catalogue (Fannie B3-3.1-01) via rule_loader and attach to base.
+        Best-effort: on any failure the persona falls back to safe constants."""
+        try:
+            from core.catalogue.rule_loader import get_rule
+            rmin = await get_rule(
+                self.conn, "income_documentation_confidence_min",
+                tenant_id, agency="fannie", is_ceiling=False,
+            )
+            rflr = await get_rule(
+                self.conn, "income_documentation_confidence_floor",
+                tenant_id, agency="fannie", is_ceiling=False,
+            )
+            if rmin.get("applied") is not None:
+                base["income_confidence_min"] = float(rmin["applied"])
+            if rflr.get("applied") is not None:
+                base["income_confidence_floor"] = float(rflr["applied"])
+            base["income_confidence_threshold_trace"] = self._trace(
+                rmin, "income_documentation_confidence_min"
+            )
+        except Exception:
+            pass
+
     async def evidence_facts(
         self, application_id: str, tenant_id: str
     ) -> dict:
@@ -102,7 +146,17 @@ class ContextEnricher:
             "ev_income_conflict_ids":      None,
             "ev_employment_confidence":    None,
             "ev_employment_conflicts":     False,
+            # Catalogue-sourced thresholds (RA-3D correction) — read via
+            # rule_loader so the governing values come from agency_guidelines,
+            # not Python constants. Attached on every path (app-independent).
+            "income_confidence_min":       None,
+            "income_confidence_floor":     None,
+            "income_confidence_threshold_trace": None,
         }
+
+        # Thresholds first, so they ride on every return path (even no-facts).
+        await self._attach_income_thresholds(base, tenant_id)
+
         try:
             rows = await self.conn.fetch(
                 """
