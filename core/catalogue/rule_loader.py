@@ -85,6 +85,12 @@ SAFE_DEFAULTS = {
     'lien_irs_tax_treatment':          'blocks_closing',
     'lien_hoa_treatment':              'requires_payoff_if_superior',
     'lien_mechanics_treatment':        'blocks_closing',
+    # RA-SEED-C: 5 more lien treatments (Fannie B8-1-02), all blocks_closing.
+    'lien_tax_property_treatment':     'blocks_closing',
+    'lien_state_tax_treatment':        'blocks_closing',
+    'lien_judgment_treatment':         'blocks_closing',
+    'lien_child_support_treatment':    'blocks_closing',
+    'lien_lis_pendens_treatment':      'blocks_closing',
     # Compliance boundary suite (RA-4E) — agency/regulatory floors & ceilings
     # the rule_validator self-test asserts against. Canonical keys; the live
     # catalogue rows are human-named (see VALIDATOR_RULE_SPECS in

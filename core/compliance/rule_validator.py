@@ -38,9 +38,10 @@ VALIDATOR_RULE_SPECS = [
     ("va_ltv_max",         "VA Maximum LTV",                    "va",     True),
     ("tx_cashout_ltv_max", "Texas Cash-Out Refinance LTV",      None,     True),
     ("ny_usury_cap",       "New York Usury Cap",                None,     True),
-    # FHA absolute minimum (HUD 4000.1, 500 @ 10% down) is not yet seeded in the
-    # catalogue under any name — resolves to SAFE_DEFAULTS, flagged using_default.
-    ("fha_abs_min_score",  "FHA Absolute Minimum Score (10% down)", "fha", False),
+    # FHA absolute minimum (HUD 4000.1, 500 @ 10% down) — seeded in the catalogue
+    # by RA-SEED-C, so this now resolves governed_by=agency (SAFE_DEFAULTS only on
+    # the conn-less offline path).
+    ("fha_abs_min_score",  "FHA Absolute Minimum Score (10pct down)", "fha", False),
 ]
 
 # Canonical keys, in spec order — the constants threaded through the resolved R.

@@ -63,6 +63,21 @@ REQUIRED = [
     ("lien_irs_tax_treatment", ["fannie"]),
     ("lien_hoa_treatment", ["fannie"]),
     ("lien_mechanics_treatment", ["fannie"]),
+    # ── RA-SEED-C (pre-RA-4F mini seed pass) — gated from RA-4F/G onward ──
+    # Compliance boundary suite (HUD 4000.1)
+    ("FHA Absolute Minimum Score (10pct down)", ["fha"]),
+    # Credit / income / asset (Fannie B3-5.3-07 / B3-6-05 / B3-3.4-01)
+    ("Judgment Waiting Period", ["fannie"]),
+    ("Installment Debt Months Remaining Exclusion", ["fannie"]),
+    ("Self-Employed Business Ownership Majority", ["fannie"]),
+    ("Self-Employed Full Business Asset Credit", ["fannie"]),
+    ("Self-Employed Partial Business Asset Credit", ["fannie"]),
+    # Title liens (Fannie B8-1-02)
+    ("lien_tax_property_treatment", ["fannie"]),
+    ("lien_state_tax_treatment", ["fannie"]),
+    ("lien_judgment_treatment", ["fannie"]),
+    ("lien_child_support_treatment", ["fannie"]),
+    ("lien_lis_pendens_treatment", ["fannie"]),
 ]
 
 

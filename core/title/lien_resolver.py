@@ -20,10 +20,18 @@ from typing import List, Optional
 # uncatalogued — their structural blocks_closing in LIEN_META is used and
 # flagged (seed pass needed).
 LIEN_TYPE_TO_RULE_KEY = {
-    "tax_lien_irs":   "lien_irs_tax_treatment",
-    "hoa_lien":       "lien_hoa_treatment",
-    "mechanics_lien": "lien_mechanics_treatment",
-    "solar_panel":    "lien_solar_panel_treatment",
+    "tax_lien_irs":      "lien_irs_tax_treatment",
+    "hoa_lien":          "lien_hoa_treatment",
+    "mechanics_lien":    "lien_mechanics_treatment",
+    "solar_panel":       "lien_solar_panel_treatment",
+    # RA-SEED-C: 5 previously-uncatalogued types now resolve from the catalogue
+    # (Fannie B8-1-02). All seeded blocks_closing — identical to each type's
+    # structural blocks_closing in LIEN_META, so wiring changes no decision.
+    "tax_lien_property": "lien_tax_property_treatment",
+    "tax_lien_state":    "lien_state_tax_treatment",
+    "judgment_lien":     "lien_judgment_treatment",
+    "child_support_lien": "lien_child_support_treatment",
+    "lis_pendens":       "lien_lis_pendens_treatment",
 }
 
 # Structural lien metadata (priority, docs, condition text, agency_treatment,
