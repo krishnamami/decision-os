@@ -363,6 +363,13 @@ class PersonaRunner:
                     snapshot.context["credit_rules"] = {
                         app_id: await load_credit_rules(conn, tenant_id)
                     }
+                elif decision_id == "product_eligibility":
+                    from core.collateral.property_eligibility_resolver import (
+                        load_collateral_rules,
+                    )
+                    snapshot.context["collateral_rules"] = {
+                        app_id: await load_collateral_rules(conn, tenant_id)
+                    }
         except Exception:  # noqa: BLE001 — enrichment must never break a decision
             pass
 

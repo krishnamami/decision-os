@@ -64,6 +64,26 @@ class AppraisalAnalysis:
 
 class AppraisalAnalyzer:
 
+    def __init__(self, rules: dict = None):
+        """`rules` is the catalogue-resolved {key: value} map
+        (appraisal_gap_major_pct, appraisal_gap_minor_pct), injected via the
+        bundle. Falls back to rule_loader.SAFE_DEFAULTS — the single sanctioned
+        fallback; no resolver-local hardcoded lending values."""
+        from core.catalogue.rule_loader import SAFE_DEFAULTS
+        self._rules = dict(SAFE_DEFAULTS)
+        if rules:
+            self._rules.update(
+                {k: v for k, v in rules.items() if v is not None}
+            )
+
+    @property
+    def _gap_major_pct(self) -> float:
+        return float(self._rules.get('appraisal_gap_major_pct', 10))
+
+    @property
+    def _gap_minor_pct(self) -> float:
+        return float(self._rules.get('appraisal_gap_minor_pct', 3))
+
     def analyze(
         self,
         appraised_value: float,
@@ -143,9 +163,9 @@ class AppraisalAnalyzer:
         # Determine status
         if appraised_value <= 0:
             status = 'no_appraisal'
-        elif has_gap and gap_pct > 10:
+        elif has_gap and gap_pct > self._gap_major_pct:
             status = 'major_gap'
-        elif has_gap and gap_pct > 3:
+        elif has_gap and gap_pct > self._gap_minor_pct:
             status = 'minor_gap'
         elif not has_gap and \
                 purchase_price > 0 and \
@@ -189,7 +209,7 @@ class AppraisalAnalyzer:
                     f'price, (3) exercise '
                     f'appraisal contingency.'
                 ),
-                'blocks': gap_pct > 10,
+                'blocks': gap_pct > self._gap_major_pct,
                 'prior_to': 'docs',
             })
 

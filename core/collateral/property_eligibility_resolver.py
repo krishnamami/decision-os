@@ -36,15 +36,25 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 
-# Property types ineligible for conventional
-FANNIE_INELIGIBLE_TYPES = {
-    'vacant_land':  'Fannie Mae does not finance '
-                    'vacant land',
-    'commercial':   'Commercial property not '
-                    'eligible for residential financing',
+# Catalogue rule names this resolver/analyzer read through rule_loader.
+COLLATERAL_RULE_KEYS = [
+    'ineligible_property_types',       # Fannie B2-1.3-01 (list)
+    'flood_zones_requiring_insurance', # Fannie B7-3-02 (list)
+    'appraisal_gap_major_pct',         # Fannie B4-1.3-09
+    'appraisal_gap_minor_pct',         # Fannie B4-1.3-09
+]
+
+# STRUCTURAL UI text for ineligible types (not the agency VALUE — the LIST of
+# ineligible types comes from agency_guidelines.ineligible_property_types).
+INELIGIBLE_REASONS = {
+    'vacant_land':  'Fannie Mae does not finance vacant land',
+    'commercial':   'Commercial property not eligible for residential financing',
+    'cooperative':  'Cooperative — ineligible for conventional financing',
+    'coop':         'Cooperative — ineligible for conventional financing',
 }
 
-# Property types requiring special treatment
+# Property types requiring special treatment — STRUCTURAL workflow conditions
+# (condo review, multi-unit rents), not an eligible/ineligible agency value.
 FANNIE_SPECIAL_TYPES = {
     'condo':        'Condo warrantability review required',
     'coop':         'Co-op — limited Fannie eligibility',
@@ -60,27 +70,32 @@ FANNIE_SPECIAL_TYPES = {
                     'space must be ≤20%',
 }
 
-# Flood zone rules
-FLOOD_ZONE_RULES = {
-    'A':   {'insurance_required': True,
-            'severity': 'moderate'},
-    'AE':  {'insurance_required': True,
-            'severity': 'moderate'},
-    'AH':  {'insurance_required': True,
-            'severity': 'moderate'},
-    'AO':  {'insurance_required': True,
-            'severity': 'moderate'},
-    'V':   {'insurance_required': True,
-            'severity': 'major',
-            'note': 'Coastal high hazard'},
-    'VE':  {'insurance_required': True,
-            'severity': 'major',
-            'note': 'Coastal high hazard'},
-    'X':   {'insurance_required': False,
-            'severity': 'clear'},
-    'X500':{'insurance_required': False,
-            'severity': 'informational'},
+# STRUCTURAL flood-zone severity (V/VE = coastal high hazard). WHICH zones
+# require insurance is the agency value -> agency_guidelines
+# .flood_zones_requiring_insurance.
+FLOOD_ZONE_SEVERITY = {
+    'V':  'major', 'VE': 'major',
+    'A':  'moderate', 'AE': 'moderate',
+    'AH': 'moderate', 'AO': 'moderate',
 }
+
+
+async def load_collateral_rules(conn, tenant_id: str, agency: str = 'fannie') -> dict:
+    """Resolve collateral rules from the catalogue via rule_loader. Returns
+    {'values': {key: applied}, 'trace': {key: {applied, governed_by, layers}}}.
+    Called on the ASYNC snapshot path (runner) — never inside the sync persona —
+    and injected into PropertyEligibilityResolver / AppraisalAnalyzer."""
+    from core.catalogue.rule_loader import get_rule
+    values, trace = {}, {}
+    for key in COLLATERAL_RULE_KEYS:
+        r = await get_rule(conn, key, tenant_id, agency=agency)
+        values[key] = r.get('applied')
+        trace[key] = {
+            'applied':     r.get('applied'),
+            'governed_by': r.get('governed_by'),
+            'layers':      r.get('layers', {}),
+        }
+    return {'values': values, 'trace': trace}
 
 
 @dataclass
@@ -105,6 +120,28 @@ class PropertyEligibilityResult:
 
 class PropertyEligibilityResolver:
 
+    def __init__(self, rules: Optional[dict] = None):
+        """`rules` is the catalogue-resolved {key: value} map (from
+        load_collateral_rules, injected via the bundle). Falls back to
+        rule_loader.SAFE_DEFAULTS — the single sanctioned fallback; no
+        resolver-local hardcoded lending values."""
+        from core.catalogue.rule_loader import SAFE_DEFAULTS
+        self._rules = dict(SAFE_DEFAULTS)
+        if rules:
+            self._rules.update(
+                {k: v for k, v in rules.items() if v is not None}
+            )
+
+    @property
+    def _ineligible_types(self) -> set:
+        v = self._rules.get('ineligible_property_types') or []
+        return {str(t).lower() for t in v}
+
+    @property
+    def _flood_zones(self) -> set:
+        v = self._rules.get('flood_zones_requiring_insurance') or []
+        return {str(z).upper() for z in v}
+
     def resolve(
         self,
         property_type: str,
@@ -127,12 +164,15 @@ class PropertyEligibilityResolver:
         conditions      = []
         notes_parts     = []
 
-        # ── Check ineligible types ─────────────
-        if property_type in FANNIE_INELIGIBLE_TYPES:
+        # ── Check ineligible types (catalogue) ──
+        if str(property_type).lower() in self._ineligible_types:
             fannie_eligible = False
             fha_eligible    = False
             ineligible_reasons.append(
-                FANNIE_INELIGIBLE_TYPES[property_type]
+                INELIGIBLE_REASONS.get(
+                    str(property_type).lower(),
+                    f'{property_type} ineligible for conventional financing',
+                )
             )
 
         # ── Check special types ────────────────
@@ -207,14 +247,15 @@ class PropertyEligibilityResolver:
                 'prior_to': 'docs',
             })
 
-        # ── Flood zone check ───────────────────
+        # ── Flood zone check (catalogue list) ──
         in_flood_zone       = False
         requires_flood_ins  = False
-        flood_rules = FLOOD_ZONE_RULES.get(
-            flood_zone.upper() if flood_zone
-            else 'X',
-            FLOOD_ZONE_RULES['X']
-        )
+        zone = (flood_zone or 'X').upper()
+        insurance_required = zone in self._flood_zones
+        flood_rules = {
+            'insurance_required': insurance_required,
+            'severity': FLOOD_ZONE_SEVERITY.get(zone, 'clear'),
+        }
 
         if flood_rules['insurance_required']:
             in_flood_zone      = True
@@ -276,7 +317,7 @@ class PropertyEligibilityResolver:
 __all__ = [
     "PropertyEligibilityResolver",
     "PropertyEligibilityResult",
-    "FANNIE_INELIGIBLE_TYPES",
+    "load_collateral_rules",
     "FANNIE_SPECIAL_TYPES",
-    "FLOOD_ZONE_RULES",
+    "COLLATERAL_RULE_KEYS",
 ]

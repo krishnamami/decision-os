@@ -187,11 +187,17 @@ class ProductEligibilityAgent(LendingPersona):
             except (TypeError, ValueError):
                 return 0.0
 
-        prop_result = PropertyEligibilityResolver().resolve(
+        # RA-4C: catalogue-resolved collateral rules injected via the bundle
+        # (the runner loaded them through rule_loader; resolvers stay sync).
+        collateral_obj = first_object(bundle, "collateral_rules") or {}
+        collateral_values = collateral_obj.get("values")
+        collateral_rule_trace = collateral_obj.get("trace")
+
+        prop_result = PropertyEligibilityResolver(collateral_values).resolve(
             property_type=app.get("property_type") or "sfr",
             usage_type=app.get("usage_type") or "primary",
         )
-        appr_result = AppraisalAnalyzer().analyze(
+        appr_result = AppraisalAnalyzer(collateral_values).analyze(
             appraised_value=_f(app.get("appraised_value")),
             purchase_price=_f(app.get("purchase_price")),
             loan_amount=_f(app.get("loan_amount")),
@@ -230,6 +236,8 @@ class ProductEligibilityAgent(LendingPersona):
                 "appraisal_status": appr_result.status,
                 "property_eligible": prop_result.fannie_eligible,
                 "appraisal_gap": appr_result.gap_amount,
+                # RA-4C: catalogue provenance per collateral rule.
+                "collateral_rule_trace": collateral_rule_trace,
             },
             proposed_outcome=outcome,
             confidence=confidence,
