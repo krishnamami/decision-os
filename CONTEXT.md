@@ -3922,3 +3922,80 @@ How to run smoke tests:
 *__Phase 3 — Evidence wiring (RA-3A→RA-3B):__ RA-3A audit confirmed `fact_nodes` ARE populated (75 rows, 4 doc-derived types across all 16 apps: `qualifying_income`/`verified_assets`/`governing_credit_score`/`employment_continuity` — note the live names differ from the earlier-assumed qualifying_assets/governing_credit/employment_status), good confidence (0.88–0.95), 9 conflict rows (SC03/SC08/SC15), resolved from documents (W2 box1, bank balances, mid-score) not entity_states. The `ContextEnricher` (EV-E) existed but was NEVER called, and `vw_*_context` views expose zero fact_nodes columns — so all personas ran off raw entity_states. There is NO fraud fact type (RA-3E gap). RA-3B (EV-F) wired it: added `ContextEnricher.evidence_facts()` (direct `superseded_by IS NULL` query → exactly 7 keys: `evidence_qualifying_monthly`/`_governing_score`/`_verified_assets`/`_employment_status`/`_overall_confidence`=min/`_any_conflicts`/`_populated`; employment uses fact_text, others fact_value; graceful empty never raises) and called it in `core/cron/runner._process_one` — enriches `snapshot.context['evidence'][app_id]` before any persona reads the bundle, best-effort try/except. Non-destructive, no persona/policy/resolver logic changed (that's RA-3D/RA-4). Verified: evidence_populated=True all 16; evidence_any_conflicts=True for SC03/SC08/SC15; min-confidence correct (SC03 0.85, SC08/SC15 0.97, SC01 1.0). Tests 370 pass / 13 pre-existing fail (unchanged — the prompt's "all tests pass" was wrong; established baseline, zero new failures). 16/16 holds. Next: RA-3C (views) / RA-3D (personas consume evidence).)*
 
 *__RA-3C — evidence columns on all 14 `vw_*_context` views:__ `scripts/migrations/add_evidence_columns_to_views.py` makes the SQL layer mirror the RA-3B runtime enricher. Per-fact columns `ev_{income,credit,asset,employment}_value/_confidence/_method/_conflicts/_conflict_ids` (assigned per view by relevance) + aggregates on every view (`evidence_populated`/`evidence_any_conflicts`/`evidence_overall_confidence`=MIN), all `WHERE superseded_by IS NULL`, null-safe correlated scalar subqueries. Implementation WRAPS each view (`CREATE OR REPLACE VIEW v AS SELECT base.*, <ev subqueries on base.application_id> FROM (<orig def>) base`) — robust for the views with nested subqueries (credit/title have 6 FROMs) where a string-append before `FROM entity_states` would misfire; `base.*` preserves existing columns/order so CREATE OR REPLACE only appends. Idempotent; originals backed up to `scripts/migrations/_view_defs_backup_ra3c.sql` for reversibility. Prompt named a non-existent `vw_collateral_assessment_context` and assumed `applications AS a` joins — real 14 views are single-table `FROM entity_states` and meridian apps aren't in `applications`; mapped relevance to the actual views. Verified: evidence_populated=true all 16 in every view, any_conflicts=true SC03/SC08/SC15, overall_confidence matches RA-3B. 16/16 holds (additive; nothing reads ev_* yet — that's RA-3D); 370 pass / 13 pre-existing fail. One transient RDS connection drop on first eval run; clean re-run 16/16. Next: RA-3D (personas consume evidence).)*
+
+---
+
+## RA-SEED-A Findings — 2026-06-22
+
+Read-only catalogue-vs-resolver audit before the RA-4 resolver rewrites. No code changes.
+
+### 1. Catalogue dump (what exists)
+- **agency_guidelines**: 60 current rows. fannie 38, fha 12, va 8, freddie 2. Covers: asset qualifying factors (`qualifying_factor_*`), `minimum_reserves_months`, `large_deposit_threshold_pct`, `seasoning_days_required`; per-agency waiting periods (ch7/ch13/foreclosure/short_sale/deed_in_lieu) for fannie+fha+va; `student_loan_deferred_rate_pct`, `medical_collection_excluded`, `rental_vacancy_factor_pct`, `se_income_years_required`, `se_declining_use_lower_year`; `ineligible_property_types`, `flood_zones_requiring_insurance`, `condo_warrantability_required`, `max_units_conventional`; `income_mismatch_{medium,high,critical}_pct` (RA-3E), `income_documentation_confidence_{min,floor}` (RA-3D); plus human-named LTV/DTI/MI/score rows.
+- **regulatory_rules**: 23 rows (cfpb/federal/state/qm/ofac/bsa) — incl `QM Safe Harbor DTI Maximum`, `Texas Cash-Out Refinance LTV`, `New York Usury Cap`, TRID/HMDA/OFAC.
+- **overlay_rules (meridian)**: 4 — credit_floor 660, dti_back_max 43 (conv) / 50 (fha), ltv_max_purchase 95. All legitimately *stricter* than agency floors → none is a mis-set agency standard.
+- **platform_guardrails**: 24 — per-product credit/dti/ltv outer bounds (legit) PLUS `platform/appraisal_gap_{major,minor}_pct`, `platform/income_mismatch_*`, `platform/undisclosed_debt_{medium,high,critical}_mo`.
+
+### 2. Gap table (rule needed → in agency_guidelines via rule_loader?)
+```
+RESOLVER/PERSONA      RULE NEEDED                       IN CAT?  NOTES
+AssetResolver         qualifying_factor_checking/sav/cd  YES     Fannie B3-4.3-04 (resolver key 'liquid' differs)
+AssetResolver         qualifying_factor_retirement       YES     (resolver maps ira/401k/403b/pension/annuity)
+AssetResolver         qualifying_factor_stocks_bonds     YES     (resolver key 'brokerage'/'stocks')
+AssetResolver         minimum_reserves_months            YES     Fannie B3-4.3-04
+DepositAnalyzer       large_deposit_threshold_pct        YES     Fannie B3-4.3-04
+DepositAnalyzer       seasoning_days_required            YES     (resolver const LOOKBACK_DAYS=60)
+CreditFindingsResolver bankruptcy_ch7_waiting_years f/fha/va YES  all three agencies present
+CreditFindingsResolver bankruptcy_ch13_waiting_years     YES
+CreditFindingsResolver foreclosure_waiting_years         YES
+CreditFindingsResolver short_sale_waiting_years          YES
+TradelineAnalyzer     student_loan_deferred_rate_pct     YES     Fannie B3-6-05 (resolver inline *0.01)
+TradelineAnalyzer     medical_collection_excluded        YES     Fannie LL-2023-02
+AppraisalAnalyzer     appraisal_gap_major_pct            NO*     in platform_guardrails only (gap_pct>10 inline)
+AppraisalAnalyzer     appraisal_gap_minor_pct            NO*     in platform_guardrails only (gap_pct>3 inline)
+PropertyEligibility   ineligible_property_types          YES     Fannie B2-1.3-01
+PropertyEligibility   flood_zones_requiring_insurance    YES     Fannie B7-3-02
+RentalIncomeResolver  rental_vacancy_factor_pct          YES     Fannie B3-3.1-08 (resolver inline *0.75)
+SelfEmployedResolver  se_income_years_required           YES     Fannie B3-3.4-01
+SelfEmployedResolver  se_depreciation_addback            NO      MISSING everywhere (Fannie B3-3.4-02)
+UndisclosedDebt       undisclosed_debt_medium_mo         NO*     platform_guardrails only
+UndisclosedDebt       undisclosed_debt_high_mo           NO*     platform_guardrails only
+UndisclosedDebt       undisclosed_debt_critical_mo       NO*     platform_guardrails only
+LienResolver          LIEN_RULES (title lien priority)   NO      not catalogued (structured title rules)
+```
+`NO*` = value exists in platform_guardrails (and rule_loader SAFE_DEFAULTS) but NOT as a cited agency_guidelines row, so `get_rule` returns it via the using_default WARNING path, not authoritatively.
+
+### 3. Hardcoded violations (file:line → should be)
+```
+core/assets/asset_resolver.py:41   QUALIFYING_FACTORS {checking 1.0..crypto 0.0}  -> agency_guidelines.qualifying_factor_*  (Fannie B3-4.3-04)
+core/assets/asset_resolver.py:62   MIN_RESERVES_MONTHS = 2.0                      -> minimum_reserves_months
+core/assets/asset_resolver.py:66   LARGE_DEPOSIT_PCT = 0.50                       -> large_deposit_threshold_pct
+core/assets/deposit_analyzer.py:36 LOOKBACK_DAYS = 60                             -> seasoning_days_required
+core/assets/deposit_analyzer.py:39 LARGE_DEPOSIT_PCT = 0.50                       -> large_deposit_threshold_pct (dup)
+core/credit/findings_resolver.py:70 WAITING_PERIODS {ch7 f4/fha2/va2 ...}         -> agency_guidelines.*_waiting_years (B3-5.3-07)
+core/credit/tradeline_analyzer.py:150 balance * 0.01 (student loan 1%)            -> student_loan_deferred_rate_pct (B3-6-05)
+core/credit/tradeline_analyzer.py    is_medical exclusion                          -> medical_collection_excluded (LL-2023-02)
+core/collateral/appraisal_analyzer.py:146 gap_pct > 10 (major)                    -> appraisal_gap_major_pct (B4-1.3-09)
+core/collateral/appraisal_analyzer.py:148 gap_pct > 3 (minor)                     -> appraisal_gap_minor_pct (B4-1.3-09)
+core/collateral/property_eligibility_resolver.py:40 FANNIE_INELIGIBLE_TYPES       -> ineligible_property_types (B2-1.3-01)
+core/collateral/property_eligibility_resolver.py:64 FLOOD_ZONE_RULES              -> flood_zones_requiring_insurance (B7-3-02)
+core/title/lien_resolver.py:17     LIEN_RULES {...}                               -> NOT catalogued (decide: catalogue vs config)
+core/fraud/income_mismatch_detector.py:27 MISMATCH_THRESHOLDS 0.10/0.25/0.50      -> income_mismatch_*_pct (now catalogued, RA-3E)
+core/fraud/undisclosed_debt_detector.py:45 UNDISCLOSED_THRESHOLDS 200/500/1000    -> undisclosed_debt_*_mo (platform only)
+core/income/rental_income_resolver.py:211 lease * 0.75 (25% vacancy)             -> rental_vacancy_factor_pct (B3-3.1-08)
+core/income/self_employed_resolver.py /24 (2yr avg)                               -> se_income_years_required (B3-3.4-01)
+core/compliance/rule_validator.py:19-29 FHA_MIN_3_5/FHA_ABS_MIN/CONV_MIN/DU_DTI_MAX/
+   QM_DTI/FHA_DTI_AUS/CONV_LTV_MAX/FHA_LTV_MAX/VA_LTV_MAX/TX_CASHOUT_LTV/NY_USURY  -> all have catalogue equivalents (agency_guidelines + regulatory_rules)
+```
+NOT violations (algorithm classifiers, keep): `tradeline_analyzer.DEROGATORY_STATUSES`, `deposit_analyzer.TRANSFER_MATCH_DAYS`, `rule_validator.STATES_WITH_RULES`.
+
+### 4. platform_guardrails rows that are agency standards → move to agency_guidelines
+- `platform/appraisal_gap_major_pct` (10), `platform/appraisal_gap_minor_pct` (3) — Fannie B4-1.3-09.
+- `platform/undisclosed_debt_{medium,high,critical}_mo` (200/500/1000) — Fannie QC.
+- `platform/income_mismatch_*` — already duplicated into agency_guidelines (RA-3E); platform copies now redundant.
+- KEEP in platform_guardrails: per-product credit_floor/dti_back_max/ltv ceilings (genuine outer bounds, not agency standards). overlay_rules: nothing to move (all 4 meridian overlays are legit stricter-than-agency).
+
+### 5. Counts
+- Distinct rules resolvers need: **24** (gap-table rows).
+- In agency_guidelines/regulatory (authoritative via rule_loader): **18**.
+- Not authoritative: **6** — 5 live in platform_guardrails only (appraisal_gap x2, undisclosed_debt x3), 1 genuinely missing (`se_depreciation_addback`); plus `LIEN_RULES` uncatalogued (structured).
+- RA-SEED-B work: seed the 5 platform→agency moves with citations + `se_depreciation_addback`, then RA-4 rewrites the ~17 hardcoded constant sites to `rule_loader`.
