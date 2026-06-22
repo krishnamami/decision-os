@@ -378,8 +378,11 @@ class LoanImporter:
 async def evaluate_imported(conn, tenant_id: str, app_ids: list[str], rules: dict, programs: list[str]) -> dict:
     """Run a lightweight rule evaluation on imported loans and write one
     underwriting decision per loan so they appear evaluated in the pipeline."""
-    from core.compliance.rule_validator import resolve, evaluate
-    R = resolve(rules, programs)
+    from core.compliance.rule_validator import resolve, evaluate, load_validator_rules
+    # RA-4E: agency/regulatory floors & ceilings come from the catalogue, not
+    # Python constants. The conn is in hand, so resolve them here.
+    catalogue = await load_validator_rules(conn, tenant_id)
+    R = resolve(rules, programs, catalogue)
     counts = {"allow": 0, "review": 0, "block": 0, "escalate": 0}
     # Active rule version for this tenant right now — stamped on every decision
     # written here. NULL when the tenant has no rules. Never blocks the import.

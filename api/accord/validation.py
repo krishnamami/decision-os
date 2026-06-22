@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from api.accord.auth import get_tenant_id
 from api.accord.pipeline import _get_pool, _require_db
-from core.compliance.rule_validator import RuleValidator
+from core.compliance.rule_validator import RuleValidator, load_validator_rules
 
 router = APIRouter(prefix="/api/accord/rules", tags=["accord-validation"])
 
@@ -37,18 +37,21 @@ async def run_validation(tenant_id: str, proposed_rules: dict | None = None, pro
     """Run the suite. If proposed_rules given, validate those (for pre-activation
     checks); otherwise load the tenant's active version."""
     _require_db()
-    if proposed_rules is None:
-        pool = await _get_pool()
-        async with pool.acquire() as conn:
+    # RA-4E: resolve the agency/regulatory floors & ceilings the suite asserts
+    # against from the catalogue (one acquire, reused for the active-rules lookup).
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        if proposed_rules is None:
             row = await conn.fetchrow(
                 "SELECT version, rules, programs FROM tenant_rules WHERE tenant_id=$1 AND status='active'", tenant_id)
-        if row is None:
-            raise HTTPException(404, "No active rules to validate")
-        proposed_rules = _jsonb(row["rules"])
-        programs = _jsonb(row["programs"]) or ["conventional", "fha"]
-        version = row["version"]
+            if row is None:
+                raise HTTPException(404, "No active rules to validate")
+            proposed_rules = _jsonb(row["rules"])
+            programs = _jsonb(row["programs"]) or ["conventional", "fha"]
+            version = row["version"]
+        catalogue = await load_validator_rules(conn, tenant_id)
     t0 = time.monotonic()
-    rep = RuleValidator(tenant_id, proposed_rules, programs or ["conventional", "fha"], version).run_all()
+    rep = RuleValidator(tenant_id, proposed_rules, programs or ["conventional", "fha"], version, catalogue).run_all()
     rep["duration_ms"] = round((time.monotonic() - t0) * 1000, 1)
     rep["run_at"] = datetime.utcnow().isoformat() + "Z"
     return rep

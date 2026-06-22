@@ -85,6 +85,22 @@ SAFE_DEFAULTS = {
     'lien_irs_tax_treatment':          'blocks_closing',
     'lien_hoa_treatment':              'requires_payoff_if_superior',
     'lien_mechanics_treatment':        'blocks_closing',
+    # Compliance boundary suite (RA-4E) — agency/regulatory floors & ceilings
+    # the rule_validator self-test asserts against. Canonical keys; the live
+    # catalogue rows are human-named (see VALIDATOR_RULE_SPECS in
+    # core/compliance/rule_validator.py for the name mapping). 'fha_abs_min_score'
+    # is NOT yet in the catalogue under any name (HUD 4000.1, 500 @ 10% down) —
+    # it resolves via this default and is flagged using_default until seeded.
+    'fha_min_score_3_5':               580,
+    'fha_abs_min_score':               500,
+    'conv_min_score':                  620,
+    'du_dti_max':                      50,
+    'qm_dti_max':                      43,
+    'conv_ltv_max':                    97,
+    'fha_ltv_max':                     96.5,
+    'va_ltv_max':                      100,
+    'tx_cashout_ltv_max':              80,
+    'ny_usury_cap':                    16,
 }
 
 

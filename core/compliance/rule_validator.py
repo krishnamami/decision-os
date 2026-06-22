@@ -12,24 +12,77 @@ guidelines + customer overlay). For correct rules every case passes.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-# Regulatory / agency constants (from regulatory_rules + agency_guidelines).
-FHA_MIN_3_5 = 580        # FHA min score, 3.5% down
-FHA_ABS_MIN = 500        # FHA absolute min, 10% down
-CONV_MIN = 620           # Fannie/Freddie conventional min
-DU_DTI_MAX = 50          # Fannie DU max DTI
-QM_DTI = 43              # QM safe-harbor DTI
-FHA_DTI_AUS = 57         # FHA max DTI with AUS
-CONV_LTV_MAX = 97        # Fannie 1-unit primary
-FHA_LTV_MAX = 96.5
-VA_LTV_MAX = 100
-TX_CASHOUT_LTV = 80
-NY_USURY = 16
+from core.catalogue.rule_loader import SAFE_DEFAULTS, get_rule
+
+logger = logging.getLogger(__name__)
+
+# RA-4E: the agency/regulatory floors & ceilings this suite asserts against come
+# from the catalogue (agency_guidelines + regulatory_rules) via rule_loader — no
+# longer Python constants. Each spec maps a canonical key (used in the resolved
+# rule dict R and in SAFE_DEFAULTS) to the live catalogue row that backs it:
+#   (canonical_key, catalogue_name, agency_or_None, is_ceiling)
+# agency=None => regulatory_rules (federal, agency-independent). is_ceiling drives
+# only the risk-direction label, not the applied value. The catalogue names are
+# human-readable rows verified against live RDS — NOT the canonical keys.
+VALIDATOR_RULE_SPECS = [
+    ("fha_min_score_3_5",  "FHA Minimum Score (3.5% down)",     "fha",    False),
+    ("conv_min_score",     "Minimum Credit Score",              "fannie", False),
+    ("du_dti_max",         "DU Maximum DTI",                    "fannie", True),
+    ("qm_dti_max",         "QM Safe Harbor DTI Maximum",        None,     True),
+    ("conv_ltv_max",       "Primary Residence 1-Unit Max LTV",  "fannie", True),
+    ("fha_ltv_max",        "FHA Maximum LTV (Purchase)",        "fha",    True),
+    ("va_ltv_max",         "VA Maximum LTV",                    "va",     True),
+    ("tx_cashout_ltv_max", "Texas Cash-Out Refinance LTV",      None,     True),
+    ("ny_usury_cap",       "New York Usury Cap",                None,     True),
+    # FHA absolute minimum (HUD 4000.1, 500 @ 10% down) is not yet seeded in the
+    # catalogue under any name — resolves to SAFE_DEFAULTS, flagged using_default.
+    ("fha_abs_min_score",  "FHA Absolute Minimum Score (10% down)", "fha", False),
+]
+
+# Canonical keys, in spec order — the constants threaded through the resolved R.
+VALIDATOR_RULE_KEYS = [spec[0] for spec in VALIDATOR_RULE_SPECS]
+
 STATES_WITH_RULES = {"TX", "NY", "CA", "FL", "IL", "PA", "OH", "GA", "NC", "VA"}
 
 OUT_ALLOW, OUT_REVIEW, OUT_BLOCK, OUT_ALLOW_IF = "allow", "review", "block", "allow_if"
+
+
+async def load_validator_rules(conn, tenant_id: str) -> dict:
+    """Resolve the agency/regulatory floors & ceilings the boundary suite asserts
+    against from the catalogue. Returns ``{'values': {key: num}, 'trace': {...}}``.
+
+    These are the AGENCY baseline — the tenant overlay is layered in separately
+    through ``resolve(tenant_rules, ...)`` (R['dti_max'], R['ltv_max'],
+    R['credit_min']), exactly as the original constants sat alongside the tenant
+    config. So we do NOT want an overlay to override these lookups; the human
+    catalogue names don't alias to any overlay rule_type, so get_rule returns the
+    agency/regulatory value cleanly."""
+    values, trace = {}, {}
+    for key, name, agency, is_ceiling in VALIDATOR_RULE_SPECS:
+        res = await get_rule(conn, name, tenant_id,
+                             agency=agency or "fannie", is_ceiling=is_ceiling)
+        applied = res.get("applied")
+        governed = res.get("governed_by")
+        if applied is None:
+            # Not in catalogue under this name (e.g. fha_abs_min_score) — the
+            # ONLY sanctioned fallback is SAFE_DEFAULTS, keyed canonically.
+            applied = SAFE_DEFAULTS[key]
+            governed = "safe_default"
+            logger.warning(
+                "VALIDATOR RULE MISSING: %s (%s/%s) — using safe default %s",
+                key, agency or "regulatory", name, applied)
+        values[key] = applied
+        trace[key] = {
+            "catalogue_name": name,
+            "governed_by": governed,
+            "agency": agency,
+            "layers": sorted((res.get("layers") or {}).keys()),
+        }
+    return {"values": values, "trace": trace}
 
 
 @dataclass
@@ -54,8 +107,13 @@ class TestResult:
     flags: list = field(default_factory=list)
 
 
-def resolve(tenant_rules: dict, programs: list[str]) -> dict:
-    """Resolve the tenant's effective thresholds (overlay over regulatory/agency)."""
+def resolve(tenant_rules: dict, programs: list[str], catalogue: Optional[dict] = None) -> dict:
+    """Resolve the tenant's effective thresholds (overlay over regulatory/agency).
+
+    ``catalogue`` is the ``{'values': {...}}`` dict from ``load_validator_rules``
+    (the agency/regulatory floors & ceilings). When omitted — the conn-less
+    offline/importer path — each falls back to SAFE_DEFAULTS, which is value-for-
+    value identical to the constants this used to hardcode."""
     c = tenant_rules.get("credit", {})
     d = tenant_rules.get("dti", {})
     l = tenant_rules.get("ltv", {})
@@ -64,7 +122,8 @@ def resolve(tenant_rules: dict, programs: list[str]) -> dict:
     res = tenant_rules.get("reserves", {})
     review_band = d.get("review_band", [36, d.get("back_max", 43)])
     inc_band = inc.get("review_band_pct", [10, inc.get("max_discrepancy_pct", 25)])
-    return {
+    cat_values = (catalogue or {}).get("values", {})
+    R = {
         "programs": programs,
         "credit_min": c.get("min_score", 640),
         "dti_max": d.get("back_max", 43),
@@ -78,6 +137,11 @@ def resolve(tenant_rules: dict, programs: list[str]) -> dict:
         "reserves_primary": res.get("primary", 2),
         "reserves_investment": res.get("investment", 6),
     }
+    # Agency/regulatory floors & ceilings — catalogue-resolved (RA-4E), or
+    # SAFE_DEFAULTS on the conn-less path.
+    for key in VALIDATOR_RULE_KEYS:
+        R[key] = cat_values.get(key, SAFE_DEFAULTS[key])
+    return R
 
 
 def evaluate(s: dict, R: dict) -> tuple[str, list]:
@@ -105,7 +169,7 @@ def evaluate(s: dict, R: dict) -> tuple[str, list]:
         d = s["dti"]
         if d < 0:
             return OUT_BLOCK, ["data_error"]
-        if d > 100 or d > DU_DTI_MAX:
+        if d > 100 or d > R["du_dti_max"]:
             return OUT_BLOCK, []
         if d > R["dti_max"]:
             if s.get("credit_score", 0) >= 720 and s.get("reserves_months", 0) >= 12:
@@ -114,7 +178,7 @@ def evaluate(s: dict, R: dict) -> tuple[str, list]:
                 return OUT_ALLOW_IF, ["compensating", "Non-QM"]
             return OUT_BLOCK, ["exceeds_dti"]
         if d >= R["dti_review_low"]:
-            return OUT_REVIEW, (["QM"] if d <= QM_DTI else ["Non-QM"])
+            return OUT_REVIEW, (["QM"] if d <= R["qm_dti_max"] else ["Non-QM"])
         return OUT_ALLOW, ["QM"]
 
     if "ltv" in s:
@@ -122,11 +186,11 @@ def evaluate(s: dict, R: dict) -> tuple[str, list]:
         lt = s.get("loan_type", "conventional")
         if l < 0:
             return OUT_BLOCK, ["data_error"]
-        if s.get("state") == "TX" and s.get("loan_purpose") == "cash_out" and l > TX_CASHOUT_LTV:
+        if s.get("state") == "TX" and s.get("loan_purpose") == "cash_out" and l > R["tx_cashout_ltv_max"]:
             return OUT_BLOCK, ["TX_cashout"]
         if lt == "va":
-            return (OUT_ALLOW, ["VA"]) if l <= VA_LTV_MAX else (OUT_BLOCK, [])
-        cap = FHA_LTV_MAX if lt == "fha" else CONV_LTV_MAX
+            return (OUT_ALLOW, ["VA"]) if l <= R["va_ltv_max"] else (OUT_BLOCK, [])
+        cap = R["fha_ltv_max"] if lt == "fha" else R["conv_ltv_max"]
         if l > cap or l > R["ltv_max"]:
             return OUT_BLOCK, []
         return (OUT_ALLOW, ["MI"]) if l > R["ltv_no_mi"] else (OUT_ALLOW, [])
@@ -137,9 +201,9 @@ def evaluate(s: dict, R: dict) -> tuple[str, list]:
         if cs is None:
             return OUT_BLOCK, ["no_score"]
         if lt == "fha":
-            floor = FHA_ABS_MIN if s.get("down_payment_pct", 3.5) >= 10 else FHA_MIN_3_5
+            floor = R["fha_abs_min_score"] if s.get("down_payment_pct", 3.5) >= 10 else R["fha_min_score_3_5"]
         else:
-            floor = max(CONV_MIN, R["credit_min"])
+            floor = max(R["conv_min_score"], R["credit_min"])
         return (OUT_BLOCK, []) if cs < floor else (OUT_ALLOW, [])
 
     if "income_gap" in s:
@@ -157,7 +221,7 @@ def evaluate(s: dict, R: dict) -> tuple[str, list]:
         return OUT_ALLOW, []
 
     if "rate" in s:
-        return (OUT_BLOCK, ["usury"]) if (s.get("state") == "NY" and s["rate"] > NY_USURY) else (OUT_ALLOW, [])
+        return (OUT_BLOCK, ["usury"]) if (s.get("state") == "NY" and s["rate"] > R["ny_usury_cap"]) else (OUT_ALLOW, [])
     if "mlds" in s:
         return (OUT_BLOCK, ["disclosure"]) if (s.get("state") == "CA" and not s["mlds"]) else (OUT_ALLOW, [])
 
@@ -175,7 +239,7 @@ def _dti_expect(dti, R, credit=0, reserves=0):
     < review-band-low → allow; in band, ≤ tenant max → review; over tenant max but
     ≤ DU 50 → comp-factor path (allow_if / allow with strong reserves) else block;
     > 50 or invalid → block."""
-    if dti < 0 or dti > 100 or dti > DU_DTI_MAX:
+    if dti < 0 or dti > 100 or dti > R["du_dti_max"]:
         return {OUT_BLOCK}, "block"
     if dti > R["dti_max"]:
         if credit >= 720 and reserves >= 12:
@@ -223,7 +287,7 @@ def gen_dti(R):
         _dc(4, "dti", f"DTI just below tenant max ({round(mx - 0.1, 1)}%)", {"dti": mx - 0.1, "credit_score": 700}, R),
         _dc(5, "dti", f"DTI at tenant max ({mx}%)", {"dti": mx, "credit_score": 700}, R),
         _dc(6, "dti", f"DTI just over tenant max, no comp ({round(mx + 0.1, 1)}%)", {"dti": mx + 0.1, "credit_score": 650}, R),
-        _dc(7, "dti", f"DTI over max with strong credit ({round(min(mx + 1, DU_DTI_MAX), 1)}%, 725)", {"dti": min(mx + 1, DU_DTI_MAX), "credit_score": 725}, R),
+        _dc(7, "dti", f"DTI over max with strong credit ({round(min(mx + 1, R['du_dti_max']), 1)}%, 725)", {"dti": min(mx + 1, R['du_dti_max']), "credit_score": 725}, R),
         _dc(8, "dti", "DTI 44% with comp factors (725, 12mo reserves)", {"dti": 44, "credit_score": 725, "reserves_months": 12}, R),
         _dc(9, "dti", "DTI at Fannie DU max, no comp (50%)", {"dti": 50, "credit_score": 650}, R),
         _dc(10, "dti", "DTI above Fannie DU max (50.1%)", {"dti": 50.1, "credit_score": 760}, R),
@@ -304,7 +368,7 @@ def gen_reserves(R):
 
 def gen_conditional(R):
     mx = R["dti_max"]
-    over1 = min(mx + 1, DU_DTI_MAX + 2)
+    over1 = min(mx + 1, R["du_dti_max"] + 2)
     return [
         _dc(1, "conditional", f"DTI {over1}% + credit 725 (compensating)", {"dti": over1, "credit_score": 725}, R),
         _dc(2, "conditional", f"DTI {over1}% + credit 650 (no comp)", {"dti": over1, "credit_score": 650}, R),
@@ -353,7 +417,7 @@ def gen_interactions(R):
         _dc(3, "interactions", "High credit (760) + DTI 49 + 12mo reserves (comp)", {"dti": 49, "credit_score": 760, "reserves_months": 12}, R),
         _dc(4, "interactions", f"Mid credit (660) + DTI at review-band start ({rl}%)", {"dti": rl, "credit_score": 660}, R),
         _c(5, "interactions", "LTV 98% conventional (above Fannie max)", {"ltv": 98, "loan_type": "conventional"}, [OUT_BLOCK], "block"),
-        _dc(6, "interactions", f"DTI {round(min(mx + 1, DU_DTI_MAX), 1)} + credit 725 compensating path", {"dti": min(mx + 1, DU_DTI_MAX), "credit_score": 725}, R),
+        _dc(6, "interactions", f"DTI {round(min(mx + 1, R['du_dti_max']), 1)} + credit 725 compensating path", {"dti": min(mx + 1, R['du_dti_max']), "credit_score": 725}, R),
         _c(7, "interactions", "LTV 85 + MI required", {"ltv": 85, "loan_type": "conventional"}, [OUT_ALLOW], "allow+MI"),
         _dc(8, "interactions", "DTI 30 + credit 800 (clean)", {"dti": 30, "credit_score": 800}, R),
         _dc(9, "interactions", "DTI 50 + credit 700 (no comp, blocked)", {"dti": 50, "credit_score": 700}, R),
@@ -362,10 +426,13 @@ def gen_interactions(R):
 
 
 class RuleValidator:
-    def __init__(self, tenant_id, tenant_rules, programs, rule_version=None):
+    def __init__(self, tenant_id, tenant_rules, programs, rule_version=None, catalogue=None):
         self.tenant_id = tenant_id
         self.rule_version = rule_version
-        self.R = resolve(tenant_rules, programs)
+        # ``catalogue`` is the load_validator_rules() result; its ``trace`` is
+        # surfaced in run_all() so each asserted floor/ceiling carries provenance.
+        self.catalogue = catalogue or {}
+        self.R = resolve(tenant_rules, programs, catalogue)
 
     def generate_test_cases(self):
         R = self.R
@@ -377,9 +444,10 @@ class RuleValidator:
 
     def _warnings(self):
         w = []
-        if self.R["dti_max"] > QM_DTI:
+        if self.R["dti_max"] > self.R["qm_dti_max"]:
             w.append({"id": "dti-qm-001", "severity": "warning",
-                      "description": f"Tenant DTI max ({self.R['dti_max']}%) exceeds QM safe harbor (43%). "
+                      "description": f"Tenant DTI max ({self.R['dti_max']}%) exceeds QM safe harbor "
+                                     f"({self.R['qm_dti_max']}%). "
                                      f"Loans 43.1-{self.R['dti_max']}% will be flagged as Non-QM."})
         missing_states = 50 - len(STATES_WITH_RULES)
         w.append({"id": "state-cov-001", "severity": "info",
@@ -408,6 +476,9 @@ class RuleValidator:
             "failed": total - passed,
             "categories": cat_totals,
             "warnings": self._warnings(),
+            # RA-4E: catalogue provenance for every agency/regulatory floor &
+            # ceiling the suite asserted against (governed_by + layers per rule).
+            "rule_validator_trace": self.catalogue.get("trace", {}),
             "tests": [{
                 "id": r.id, "category": r.category, "description": r.description, "input": r.input,
                 "expected": r.expected, "actual": r.actual, "passed": r.passed, "flags": r.flags,
