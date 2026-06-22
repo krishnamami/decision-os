@@ -41,18 +41,36 @@ Two deviations from the FR-D spec (data-driven):
 
 import json
 
+from core.fraud.fraud_rules import load_fraud_rules
 
-UNDISCLOSED_THRESHOLDS = {
-    200:  'medium',
-    500:  'high',
-    1000: 'critical',
-}
+
+# Severity tiers, MOST severe first. Severity labels stay in Python (structural);
+# only the $/month cutoff per tier comes from the catalogue, keyed below.
+UNDISCLOSED_TIERS = [
+    ('undisclosed_debt_critical_mo', 'critical'),
+    ('undisclosed_debt_high_mo',     'high'),
+    ('undisclosed_debt_medium_mo',   'medium'),
+]
 
 
 class UndisclosedDebtDetector:
 
-    def __init__(self, conn):
+    def __init__(self, conn, rules: dict | None = None):
+        """`rules` is an optional pre-loaded load_fraud_rules() result. When
+        omitted the detector self-loads from the catalogue on first detect()
+        and caches (per-app loop hits the DB once)."""
         self.conn = conn
+        self._injected = rules
+        self._values = None
+        self.rule_trace = None
+
+    async def _thresholds(self, tenant_id: str) -> dict:
+        """Catalogue $/month cutoffs keyed by catalogue key. Loaded once."""
+        if self._values is None:
+            loaded = self._injected or await load_fraud_rules(self.conn, tenant_id)
+            self._values = loaded.get("values", {})
+            self.rule_trace = loaded.get("trace", {})
+        return self._values
 
     async def detect(
         self,
@@ -148,18 +166,22 @@ class UndisclosedDebtDetector:
         if not urla_found:
             return []
 
+        # Catalogue $/month cutoffs, loaded once.
+        values = await self._thresholds(tenant_id)
+
         signals = []
 
         if credit_oblig > 0 and urla_oblig >= 0:
             diff = credit_oblig - urla_oblig
 
-            # Determine severity
+            # Determine severity — tiers are most-severe first; each cutoff
+            # comes from the catalogue.
             severity = None
-            for threshold, sev in sorted(
-                UNDISCLOSED_THRESHOLDS.items(),
-                reverse=True
-            ):
-                if diff >= threshold:
+            for key, sev in UNDISCLOSED_TIERS:
+                cutoff = values.get(key)
+                if cutoff is None:
+                    continue
+                if diff >= float(cutoff):
                     severity = sev
                     break
 
@@ -229,7 +251,10 @@ class UndisclosedDebtDetector:
             )
             if signals:
                 results[app_id] = signals
+        # RA-4F: catalogue provenance for the $/month cutoffs used this run.
+        if self.rule_trace:
+            results['_fraud_rule_trace'] = self.rule_trace
         return results
 
 
-__all__ = ["UndisclosedDebtDetector", "UNDISCLOSED_THRESHOLDS"]
+__all__ = ["UndisclosedDebtDetector", "UNDISCLOSED_TIERS"]

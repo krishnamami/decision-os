@@ -23,18 +23,40 @@ Avoids duplication — checks existing signals first.
 
 import re
 
+from core.fraud.fraud_rules import load_fraud_rules
 
-MISMATCH_THRESHOLDS = {
-    0.10: ('income_mismatch',   'medium', False),
-    0.25: ('income_inflation',  'high',   False),
-    0.50: ('income_inflation',  'critical', True),
-}
+
+# Severity tiers, MOST severe first. The (signal_type, severity, auto_block)
+# mapping is STRUCTURAL classifier logic and stays in Python (RA-4F); only the
+# numeric variance cutoff per tier comes from the catalogue, keyed below. The
+# catalogue stores the cutoff as a PERCENT (10/25/50) — converted to a fraction
+# at compare time.
+MISMATCH_TIERS = [
+    ('income_mismatch_critical_pct', 'income_inflation', 'critical', True),
+    ('income_mismatch_high_pct',     'income_inflation', 'high',     False),
+    ('income_mismatch_medium_pct',   'income_mismatch',  'medium',   False),
+]
 
 
 class IncomeMismatchDetector:
 
-    def __init__(self, conn):
+    def __init__(self, conn, rules: dict | None = None):
+        """`rules` is an optional pre-loaded load_fraud_rules() result
+        ({'values','trace'}). When omitted the detector self-loads from the
+        catalogue on first detect() and caches (per-app loop hits the DB once)."""
         self.conn = conn
+        self._injected = rules
+        self._values = None
+        self.rule_trace = None
+
+    async def _thresholds(self, tenant_id: str) -> dict:
+        """Catalogue variance cutoffs as FRACTIONS, keyed by catalogue key.
+        Loaded once and cached."""
+        if self._values is None:
+            loaded = self._injected or await load_fraud_rules(self.conn, tenant_id)
+            self._values = loaded.get("values", {})
+            self.rule_trace = loaded.get("trace", {})
+        return self._values
 
     async def detect(
         self,
@@ -74,6 +96,9 @@ class IncomeMismatchDetector:
         ''', application_id, tenant_id)
 
         signals_written = []
+
+        # Catalogue variance cutoffs (percent -> fraction), loaded once.
+        values = await self._thresholds(tenant_id)
 
         # Extract income values by source
         w2_income    = None
@@ -135,17 +160,17 @@ class IncomeMismatchDetector:
                 urla_income - w2_income
             ) / w2_income
 
-            # Find applicable threshold
+            # Find applicable threshold — tiers are most-severe first; each
+            # cutoff comes from the catalogue (percent -> fraction).
             signal_type = None
             severity    = None
             auto_block  = False
 
-            for threshold, (stype, sev, block) \
-                    in sorted(
-                        MISMATCH_THRESHOLDS.items(),
-                        reverse=True
-                    ):
-                if diff >= threshold:
+            for key, stype, sev, block in MISMATCH_TIERS:
+                cutoff = values.get(key)
+                if cutoff is None:
+                    continue
+                if diff >= float(cutoff) / 100.0:
                     signal_type = stype
                     severity    = sev
                     auto_block  = block
@@ -222,7 +247,10 @@ class IncomeMismatchDetector:
             )
             if signals:
                 results[app_id] = signals
+        # RA-4F: catalogue provenance for the variance cutoffs used this run.
+        if self.rule_trace:
+            results['_fraud_rule_trace'] = self.rule_trace
         return results
 
 
-__all__ = ["IncomeMismatchDetector", "MISMATCH_THRESHOLDS"]
+__all__ = ["IncomeMismatchDetector", "MISMATCH_TIERS"]
