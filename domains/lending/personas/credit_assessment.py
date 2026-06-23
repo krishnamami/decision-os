@@ -172,10 +172,56 @@ class CreditRiskAgent(LendingPersona):
 
         confidence = 0.95 if score and not thin_file else 0.5
 
+        # ── RA-PERSONA-A: evidence quality (advisory, OUTCOME-NEUTRAL) ────
+        # Read the evidence facts the enricher placed on the bundle
+        # (bundle.objects["evidence"]). Raises QUALITY signals + provenance but
+        # does NOT move the score-driven outcome above — so 16/16 holds. The
+        # confidence threshold is the catalogue documentation-confidence floor
+        # (income_documentation_confidence_min, Fannie B3-3.1-01, governed_by=
+        # agency) the enricher attaches to every bundle; the constant is a
+        # catalogue-unreachable safety net only. Graceful: non-meridian apps
+        # have no evidence object → no signals.
+        ev = latest_object(bundle, "evidence") or {}
+        evidence_populated = bool(ev.get("evidence_populated"))
+        ev_credit_value = ev.get("ev_credit_value")
+        ev_credit_conf = ev.get("ev_credit_confidence")
+        ev_credit_conflicts = bool(ev.get("ev_credit_conflicts"))
+        conf_min = ev.get("income_confidence_min")
+        if conf_min is None:
+            conf_min = 0.75
+        evidence_threshold_trace = ev.get("income_confidence_threshold_trace")
+        if evidence_populated and ev_credit_conflicts:
+            signals.append(make_signal(
+                "CREDIT_EVIDENCE_CONFLICT", True,
+                direction=SignalDirection.CONTRADICTS, source="evidence",
+                notes=("Governing credit score conflicts across bureau "
+                       "documents. UW review of the credit evidence required."),
+            ))
+        if (evidence_populated and ev_credit_conf is not None
+                and ev_credit_conf < conf_min):
+            signals.append(make_signal(
+                "CREDIT_LOW_CONFIDENCE", round(float(ev_credit_conf), 3),
+                direction=SignalDirection.CONTRADICTS, source="evidence",
+                notes=(f"Credit evidence confidence {ev_credit_conf:.0%} below "
+                       f"{conf_min:.0%} (Fannie B3-3.1-01). Verify the pull."),
+            ))
+
         return OfflineReasoning(
             output_payload={
                 "credit_score": score,
                 "credit_band": band,
+                # RA-PERSONA-A: evidence-quality provenance (advisory).
+                "evidence_populated": evidence_populated,
+                "credit_evidence_value": ev_credit_value,
+                "credit_evidence_confidence": (
+                    round(float(ev_credit_conf), 3)
+                    if ev_credit_conf is not None else None
+                ),
+                "credit_evidence_conflicts": ev_credit_conflicts,
+                "credit_evidence_governed_by": (
+                    (evidence_threshold_trace or {}).get("governed_by")
+                ),
+                "evidence_threshold_trace": evidence_threshold_trace,
                 "thin_file": thin_file,
                 "active_bankruptcy": active_bk,
                 "foreclosure_last_36_months": foreclosure_36,

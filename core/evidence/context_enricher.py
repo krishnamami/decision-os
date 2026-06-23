@@ -171,6 +171,15 @@ class ContextEnricher:
             "ev_income_conflict_ids":      None,
             "ev_employment_confidence":    None,
             "ev_employment_conflicts":     False,
+            # Per-fact credit + asset detail (RA-PERSONA-A) — symmetric with
+            # income/employment, so credit_assessment / asset_verification can
+            # read domain-specific evidence quality, not just the aggregate.
+            "ev_credit_value":             None,
+            "ev_credit_confidence":        None,
+            "ev_credit_conflicts":         False,
+            "ev_asset_value":              None,
+            "ev_asset_confidence":         None,
+            "ev_asset_conflicts":          False,
             # Catalogue-sourced thresholds (RA-3D correction) — read via
             # rule_loader so the governing values come from agency_guidelines,
             # not Python constants. Attached on every path (app-independent).
@@ -260,6 +269,26 @@ class ContextEnricher:
                     if r["confidence"] is not None else None
                 )
                 base["ev_employment_conflicts"] = bool(r["conflicts_found"])
+            elif ft == "governing_credit_score":
+                base["ev_credit_value"] = (
+                    float(r["fact_value"])
+                    if r["fact_value"] is not None else None
+                )
+                base["ev_credit_confidence"] = (
+                    float(r["confidence"])
+                    if r["confidence"] is not None else None
+                )
+                base["ev_credit_conflicts"] = bool(r["conflicts_found"])
+            elif ft == "verified_assets":
+                base["ev_asset_value"] = (
+                    float(r["fact_value"])
+                    if r["fact_value"] is not None else None
+                )
+                base["ev_asset_confidence"] = (
+                    float(r["confidence"])
+                    if r["confidence"] is not None else None
+                )
+                base["ev_asset_conflicts"] = bool(r["conflicts_found"])
 
         base["evidence_populated"] = True
         base["evidence_any_conflicts"] = any_conflict

@@ -164,10 +164,55 @@ class FraudDetectionAgent(LendingPersona):
                 )
             )
 
+        # ── RA-PERSONA-A: evidence quality (advisory, OUTCOME-NEUTRAL) ────
+        # Read the fraud_indicator evidence fact (RA-3E) the enricher placed on
+        # the bundle. Corroborates the persona's own fraud read with QUALITY
+        # signals + provenance but does NOT move the score/watchlist-driven
+        # outcome above — so 16/16 holds. Clean loans carry fraud_populated=
+        # False → no signal. Graceful: no evidence object → no signals.
+        ev = latest_object(bundle, "evidence") or {}
+        fraud_evidence_populated = bool(ev.get("fraud_populated"))
+        fraud_evidence_conf = ev.get("fraud_indicator_confidence")
+        fraud_evidence_conflicts = bool(ev.get("fraud_indicator_conflicts"))
+        fraud_evidence_method = ev.get("fraud_indicator_method")
+        conf_min = ev.get("income_confidence_min")
+        if conf_min is None:
+            conf_min = 0.75
+        evidence_threshold_trace = ev.get("income_confidence_threshold_trace")
+        if fraud_evidence_populated:
+            signals.append(make_signal(
+                "FRAUD_EVIDENCE_PRESENT",
+                (round(float(fraud_evidence_conf), 3)
+                 if fraud_evidence_conf is not None else True),
+                direction=SignalDirection.CONTRADICTS, source="evidence",
+                weight=2.0,
+                notes=(f"Fraud-indicator evidence fact present "
+                       f"(method: {fraud_evidence_method}). Corroborates the "
+                       "fraud signals; UW review."),
+            ))
+            if (fraud_evidence_conf is not None
+                    and fraud_evidence_conf < conf_min):
+                signals.append(make_signal(
+                    "FRAUD_LOW_CONFIDENCE", round(float(fraud_evidence_conf), 3),
+                    direction=SignalDirection.NEUTRAL, source="evidence",
+                    notes=(f"Fraud-indicator confidence {fraud_evidence_conf:.0%} "
+                           f"below {conf_min:.0%} (Fannie B3-3.1-01) — weaker "
+                           "signal, weigh accordingly."),
+                ))
+
         return OfflineReasoning(
             output_payload={
                 "fraud_score": round(score, 3),
                 "fraud_cleared": outcome == DecisionOutcome.ALLOW,
+                # RA-PERSONA-A: fraud-indicator evidence provenance (advisory).
+                "fraud_evidence_populated": fraud_evidence_populated,
+                "fraud_evidence_confidence": (
+                    round(float(fraud_evidence_conf), 3)
+                    if fraud_evidence_conf is not None else None
+                ),
+                "fraud_evidence_conflicts": fraud_evidence_conflicts,
+                "fraud_evidence_method": fraud_evidence_method,
+                "evidence_threshold_trace": evidence_threshold_trace,
                 "identity_match_confidence": round(id_match, 3),
                 "document_authenticity_score": round(doc_auth, 3),
                 "watchlist_match": watchlist,

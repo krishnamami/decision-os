@@ -213,10 +213,54 @@ class AssetVerificationAgent(LendingPersona):
                     "deposit(s) need sourcing."
                 )
 
+        # ── RA-PERSONA-A: evidence quality (advisory, OUTCOME-NEUTRAL) ────
+        # Read the evidence facts the enricher placed on the bundle. Raises
+        # QUALITY signals + provenance but does NOT move the reserves/sourcing-
+        # driven outcome above — so 16/16 holds. Threshold is the catalogue
+        # documentation-confidence floor (Fannie B3-3.1-01, governed_by=agency)
+        # attached to every bundle; the constant is a catalogue-unreachable
+        # safety net only. Graceful: no evidence object → no signals.
+        ev = latest_object(bundle, "evidence") or {}
+        evidence_populated = bool(ev.get("evidence_populated"))
+        ev_asset_value = ev.get("ev_asset_value")
+        ev_asset_conf = ev.get("ev_asset_confidence")
+        ev_asset_conflicts = bool(ev.get("ev_asset_conflicts"))
+        conf_min = ev.get("income_confidence_min")
+        if conf_min is None:
+            conf_min = 0.75
+        evidence_threshold_trace = ev.get("income_confidence_threshold_trace")
+        if evidence_populated and ev_asset_conflicts:
+            signals.append(make_signal(
+                "ASSET_EVIDENCE_CONFLICT", True,
+                direction=SignalDirection.CONTRADICTS, source="evidence",
+                notes=("Verified-assets evidence conflicts across statements. "
+                       "UW review of the asset documentation required."),
+            ))
+        if (evidence_populated and ev_asset_conf is not None
+                and ev_asset_conf < conf_min):
+            signals.append(make_signal(
+                "ASSET_LOW_CONFIDENCE", round(float(ev_asset_conf), 3),
+                direction=SignalDirection.CONTRADICTS, source="evidence",
+                notes=(f"Asset evidence confidence {ev_asset_conf:.0%} below "
+                       f"{conf_min:.0%} (Fannie B3-3.1-01). Re-source assets."),
+            ))
+
         return OfflineReasoning(
             output_payload={
                 "large_deposit_amount": round(large_deposit, 2),
                 "large_deposit_documented": deposit_documented,
+                # RA-PERSONA-A: evidence-quality provenance (advisory).
+                "evidence_populated": evidence_populated,
+                "asset_evidence_value": ev_asset_value,
+                "asset_evidence_confidence": (
+                    round(float(ev_asset_conf), 3)
+                    if ev_asset_conf is not None else None
+                ),
+                "asset_evidence_conflicts": ev_asset_conflicts,
+                "asset_evidence_governed_by": (
+                    (evidence_threshold_trace or {}).get("governed_by")
+                ),
+                "evidence_threshold_trace": evidence_threshold_trace,
                 "large_deposit_unsourced": large_deposit_unsourced,
                 "gift_funds": round(gift_funds, 2),
                 "gift_funds_unsourced": gift_funds_unsourced,
