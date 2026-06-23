@@ -185,6 +185,18 @@ async def load_credit_rules(conn, tenant_id: str) -> dict:
             'governed_by': r.get('governed_by'),
             'layers':      r.get('layers', {}),
         }
+    # RA-4J: installment-debt months-remaining DTI exclusion (Fannie B3-6-05).
+    # The catalogue row is human-named (RA-SEED-C); map it to the canonical key
+    # the TradelineAnalyzer reads.
+    r = await get_rule(
+        conn, 'Installment Debt Months Remaining Exclusion', tenant_id,
+        agency='fannie',
+    )
+    rules['months_remaining_exclusion'] = {
+        'value':       r.get('applied'),
+        'governed_by': r.get('governed_by'),
+        'layers':      r.get('layers', {}),
+    }
     return rules
 
 

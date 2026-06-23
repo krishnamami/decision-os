@@ -72,6 +72,12 @@ class TradelineAnalyzer:
     def _medical_excluded(self) -> bool:
         return bool(self._rules.get('medical_collection_excluded', True))
 
+    @property
+    def _months_remaining_exclusion(self) -> int:
+        # Installment debt with <= this many months remaining is excludable from
+        # DTI (Fannie B3-6-05). Catalogue-driven (RA-4J) — never hardcoded.
+        return int(float(self._rules.get('months_remaining_exclusion', 10)))
+
     def analyze_tradeline(
         self,
         tradeline: dict,
@@ -232,14 +238,14 @@ class TradelineAnalyzer:
 
         # ── RULE 4: Months remaining ───────────
         elif months_rem is not None \
-                and months_rem <= 10 \
+                and months_rem <= self._months_remaining_exclusion \
                 and acct_type not in (
                     'mortgage', 'heloc'
                 ):
-            # Fannie: can exclude if
-            # ≤10 months remaining
-            # AND excluding doesn't
-            # significantly affect DTI
+            # Fannie: can exclude installment debt with <= the catalogue
+            # months-remaining threshold AND excluding doesn't
+            # significantly affect DTI. (mortgage/heloc are not installment
+            # debt — structural exclusion, stays in Python.)
             included = False
             exclusion_reason = (
                 f'{months_rem} months remaining '

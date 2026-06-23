@@ -62,6 +62,7 @@ SAFE_DEFAULTS = {
     'dti_back_max':                    50,
     'student_loan_deferred_rate_pct':  1.0,
     'medical_collection_excluded':     True,
+    'months_remaining_exclusion':      10,
     'rental_vacancy_factor_pct':       25,
     'se_income_years_required':        2,
     'se_declining_use_lower_year':     True,
