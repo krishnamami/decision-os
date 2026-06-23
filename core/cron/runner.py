@@ -352,29 +352,12 @@ class PersonaRunner:
                 snapshot.context["evidence"] = {app_id: facts}
                 # RA-4A: resolvers are sync/DB-less, so catalogue rules they
                 # need are resolved here (async, has conn) and injected via the
-                # bundle. Loaded only for the decision that uses them.
-                if decision_id == "asset_verification":
-                    from core.assets.asset_resolver import load_asset_rules
-                    snapshot.context["asset_rules"] = {
-                        app_id: await load_asset_rules(conn, tenant_id)
-                    }
-                elif decision_id == "credit_assessment":
-                    from core.credit.findings_resolver import load_credit_rules
-                    snapshot.context["credit_rules"] = {
-                        app_id: await load_credit_rules(conn, tenant_id)
-                    }
-                elif decision_id == "product_eligibility":
-                    from core.collateral.property_eligibility_resolver import (
-                        load_collateral_rules,
-                    )
-                    snapshot.context["collateral_rules"] = {
-                        app_id: await load_collateral_rules(conn, tenant_id)
-                    }
-                elif decision_id == "title_assessment":
-                    from core.title.lien_resolver import load_lien_rules
-                    snapshot.context["lien_rules"] = {
-                        app_id: await load_lien_rules(conn, tenant_id)
-                    }
+                # bundle. Loaded only for the decision that uses them — with a
+                # one-shot retry so a transient blip doesn't drop the rules
+                # (and with them the bundle's rules_snapshot). RA-4H.
+                await self._inject_decision_rules(
+                    conn, snapshot, app_id, decision_id, tenant_id
+                )
         except Exception:  # noqa: BLE001 — enrichment must never break a decision
             pass
 
@@ -475,6 +458,52 @@ class PersonaRunner:
                 "(decision already committed): %s",
                 decision_id, app_id, exc,
             )
+
+    # ── RA-4H — catalogue rule injection (one-shot retry) ─────────────
+
+    async def _inject_decision_rules(
+        self,
+        conn: Any,
+        snapshot: Any,
+        app_id: str,
+        decision_id: str,
+        tenant_id: str,
+    ) -> None:
+        """Resolve the catalogue rules this decision's resolver reads and attach
+        them to the snapshot context. Best-effort with a ONE-SHOT retry: a
+        transient blip on the first load shouldn't drop the rules (which would
+        leave the persona on SAFE_DEFAULTS for that run and the bundle's
+        rules_snapshot empty — the RA-3F SC03 case). Only the four decisions
+        whose resolvers consume catalogue rules load anything."""
+        if decision_id == "asset_verification":
+            from core.assets.asset_resolver import load_asset_rules
+            key, loader = "asset_rules", load_asset_rules
+        elif decision_id == "credit_assessment":
+            from core.credit.findings_resolver import load_credit_rules
+            key, loader = "credit_rules", load_credit_rules
+        elif decision_id == "product_eligibility":
+            from core.collateral.property_eligibility_resolver import (
+                load_collateral_rules,
+            )
+            key, loader = "collateral_rules", load_collateral_rules
+        elif decision_id == "title_assessment":
+            from core.title.lien_resolver import load_lien_rules
+            key, loader = "lien_rules", load_lien_rules
+        else:
+            return
+
+        try:
+            rules = await loader(conn, tenant_id)
+        except Exception:  # noqa: BLE001 — one transient retry before giving up
+            try:
+                rules = await loader(conn, tenant_id)
+            except Exception as exc:  # noqa: BLE001 — never breaks the decision
+                logger.warning(
+                    "rule injection failed after retry for %s/%s: %s",
+                    decision_id, app_id, exc,
+                )
+                return
+        snapshot.context[key] = {app_id: rules}
 
     # ── RA-3F — persona bundle audit snapshot ─────────────────────────
 
