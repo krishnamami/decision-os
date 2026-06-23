@@ -122,10 +122,44 @@ class PricingAgent(LendingPersona):
             outcome = DecisionOutcome.ESCALATE
             confidence = 0.6
 
+        # ── RA-PERSONA-C: evidence quality (advisory, OUTCOME-NEUTRAL) ────
+        # Pricing is less reliable on weak evidence. Append a QUALITY signal +
+        # provenance; never move proposed_outcome → 16/16 holds. Threshold is the
+        # catalogue documentation-confidence floor (Fannie B3-3.1-01,
+        # governed_by=agency); the constant is a safety net only.
+        ev = first_object(bundle, "evidence") or {}
+        evidence_populated = bool(ev.get("evidence_populated"))
+        evidence_any_conflicts = bool(ev.get("evidence_any_conflicts"))
+        evidence_overall_conf = ev.get("evidence_overall_confidence")
+        conf_min = ev.get("income_confidence_min")
+        if conf_min is None:
+            conf_min = 0.75
+        evidence_threshold_trace = ev.get("income_confidence_threshold_trace")
+        if (evidence_populated and evidence_overall_conf is not None
+                and evidence_overall_conf < conf_min):
+            signals.append(make_signal(
+                "PRICING_LOW_CONFIDENCE", round(float(evidence_overall_conf), 3),
+                direction=SignalDirection.CONTRADICTS, source="evidence",
+                notes=(f"Pricing rests on low-confidence evidence "
+                       f"{evidence_overall_conf:.0%} (< {conf_min:.0%}, Fannie "
+                       "B3-3.1-01) — treat the rate as less reliable."),
+            ))
+
         return OfflineReasoning(
             output_payload={
                 "interest_rate": round(rate, 4),
                 "llpa": round(llpa, 4),
+                # RA-PERSONA-C: evidence provenance (advisory).
+                "evidence_populated": evidence_populated,
+                "pricing_evidence_confidence": (
+                    round(float(evidence_overall_conf), 3)
+                    if evidence_overall_conf is not None else None
+                ),
+                "pricing_evidence_conflicts": evidence_any_conflicts,
+                "pricing_evidence_governed_by": (
+                    (evidence_threshold_trace or {}).get("governed_by")
+                ),
+                "evidence_threshold_trace": evidence_threshold_trace,
                 "rate_within_normal_band": rate_within_normal_band,
                 "no_manual_adjustments_required": not manual_adjustments_required,
                 "pricing_exception_possible": pricing_exception_possible,

@@ -477,9 +477,50 @@ class EmploymentReconciliationAgent(LendingPersona):
             coverage_pct < 0.80 and prior_employer_count == 0
         )
 
+        # ── RA-PERSONA-C: evidence quality (advisory, OUTCOME-NEUTRAL) ────
+        # Read the employment evidence facts the enricher placed on the bundle.
+        # Append QUALITY signals + provenance; never move proposed_outcome → 16/16
+        # holds. Threshold is the catalogue documentation-confidence floor
+        # (income_documentation_confidence_min, Fannie B3-3.1-01, governed_by=
+        # agency); the constant is a catalogue-unreachable safety net only.
+        ev = latest_object(bundle, "evidence") or {}
+        evidence_populated = bool(ev.get("evidence_populated"))
+        ev_emp_conf = ev.get("ev_employment_confidence")
+        ev_emp_conflicts = bool(ev.get("ev_employment_conflicts"))
+        conf_min = ev.get("income_confidence_min")
+        if conf_min is None:
+            conf_min = 0.75
+        evidence_threshold_trace = ev.get("income_confidence_threshold_trace")
+        if evidence_populated and ev_emp_conflicts:
+            signals.append(make_signal(
+                "EMPLOYMENT_EVIDENCE_CONFLICT", True,
+                direction=SignalDirection.CONTRADICTS, source="evidence", weight=2.0,
+                notes=("Employment-continuity evidence conflicts across documents "
+                       "— reconcile against the evidence before relying on it."),
+            ))
+        if (evidence_populated and ev_emp_conf is not None
+                and ev_emp_conf < conf_min):
+            signals.append(make_signal(
+                "EMPLOYMENT_LOW_CONFIDENCE", round(float(ev_emp_conf), 3),
+                direction=SignalDirection.CONTRADICTS, source="evidence",
+                notes=(f"Employment evidence confidence {ev_emp_conf:.0%} below "
+                       f"{conf_min:.0%} (Fannie B3-3.1-01)."),
+            ))
+
         return OfflineReasoning(
             output_payload={
                 "reconciliation_status": reconciliation_status,
+                # RA-PERSONA-C: employment-evidence provenance (advisory).
+                "evidence_populated": evidence_populated,
+                "employment_evidence_confidence": (
+                    round(float(ev_emp_conf), 3)
+                    if ev_emp_conf is not None else None
+                ),
+                "employment_evidence_conflicts": ev_emp_conflicts,
+                "employment_evidence_governed_by": (
+                    (evidence_threshold_trace or {}).get("governed_by")
+                ),
+                "evidence_threshold_trace": evidence_threshold_trace,
                 "continuity_coverage_pct": coverage_pct,
                 "max_gap_days": max_gap,
                 "employer_name_match_confidence": employer_match_confidence,

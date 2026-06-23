@@ -145,9 +145,44 @@ class ClosingAgent(LendingPersona):
             outcome = DecisionOutcome.ESCALATE
             confidence = 0.6
 
+        # ── RA-PERSONA-C: evidence quality (advisory, OUTCOME-NEUTRAL) ────
+        # Append QUALITY signals + provenance; never move proposed_outcome → 16/16
+        # holds. Threshold is the catalogue documentation-confidence floor (Fannie
+        # B3-3.1-01, governed_by=agency); the constant is a safety net only.
+        ev = first_object(bundle, "evidence") or {}
+        evidence_populated = bool(ev.get("evidence_populated"))
+        evidence_any_conflicts = bool(ev.get("evidence_any_conflicts"))
+        evidence_overall_conf = ev.get("evidence_overall_confidence")
+        evidence_threshold_trace = ev.get("income_confidence_threshold_trace")
+        if ev and not evidence_populated:
+            signals.append(make_signal(
+                "CLOSING_EVIDENCE_INCOMPLETE", True,
+                direction=SignalDirection.CONTRADICTS, source="evidence", weight=2.0,
+                notes=("No evidence facts on file — cannot fully clear for closing "
+                       "without complete documentary evidence."),
+            ))
+        elif evidence_populated and evidence_any_conflicts:
+            signals.append(make_signal(
+                "CLOSING_EVIDENCE_CONFLICT", True,
+                direction=SignalDirection.CONTRADICTS, source="evidence",
+                notes=("Evidence conflict on file — resolve before scheduling "
+                       "closing."),
+            ))
+
         return OfflineReasoning(
             output_payload={
                 "clear_to_close": outcome == DecisionOutcome.ALLOW,
+                # RA-PERSONA-C: evidence provenance (advisory).
+                "evidence_populated": evidence_populated,
+                "closing_evidence_confidence": (
+                    round(float(evidence_overall_conf), 3)
+                    if evidence_overall_conf is not None else None
+                ),
+                "closing_evidence_conflicts": evidence_any_conflicts,
+                "closing_evidence_governed_by": (
+                    (evidence_threshold_trace or {}).get("governed_by")
+                ),
+                "evidence_threshold_trace": evidence_threshold_trace,
                 "outstanding_conditions": [] if all_conditions_cleared else ["minor_review"],
                 "all_conditions_cleared": all_conditions_cleared,
                 "cd_timing_compliant": cd_timing_compliant,

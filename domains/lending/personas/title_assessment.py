@@ -116,9 +116,44 @@ class TitleAssessmentAgent(LendingPersona):
             make_signal("non_borrower_owners", len(non_borrower_owners)),
         ]
 
+        # ── RA-PERSONA-C: evidence quality (advisory, OUTCOME-NEUTRAL) ────
+        # Append QUALITY signals + provenance; never move proposed_outcome → 16/16
+        # holds. Threshold is the catalogue documentation-confidence floor (Fannie
+        # B3-3.1-01, governed_by=agency); the constant is a safety net only.
+        ev = first_object(bundle, "evidence") or {}
+        evidence_populated = bool(ev.get("evidence_populated"))
+        evidence_any_conflicts = bool(ev.get("evidence_any_conflicts"))
+        evidence_overall_conf = ev.get("evidence_overall_confidence")
+        evidence_threshold_trace = ev.get("income_confidence_threshold_trace")
+        if ev and not evidence_populated:
+            signals.append(make_signal(
+                "TITLE_MISSING_EVIDENCE", True,
+                direction=SignalDirection.CONTRADICTS, source="evidence", weight=2.0,
+                notes=("No evidence facts on file — title posture cannot be "
+                       "corroborated from documentary evidence."),
+            ))
+        elif evidence_populated and evidence_any_conflicts:
+            signals.append(make_signal(
+                "TITLE_EVIDENCE_CONFLICT", True,
+                direction=SignalDirection.CONTRADICTS, source="evidence",
+                notes=("Evidence conflict on file — review alongside the title "
+                       "commitment before clearing."),
+            ))
+
         return OfflineReasoning(
             output_payload={
                 "title_disposition": overall,
+                # RA-PERSONA-C: evidence provenance (advisory).
+                "evidence_populated": evidence_populated,
+                "title_evidence_confidence": (
+                    round(float(evidence_overall_conf), 3)
+                    if evidence_overall_conf is not None else None
+                ),
+                "title_evidence_conflicts": evidence_any_conflicts,
+                "title_evidence_governed_by": (
+                    (evidence_threshold_trace or {}).get("governed_by")
+                ),
+                "evidence_threshold_trace": evidence_threshold_trace,
                 "lien_count": len(encumbrances),
                 "blocking_lien_count": blocking,
                 "total_payoff_required": round(payoff, 2),

@@ -103,10 +103,45 @@ class LeadQualificationAgent(LendingPersona):
         if ambiguous_identity:
             confidence = min(confidence, 0.5)
 
+        # ── RA-PERSONA-C: evidence quality (advisory, OUTCOME-NEUTRAL) ────
+        # INFO-level only: a low-confidence evidence picture makes the lead score
+        # less reliable. Append a NEUTRAL signal + provenance; never move
+        # proposed_outcome. Threshold is the catalogue documentation-confidence
+        # floor (Fannie B3-3.1-01, governed_by=agency). lead_scoring is outside
+        # the meridian decision path, so this is a graceful no-op there.
+        ev = first_object(bundle, "evidence") or {}
+        evidence_populated = bool(ev.get("evidence_populated"))
+        evidence_any_conflicts = bool(ev.get("evidence_any_conflicts"))
+        evidence_overall_conf = ev.get("evidence_overall_confidence")
+        conf_min = ev.get("income_confidence_min")
+        if conf_min is None:
+            conf_min = 0.75
+        evidence_threshold_trace = ev.get("income_confidence_threshold_trace")
+        if (evidence_populated and evidence_overall_conf is not None
+                and evidence_overall_conf < conf_min):
+            signals.append(make_signal(
+                "LEAD_LOW_EVIDENCE", round(float(evidence_overall_conf), 3),
+                direction=SignalDirection.NEUTRAL, source="evidence",
+                notes=(f"Evidence confidence {evidence_overall_conf:.0%} below "
+                       f"{conf_min:.0%} (Fannie B3-3.1-01) — score less reliable "
+                       "(informational, low priority)."),
+            ))
+
         return OfflineReasoning(
             output_payload={
                 "intent_score": round(intent_score, 3),
                 "channel": channel,
+                # RA-PERSONA-C: evidence provenance (advisory, INFO).
+                "evidence_populated": evidence_populated,
+                "lead_evidence_confidence": (
+                    round(float(evidence_overall_conf), 3)
+                    if evidence_overall_conf is not None else None
+                ),
+                "lead_evidence_conflicts": evidence_any_conflicts,
+                "lead_evidence_governed_by": (
+                    (evidence_threshold_trace or {}).get("governed_by")
+                ),
+                "evidence_threshold_trace": evidence_threshold_trace,
                 "source": source,
                 "ambiguous_identity": ambiguous_identity,
                 "lead_priority": (

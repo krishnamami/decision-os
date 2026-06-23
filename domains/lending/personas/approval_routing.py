@@ -82,9 +82,51 @@ class WorkflowRoutingAgent(LendingPersona):
 
         timeline = "same_day" if outcome_label == "approve" else "next_business_day"
 
+        # ── RA-PERSONA-C: evidence quality (advisory, OUTCOME-NEUTRAL) ────
+        # Surfaces a routing PREFERENCE (conflicts/weak evidence lean toward
+        # manual review) as signals + provenance, but does NOT change the
+        # routing outcome above — 16/16 holds. A future iteration may consume
+        # these to bias auto-approve vs manual; that is a deliberate outcome
+        # change out of scope here. Threshold is the catalogue documentation-
+        # confidence floor (Fannie B3-3.1-01, governed_by=agency).
+        ev = first_object(bundle, "evidence") or {}
+        evidence_populated = bool(ev.get("evidence_populated"))
+        evidence_any_conflicts = bool(ev.get("evidence_any_conflicts"))
+        evidence_overall_conf = ev.get("evidence_overall_confidence")
+        conf_min = ev.get("income_confidence_min")
+        if conf_min is None:
+            conf_min = 0.75
+        evidence_threshold_trace = ev.get("income_confidence_threshold_trace")
+        if evidence_populated and evidence_any_conflicts:
+            signals.append(make_signal(
+                "ROUTE_CONFLICT_PRESENT", True,
+                direction=SignalDirection.CONTRADICTS, source="evidence",
+                notes=("Evidence conflict on file — prefer manual review over "
+                       "auto-approve routing."),
+            ))
+        if (evidence_populated and evidence_overall_conf is not None
+                and evidence_overall_conf < conf_min):
+            signals.append(make_signal(
+                "ROUTE_LOW_CONFIDENCE", round(float(evidence_overall_conf), 3),
+                direction=SignalDirection.CONTRADICTS, source="evidence",
+                notes=(f"Overall evidence confidence {evidence_overall_conf:.0%} "
+                       f"below {conf_min:.0%} (Fannie B3-3.1-01)."),
+            ))
+
         return OfflineReasoning(
             output_payload={
                 "routing_target": target,
+                # RA-PERSONA-C: evidence provenance (advisory).
+                "evidence_populated": evidence_populated,
+                "route_evidence_confidence": (
+                    round(float(evidence_overall_conf), 3)
+                    if evidence_overall_conf is not None else None
+                ),
+                "route_evidence_conflicts": evidence_any_conflicts,
+                "route_evidence_governed_by": (
+                    (evidence_threshold_trace or {}).get("governed_by")
+                ),
+                "evidence_threshold_trace": evidence_threshold_trace,
                 "communication_channel": channel,
                 "timeline": timeline,
                 "underwriting_decision": {"outcome": outcome_label},

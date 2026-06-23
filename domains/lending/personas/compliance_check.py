@@ -97,9 +97,60 @@ class ComplianceAgent(LendingPersona):
         no_fair_lending_flags = not fair_lending_violation
         minor_data_gap = not hmda_complete and not missing_disclosures
 
+        # ── RA-PERSONA-C: evidence quality (advisory, OUTCOME-NEUTRAL) ────
+        # Append QUALITY signals + provenance; never move proposed_outcome → 16/16
+        # holds. Threshold is the catalogue documentation-confidence floor (Fannie
+        # B3-3.1-01, governed_by=agency); the constant is a safety net only.
+        ev = first_object(bundle, "evidence") or {}
+        evidence_populated = bool(ev.get("evidence_populated"))
+        ev_income_conf = ev.get("ev_income_confidence")
+        ev_credit_conf = ev.get("ev_credit_confidence")
+        evidence_any_conflicts = bool(ev.get("evidence_any_conflicts"))
+        conf_min = ev.get("income_confidence_min")
+        if conf_min is None:
+            conf_min = 0.75
+        evidence_threshold_trace = ev.get("income_confidence_threshold_trace")
+        if (evidence_populated and ev_income_conf is not None
+                and ev_income_conf < conf_min):
+            signals.append(make_signal(
+                "COMPLIANCE_INCOME_UNCERTAIN", round(float(ev_income_conf), 3),
+                direction=SignalDirection.CONTRADICTS, source="evidence",
+                notes=(f"Income evidence confidence {ev_income_conf:.0%} below "
+                       f"{conf_min:.0%} (Fannie B3-3.1-01) — QC review."),
+            ))
+        if (evidence_populated and ev_credit_conf is not None
+                and ev_credit_conf < conf_min):
+            signals.append(make_signal(
+                "COMPLIANCE_CREDIT_UNCERTAIN", round(float(ev_credit_conf), 3),
+                direction=SignalDirection.CONTRADICTS, source="evidence",
+                notes=(f"Credit evidence confidence {ev_credit_conf:.0%} below "
+                       f"{conf_min:.0%} (Fannie B3-3.1-01) — QC review."),
+            ))
+        if evidence_populated and evidence_any_conflicts:
+            signals.append(make_signal(
+                "COMPLIANCE_EVIDENCE_CONFLICT", True,
+                direction=SignalDirection.CONTRADICTS, source="evidence",
+                notes="Evidence conflict on file — compliance QC should review.",
+            ))
+
         return OfflineReasoning(
             output_payload={
                 "compliance_cleared": outcome == DecisionOutcome.ALLOW,
+                # RA-PERSONA-C: evidence provenance (advisory).
+                "evidence_populated": evidence_populated,
+                "compliance_income_evidence_confidence": (
+                    round(float(ev_income_conf), 3)
+                    if ev_income_conf is not None else None
+                ),
+                "compliance_credit_evidence_confidence": (
+                    round(float(ev_credit_conf), 3)
+                    if ev_credit_conf is not None else None
+                ),
+                "compliance_evidence_conflicts": evidence_any_conflicts,
+                "compliance_evidence_governed_by": (
+                    (evidence_threshold_trace or {}).get("governed_by")
+                ),
+                "evidence_threshold_trace": evidence_threshold_trace,
                 "all_hmda_fields_complete": hmda_complete,
                 "no_fair_lending_flags": no_fair_lending_flags,
                 "state_rules_passed": state_rules_passed,
