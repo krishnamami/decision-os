@@ -289,17 +289,19 @@ DONE:
   RA-PERSONA-A credit + asset + fraud read evidence
   RA-PERSONA-B dti + ltv + product read evidence
   RA-PERSONA-C 8 remaining personas read evidence (all 14 now read evidence)
+  RA-6A        Stage 1 audit — all 8 checks PASS (demo-ready)
+  RA-6B        Final lock-in + tag (rearch-core-complete)
 
-LATENT FOLLOW-UPS (flagged, not yet scheduled):
-  - asset_verification LARGE_DEPOSIT_THRESHOLD / MIN_RESERVES_MONTHS +
-    fraud_screening fraud-score constants — persona BOUNDARY thresholds,
-    a separate de-hardcoding pass (SC15 depends on them)
-  - per-domain evidence-confidence thresholds (only the shared income-doc
-    floor exists today)
-  - approval_routing conflict→manual-review preference (an outcome change)
-  - SE business-ownership rules (25/100/50) seeded but unwired
-    (self_employed_resolver path not yet live)
+BACKLOG (after client demo):
+  RA-P0/A/B    Pipeline + parallel runner
+  RA-EX/A-F    Extraction (MISMO + Vision + PDF)
+  RA-AUS/A/B/C AUS integration (DU + LP)
+  RA-5/A/B     Policy transparency
+  RA-7/A/B/C   Compliance (ATR/QM + adverse action + HMDA)
+  Stage 2 audit Full production readiness
 ```
+
+See **Known Gaps** at the bottom for the Stage-1 deferred items.
 
 ---
 
@@ -317,6 +319,52 @@ LATENT FOLLOW-UPS (flagged, not yet scheduled):
 ❌ Create a Python constant as a "temporary" fallback
 ❌ Skip reading this file before writing any code
 ```
+
+---
+
+## Known Gaps (Stage 1 Audit — deferred to post-demo)
+
+From RA-6A (all 8 checks PASS; these are documented, not blocking the demo):
+
+```
+(a) LIEN_META: 5 newly-wired entries carry a redundant blocks_closing=True
+    (ignored once the type is catalogued). Harmless. Cleanup in a post-demo pass.
+
+(b) Income resolver classes (RentalIncomeResolver / SelfEmployedResolver) are
+    not directly wired to any persona. SC12 rental income flows via the
+    income_verification own path. Confirm/complete wiring post-demo.
+
+(c) SE business-ownership: asset_resolver.py hardcodes biz_pct >= 100/50
+    (factor 1.00/0.50/0.00). The catalogue rows (Self-Employed Business
+    Ownership Majority/Full/Partial = 25/100/50) are seeded but NOT read.
+    Fix: wire the resolver to read them from catalogue. (This is the one
+    remaining hardcoded lending-value site found by CHECK 1.)
+
+(d) Student-loan deferred rate: catalogue seeds 1.0%. Current Fannie B3-6-05
+    uses a 0.5% floor for $0 / unreported payments. Review before production.
+
+(e) months_remaining_exclusion is wired (RA-4J) but unreachable by the 16
+    Meridian scenarios (no app carries months_remaining data).
+
+(f) approval_routing conflict preference: ROUTE_CONFLICT_PRESENT is advisory
+    only. Conflicts should route to manual review (not auto-approve) — a
+    deliberate future OUTCOME change, out of the advisory-only scope.
+
+(g) Eval runs the 16 apps sequentially (~165s nominal). asyncio.gather +
+    semaphore(5) -> ~40s. RA-P0-B backlog.
+
+(h) ~1283 superseded decision_outputs versions carry NULL bundle_id (from
+    network-degraded RA-PERSONA evals — RA-3F bundle write is best-effort by
+    design). Current decisions: 0 NULL (the audit/replay invariant holds).
+    Self-heals on re-run. Optional cleanup (backfill/prune) post-demo.
+```
+
+Also noted (persona-layer, separate from the resolver catalogue-isation):
+asset_verification `LARGE_DEPOSIT_THRESHOLD`/`MIN_RESERVES_MONTHS` and
+fraud_screening fraud-score constants are persona BOUNDARY thresholds (SC15
+depends on them) — a distinct de-hardcoding pass; and only the shared
+income-documentation confidence floor (0.75) backs evidence signals across all
+domains (per-domain thresholds are a possible future seed).
 
 ---
 

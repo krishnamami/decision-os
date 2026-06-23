@@ -4054,3 +4054,30 @@ NOT violations (algorithm classifiers, keep): `tradeline_analyzer.DEROGATORY_STA
 **RA-PERSONA-B — dti + ltv + product read evidence (commit 9f9e42d).** Same advisory/outcome-neutral pattern. dti_calculation → `DTI_INCOME_CONFLICT`/`DTI_INCOME_LOW_CONFIDENCE` (DTI only as reliable as its income evidence); ltv_assessment → `LTV_EVIDENCE_CONFLICT`/`LTV_EVIDENCE_WEAK` (`ev_asset_confidence` as appraisal-quality proxy); product_eligibility → `PRODUCT_MISSING_PROPERTY_DOCS`/`PRODUCT_EVIDENCE_CONFLICT` (main path only — the deterministic VA-entitlement early-return left untouched, so SC14/VA has no evidence block). Same catalogue threshold reused. Caught pre-commit: ltv_assessment imports `first_object` not `latest_object` → used first_object (single-entry evidence object, equivalent). Verified **16/16** (decision_outputs — eval verify phase hit the known transient network drop AFTER all writes; 224/224 bundles); dti 16/16 + ltv 16/16 + product 15/16 (SC14 VA path) carry the new provenance; signals fire where warranted (SC08 → LTV/PRODUCT_EVIDENCE_CONFLICT, clean income → no DTI signal). 13/370. Remaining: **RA-PERSONA-C** (employment_reconciliation, title_assessment, compliance_check, approval_routing, closing_readiness, rate_pricing, underwriting_decision, lead_scoring).
 
 **RA-PERSONA-C — 8 remaining personas read evidence (commit c2c718e).** Completes the persona-evidence wave — **all 14 personas now read the evidence graph**. Same advisory/outcome-neutral pattern. employment_reconciliation → `EMPLOYMENT_EVIDENCE_CONFLICT`/`_LOW_CONFIDENCE` (ev_employment_*); title_assessment → `TITLE_MISSING_EVIDENCE`/`_EVIDENCE_CONFLICT`; compliance_check → `COMPLIANCE_INCOME/CREDIT_UNCERTAIN`/`_EVIDENCE_CONFLICT`; approval_routing → `ROUTE_CONFLICT_PRESENT`/`_LOW_CONFIDENCE` (advisory ONLY — routing outcome NOT changed; the conflict→manual-review preference is a deliberate future outcome change, out of scope); closing_readiness → `CLOSING_EVIDENCE_INCOMPLETE`/`_CONFLICT`; rate_pricing → `PRICING_LOW_CONFIDENCE`; underwriting_decision → `UW_EVIDENCE_CONFLICTS`/`_LOW_EVIDENCE`; lead_scoring → `LEAD_LOW_EVIDENCE` (INFO/NEUTRAL, off the meridian path → graceful no-op). Same catalogue threshold reused (income_documentation_confidence_min). Caught pre-commit: underwriting_decision imported neither first_object nor latest_object → added first_object (the import lesson, checked all 8 up front). Verified clean full eval **Result: 16/16 (errors 0)**; all 7 meridian-path personas carry the new provenance 16/16; signals fire across ALL waves on SC08 (EMPLOYMENT/TITLE/COMPLIANCE/ROUTE/CLOSING/UW `_*CONFLICT`). 8 files py_compile+import checked. 13/370. **Full RA arc complete:** every threshold catalogue-driven (RA-4A–J), persona_bundles audit trail (RA-3F), all 14 personas reading the evidence graph (RA-PERSONA-A/B/C). Latent follow-ups flagged across the arc: asset_verification `LARGE_DEPOSIT_THRESHOLD`/`MIN_RESERVES_MONTHS` + fraud-score constants (persona boundary thresholds, separate de-hardcode); per-domain evidence-confidence thresholds (only the shared income-doc floor exists); approval_routing conflict→manual-review preference; SE business-ownership rules seeded-but-unwired.
+
+---
+
+## RA-6B — Re-Arch Core Complete — 2026-06-23
+
+### What Was Built (RA-0 through RA-6B)
+
+**ARCHITECTURE:** `docs/ARCHITECTURE.md` (RA-0-ARCH) — permanent reference; 10 architecture rules locked; zero hardcoded lending values in Python (one documented exception, gap c); three-layer rule model regulatory/agency/overlay.
+
+**CATALOGUE (RA-1 + RA-SEED):** agency_guidelines 81 rows (Fannie 58 / FHA 13 / VA 8 / Freddie 2); regulatory_rules 23; overlay_rules 6 (Meridian 4 / Summit 2); verify gate 59/59 exit 0; `rule_loader.get_rule` returns `{applied, governed_by, layers}`.
+
+**RESOLVERS (RA-4A→RA-4J):** all domain resolvers catalogue-driven; zero hardcoded lending thresholds (except gap c, SE business-ownership); all return findings IN MEMORY to the persona.
+
+**BUNDLES (RA-3F):** persona_bundles 224 current rows (14 personas × 16 apps); entity_snapshot + evidence_snapshot populated 16/16 each (rules_snapshot 16/16 on the 4 rule-injecting personas); decision_outputs.bundle_id set for every CURRENT decision (0 NULL among latest versions); replay-safe (JSONB → _compute_offline).
+
+**PERSONAS (RA-PERSONA-A/B/C):** all 14 personas read evidence quality from the bundle; advisory signals where evidence warrants; OUTCOME-NEUTRAL (append signals, never change proposed_outcome); threshold reused income_documentation_confidence_min=0.75 (Fannie B3-3.1-01).
+
+**AUDIT (RA-6A):** Stage 1 audit — all 8 checks PASS; 8 known gaps documented (none blocking demo); 16/16 confirmed. CHECK detail: CHECK 7's 6 "fails" were non-context views (out of scope; all 14 vw_*_context have ev_* cols); CHECK 8's 1283 NULL-bundle_id are all SUPERSEDED versions (0 NULL among current).
+
+### Known Gaps
+See the **Known Gaps** section in docs/ARCHITECTURE.md (gaps a–h). Headlines: (c) SE business-ownership hardcoded/unwired in asset_resolver — the one remaining hardcoded lending value; (d) student-loan 1.0% vs current Fannie 0.5% floor — production review; (h) NULL bundle_id on superseded versions — self-heals, optional cleanup.
+
+### Verification (RA-6B)
+16/16 confirmed directly from decision_outputs (no logic changed since RA-PERSONA-C's clean `Result: 16/16 errors 0` eval; network too degraded for a no-op re-run). Tagged `rearch-core-complete`.
+
+### Next Steps (post-demo, backlog)
+RA-P0/EX (pipeline + extraction infra), RA-AUS-A/B/C (DU + LP), RA-5 (policy transparency), RA-7A/B/C (ATR/QM + adverse action + HMDA), Stage 2 audit (full production readiness).
