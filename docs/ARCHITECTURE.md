@@ -294,7 +294,13 @@ DONE:
 
 BACKLOG (after client demo):
   RA-P0/A/B    Pipeline + parallel runner
-  RA-EX/A-F    Extraction (MISMO + Vision + PDF)
+  RA-EX/A-E    Extraction SHIPPED: audit (A), golden_record builder+writer (B),
+               gap-field derivation + demo seeding (C), pipeline + Claude Vision
+               extractor (D), upload trigger wired (E). Live path:
+               POST /api/accord/documents/upload -> ingest_document ->
+               route_extraction -> document_index -> golden_record -> entity_states.
+               Meridian is hard-refused (seeded fixtures). Textract/Regex tiers
+               still stubs (RA-EX-F).
   RA-AUS/A/B/C AUS integration (DU + LP)
   RA-5/A/B     Policy transparency
   RA-7/A/B/C   Compliance (ATR/QM + adverse action + HMDA)
@@ -357,6 +363,11 @@ From RA-6A (all 8 checks PASS; these are documented, not blocking the demo):
     network-degraded RA-PERSONA evals — RA-3F bundle write is best-effort by
     design). Current decisions: 0 NULL (the audit/replay invariant holds).
     Self-heals on re-run. Optional cleanup (backfill/prune) post-demo.
+
+(i) Only the Vision tier extracts today (RA-EX-D). Textract (W2/paystub/URLA)
+    and Regex (flood/HOI/rate-lock/credit/bank-statement) tiers are stubs
+    returning empty results — the upload trigger (RA-EX-E) runs end-to-end but
+    only Vision doc types yield fields. Real Textract/Regex = RA-EX-F.
 ```
 
 Also noted (persona-layer, separate from the resolver catalogue-isation):

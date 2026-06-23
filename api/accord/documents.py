@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from api.accord.auth import get_tenant_id
 from api.accord.pipeline import _get_pool, _require_db
@@ -414,3 +414,48 @@ async def source_match(application_id: str, tenant_id: str = Depends(get_tenant_
         verifications.append({"category": "employment", "fields": emp_fields, "discrepancy": {"exists": False}})
 
     return {"application_id": application_id, "verifications": verifications}
+
+
+# ── RA-EX-E — the live document-upload trigger ──────────────────────────
+@router.post("/upload")
+async def upload_document(
+    application_id: str = Form(...),
+    doc_type: str = Form(...),
+    file: UploadFile = File(...),
+    tenant_id: str = Depends(get_tenant_id),
+) -> dict:
+    """Direct upload trigger (Pattern C — no S3/SQS exists). Runs the extraction
+    pipeline on the uploaded file: route_extraction -> document_index
+    .extracted_fields -> golden_record -> entity_states. The tenant comes from
+    auth, so the meridian demo is protected by ingest_document's hard guard
+    (its document_index + entity_states are hand-seeded fixtures)."""
+    _require_db()
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(400, "empty file")
+
+    from core.extraction.pipeline import ingest_document
+    pool = await _get_pool()
+    try:
+        async with pool.acquire() as conn:
+            result = await ingest_document(
+                conn, application_id, tenant_id, doc_type, file_bytes,
+            )
+    except ValueError as exc:
+        # meridian guard / validation -> 422 (not a server error)
+        raise HTTPException(422, str(exc))
+
+    ext = result["extraction"]
+    return {
+        "status": "processed",
+        "application_id": application_id,
+        "document_id": result["document_id"],
+        "doc_type": doc_type,
+        "extraction": {
+            "method": ext.method,
+            "confidence": ext.confidence,
+            "fields_extracted": sorted(ext.fields.keys()),
+            "warnings": ext.warnings,
+        },
+        "entity_states_written": result["golden_written"],
+    }
