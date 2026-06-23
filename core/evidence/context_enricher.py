@@ -13,6 +13,8 @@ off raw entity_states fields incrementally.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from .trace_builder import EvidenceTraceBuilder
 
 
@@ -136,8 +138,55 @@ class ContextEnricher:
         except Exception:
             pass
 
+    # ATR/QM catalogue rules -> base key (RA-7A). is_ceiling drives risk only.
+    _ATR_QM_RULES = [
+        ("atr_required_factors", "atr_required_factors", False),
+        ("qm_dti_max", "QM Safe Harbor DTI Maximum", True),
+        ("qm_points_fees_max", "qm_points_fees_max_pct", True),
+        ("hpml_threshold_bps", "hpml_rate_threshold_1st_lien", True),
+    ]
+
+    async def _attach_atr_qm(self, base: dict, tenant_id: str) -> None:
+        """Resolve the 4 ATR/QM thresholds from the catalogue (12 CFR 1026.43 /
+        .35) via rule_loader and attach them + a workbench trace. Best-effort:
+        on failure ATRVerifier falls back to its SAFE_DEFAULTS (RULE 9)."""
+        try:
+            from core.catalogue.rule_loader import get_rule
+            traces = {}
+            for key, rule_name, ceiling in self._ATR_QM_RULES:
+                r = await get_rule(self.conn, rule_name, tenant_id, is_ceiling=ceiling)
+                if r.get("applied") is not None:
+                    base[key] = float(r["applied"])
+                traces[rule_name] = self._trace(r, rule_name)
+            base["atr_qm_rule_traces"] = traces
+        except Exception:
+            pass
+
+    async def _attach_atr_factors(
+        self, base: dict, application_id: str, tenant_id: str
+    ) -> None:
+        """Surface the entity_states scalars the ATR 8-factor checklist needs
+        (the compliance view exposes only ltv). Best-effort."""
+        try:
+            row = await self.conn.fetchrow(
+                """SELECT qualifying_monthly, piti_monthly, monthly_obligations,
+                          dti_back, mid_credit_score, ltv, loan_amount,
+                          interest_rate
+                   FROM entity_states
+                   WHERE application_id=$1 AND tenant_id=$2""",
+                application_id, tenant_id,
+            )
+            if row:
+                base["atr_entity"] = {
+                    k: (float(v) if isinstance(v, (int, float)) else v)
+                    for k, v in dict(row).items()
+                }
+        except Exception:
+            pass
+
     async def evidence_facts(
-        self, application_id: str, tenant_id: str
+        self, application_id: str, tenant_id: str,
+        decision_id: Optional[str] = None,
     ) -> dict:
         """Return the RA-3B evidence_* keys from CURRENT (non-superseded)
         fact_nodes for one application.
@@ -192,11 +241,25 @@ class ContextEnricher:
             "fraud_indicator_conflicts":   False,
             "fraud_indicator_method":      None,
             "fraud_populated":             False,
+            # ATR/QM (RA-7A) — populated only for the compliance_check decision
+            # (12 CFR 1026.43). Thresholds from the catalogue; factors from
+            # entity_states (the compliance view carries only ltv).
+            "atr_required_factors":        None,
+            "qm_dti_max":                  None,
+            "qm_points_fees_max":          None,
+            "hpml_threshold_bps":          None,
+            "atr_qm_rule_traces":          None,
+            "atr_entity":                  None,
         }
 
         # Thresholds + fraud first, so they ride on every return path.
         await self._attach_income_thresholds(base, tenant_id)
         await self._attach_fraud(base, application_id, tenant_id)
+        # ATR/QM is only consumed by compliance_check — load it just for that
+        # decision to avoid 13 personas paying for rules they never read.
+        if decision_id == "compliance_check":
+            await self._attach_atr_qm(base, tenant_id)
+            await self._attach_atr_factors(base, application_id, tenant_id)
 
         try:
             rows = await self.conn.fetch(

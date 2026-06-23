@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from core.compliance.atr_verifier import ATRVerifier
 from core.context_store import ContextBundle
 from core.normalizer.models import DecisionOutcome
 from core.policy_engine import PolicyDecision
@@ -133,6 +134,59 @@ class ComplianceAgent(LendingPersona):
                 notes="Evidence conflict on file — compliance QC should review.",
             ))
 
+        # ── RA-7A: ATR / QM (12 CFR 1026.43) — advisory, OUTCOME-NEUTRAL ──
+        # Thresholds from the catalogue (enricher _attach_atr_qm); the 8 ATR
+        # factors from entity_states (enricher _attach_atr_factors — the
+        # compliance view carries only ltv). Signals NEVER move proposed_outcome
+        # → 16/16 holds. A genuinely NULL factor (e.g. SC03 has no dti_back)
+        # raises a CONTRADICTS quality signal, not a block.
+        atr_entity = dict(ev.get("atr_entity") or {})
+        atr_entity["employment_verified"] = bool(
+            ev.get("evidence_employment_status")
+            or ev.get("ev_employment_confidence")
+        )
+        atr_rules = {
+            "atr_required_factors": ev.get("atr_required_factors"),
+            "qm_dti_max":           ev.get("qm_dti_max"),
+            "qm_points_fees_max":   ev.get("qm_points_fees_max"),
+            "hpml_threshold_bps":   ev.get("hpml_threshold_bps"),
+        }
+        verifier = ATRVerifier(rules=atr_rules)
+        atr_result = verifier.verify(atr_entity)
+        qm_result = verifier.classify_qm(atr_entity)
+        atr_loaded = bool(ev.get("atr_entity"))
+
+        if atr_loaded and atr_result["atr_satisfied"]:
+            signals.append(make_signal(
+                "ATR_SATISFIED", atr_result["factors_passed"],
+                direction=SignalDirection.SUPPORTS, source="atr_verifier",
+                notes=(f"All {atr_result['factors_checked']} ATR factors verified "
+                       f"(12 CFR 1026.43(c))."),
+            ))
+        elif atr_loaded:
+            signals.append(make_signal(
+                "ATR_FACTOR_MISSING", atr_result["factors_failed"],
+                direction=SignalDirection.CONTRADICTS, source="atr_verifier",
+                notes=(f"ATR factors not verified: {atr_result['factors_failed']} "
+                       f"(12 CFR 1026.43(c)) — advisory; resolve before "
+                       f"consummation."),
+            ))
+
+        qm_class = qm_result["qm_classification"]
+        if atr_loaded and qm_class == "NON_QM":
+            signals.append(make_signal(
+                "NON_QM_LOAN", qm_class,
+                direction=SignalDirection.CONTRADICTS, source="atr_verifier",
+                notes=("Loan fails QM criteria (12 CFR 1026.43(e)); ATR must be "
+                       "proven case-by-case. Advisory — outcome unchanged."),
+            ))
+        elif atr_loaded:
+            signals.append(make_signal(
+                qm_class, qm_class,
+                direction=SignalDirection.SUPPORTS, source="atr_verifier",
+                notes=f"{qm_class} (12 CFR 1026.43(e)).",
+            ))
+
         return OfflineReasoning(
             output_payload={
                 "compliance_cleared": outcome == DecisionOutcome.ALLOW,
@@ -165,6 +219,20 @@ class ComplianceAgent(LendingPersona):
                 # Exposed so the decisions.yaml boundary block_if can match it
                 # (the policy engine evaluates against output_payload).
                 "tx_cashout_ltv_violation": tx_cashout_ltv_violation,
+                # RA-7A — ATR/QM disclosure (advisory; never gates the outcome).
+                "atr_evaluated": atr_loaded,
+                "atr_satisfied": atr_result["atr_satisfied"] if atr_loaded else None,
+                "atr_factors_passed": atr_result["factors_passed"] if atr_loaded else None,
+                "atr_factors_checked": atr_result["factors_checked"],
+                "atr_factors_failed": atr_result["factors_failed"] if atr_loaded else None,
+                "atr_citation": atr_result["citation"],
+                "qm_classification": qm_class if atr_loaded else None,
+                "safe_harbor_protected": qm_result["safe_harbor_protected"] if atr_loaded else None,
+                "qm_dti_check": qm_result["dti_check"] if atr_loaded else None,
+                "qm_points_fees_check": qm_result["points_fees_check"] if atr_loaded else None,
+                "qm_hpml_flag": qm_result["hpml_flag"] if atr_loaded else None,
+                "qm_citation": qm_result["citation"],
+                "atr_qm_rule_traces": ev.get("atr_qm_rule_traces"),
             },
             proposed_outcome=outcome,
             confidence=confidence,

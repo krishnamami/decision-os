@@ -251,6 +251,13 @@ Notes:
   across all domains (per-domain thresholds are a possible future seed).
 - approval_routing surfaces a conflict→manual-review *preference* as an advisory
   signal but does NOT change the routing outcome (a deliberate future change).
+- compliance_check also runs the RA-7A ATR 8-factor checklist + QM classifier
+  (12 CFR 1026.43). The enricher loads the 4 thresholds from regulatory_rules and
+  the 8 factors from entity_states onto the evidence object, but ONLY for the
+  compliance_check decision. Output is advisory: output_payload (atr_satisfied,
+  qm_classification, safe_harbor_protected, rule traces) + SUPPORTS/CONTRADICTS
+  signals; proposed_outcome is never moved. QM with no verified DTI is
+  conservatively NON_QM; points/fees default to 0 until fee data is wired.
 
 ---
 
@@ -308,7 +315,13 @@ BACKLOG (after client demo):
                later); Tier 2 = Claude Vision; Tier 3 = regex over text.
   RA-AUS/A/B/C AUS integration (DU + LP)
   RA-5/A/B     Policy transparency
-  RA-7/A/B/C   Compliance (ATR/QM + adverse action + HMDA)
+  RA-7A        SHIPPED: ATR 8-factor checklist + QM classifier (12 CFR 1026.43)
+               in compliance_check. Thresholds from regulatory_rules via the
+               enricher (atr_required_factors=8, QM safe-harbor DTI=43,
+               points/fees=3%, HPML=150bps); factors from entity_states.
+               ADVISORY only — output_payload + SUPPORTS/CONTRADICTS signals,
+               proposed_outcome untouched (16/16 holds).
+  RA-7/B/C     Compliance remaining (adverse action + HMDA)
   Stage 2 audit Full production readiness
 ```
 
