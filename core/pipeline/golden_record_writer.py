@@ -92,6 +92,16 @@ async def apply_golden_record(
     the mapped scalar columns where the derived value is not None. NEVER call
     with write=True on the meridian demo tenant — see module docstring.
     """
+    # Hard guard: the meridian fixtures are hand-seeded scenarios that
+    # deliberately contradict the seeded documents (e.g. SC08 mid 578 vs doc
+    # 760), so writing the derived record would break 16/16. Dry-run (write=
+    # False) over meridian is still allowed and useful.
+    if write and tenant_id == "meridian":
+        raise ValueError(
+            "Cannot write golden record over meridian fixtures. "
+            "These are hand-seeded scenarios — use write=False for dry-run."
+        )
+
     doc_map = await load_doc_map(conn, application_id, tenant_id)
     golden = build_golden_record(doc_map, **builder_kw)
 
