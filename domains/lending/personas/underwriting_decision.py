@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from core.compliance.adverse_action_engine import AdverseActionEngine
 from core.context_store import ContextBundle
 from core.normalizer.models import DecisionOutcome
 from core.policy_engine import PolicyDecision
@@ -153,9 +154,36 @@ class SeniorUnderwritingAgent(LendingPersona):
                        f"below {conf_min:.0%} (Fannie B3-3.1-01)."),
             ))
 
+        # ── RA-7B: Adverse Action Notice (ECOA / Reg B §1002.9) ──────────
+        # Only a decline (BLOCK) is an adverse action — escalate/recommend are
+        # not. Builds notice DATA (HMDA denial codes + 30-day deadline from the
+        # catalogue) from the upstream decisions that blocked. ADVISORY artifact
+        # in output_payload; proposed_outcome is untouched → 16/16 holds.
+        adverse_action = None
+        if outcome == DecisionOutcome.BLOCK:
+            blocking = [d for d, o in outcomes.items() if o == "block"]
+            engine = AdverseActionEngine(
+                rules={"adverse_action_days_max": ev.get("adverse_action_days_max")}
+            )
+            adverse_action = engine.generate_notice(
+                bundle.application_id, blocking,
+                credit_bureau_used="credit_assessment" in _UPSTREAM_DECISIONS,
+            )
+            signals.append(make_signal(
+                "ADVERSE_ACTION_REQUIRED", adverse_action["hmda_denial_codes"],
+                direction=SignalDirection.CONTRADICTS, source="adverse_action",
+                notes=(f"Decline -> ECOA adverse-action notice due within "
+                       f"{adverse_action['days_to_notice']} days; HMDA codes "
+                       f"{adverse_action['hmda_denial_codes']} "
+                       f"(Reg B §1002.9)."),
+            ))
+
         return OfflineReasoning(
             output_payload={
                 "underwriting_outcome": underwriting_outcome,
+                # RA-7B — adverse-action notice data (None unless declined).
+                "adverse_action": adverse_action,
+                "adverse_action_rule_trace": ev.get("adverse_action_rule_trace"),
                 # RA-PERSONA-C: evidence provenance (advisory).
                 "evidence_populated": evidence_populated,
                 "uw_evidence_confidence": (

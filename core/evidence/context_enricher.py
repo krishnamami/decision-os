@@ -162,6 +162,21 @@ class ContextEnricher:
         except Exception:
             pass
 
+    async def _attach_adverse_action(self, base: dict, tenant_id: str) -> None:
+        """Resolve the ECOA adverse-action notice deadline (Reg B §1002.9 = 30
+        days) from the catalogue for underwriting_decision. Best-effort: the
+        AdverseActionEngine falls back to its 30-day default (RULE 9)."""
+        try:
+            from core.catalogue.rule_loader import get_rule
+            r = await get_rule(self.conn, "Adverse Action Notice Deadline",
+                               tenant_id, is_ceiling=True)
+            if r.get("applied") is not None:
+                base["adverse_action_days_max"] = int(float(r["applied"]))
+            base["adverse_action_rule_trace"] = self._trace(
+                r, "Adverse Action Notice Deadline")
+        except Exception:
+            pass
+
     async def _attach_atr_factors(
         self, base: dict, application_id: str, tenant_id: str
     ) -> None:
@@ -250,6 +265,9 @@ class ContextEnricher:
             "hpml_threshold_bps":          None,
             "atr_qm_rule_traces":          None,
             "atr_entity":                  None,
+            # Adverse-action deadline (RA-7B) — only for underwriting_decision.
+            "adverse_action_days_max":     None,
+            "adverse_action_rule_trace":   None,
         }
 
         # Thresholds + fraud first, so they ride on every return path.
@@ -260,6 +278,8 @@ class ContextEnricher:
         if decision_id == "compliance_check":
             await self._attach_atr_qm(base, tenant_id)
             await self._attach_atr_factors(base, application_id, tenant_id)
+        elif decision_id == "underwriting_decision":
+            await self._attach_adverse_action(base, tenant_id)
 
         try:
             rows = await self.conn.fetch(

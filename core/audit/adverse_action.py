@@ -94,9 +94,55 @@ _DECISION_DEFAULT_REASONS: dict[str, AdverseActionReason] = {
     "compliance_check":      AdverseActionReason.REGULATORY_RESTRICTION,
     "dti_calculation":       AdverseActionReason.EXCESSIVE_OBLIGATIONS,
     "ltv_assessment":        AdverseActionReason.INSUFFICIENT_COLLATERAL_VALUE,
+    "product_eligibility":   AdverseActionReason.UNACCEPTABLE_PROPERTY_TYPE,
+    "asset_verification":    AdverseActionReason.OTHER,
     "underwriting_decision": AdverseActionReason.OTHER,
     "closing_readiness":     AdverseActionReason.REGULATORY_RESTRICTION,
 }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# HMDA / Regulation C denial reason codes (1–9). Each canonical ECOA
+# reason maps to the closest HMDA code so the adverse-action notice can
+# carry the numeric codes regulators expect on the LAR. (12 CFR 1003.4(a)(16).)
+# ─────────────────────────────────────────────────────────────────────
+HMDA_REASON_TEXT: dict[int, str] = {
+    1: "Debt-to-income ratio",
+    2: "Employment history",
+    3: "Credit history",
+    4: "Collateral",
+    5: "Insufficient cash (down payment, closing costs)",
+    6: "Unverifiable information",
+    7: "Credit application incomplete",
+    8: "Mortgage insurance denied",
+    9: "Other",
+}
+
+HMDA_DENIAL_CODE: dict[AdverseActionReason, int] = {
+    AdverseActionReason.EXCESSIVE_OBLIGATIONS:         1,
+    AdverseActionReason.INSUFFICIENT_INCOME:           1,
+    AdverseActionReason.LENGTH_OF_EMPLOYMENT:          2,
+    AdverseActionReason.POOR_CREDIT_HISTORY:           3,
+    AdverseActionReason.LIMITED_CREDIT_EXPERIENCE:     3,
+    AdverseActionReason.NO_CREDIT_FILE:                3,
+    AdverseActionReason.INSUFFICIENT_COLLATERAL_VALUE: 4,
+    AdverseActionReason.UNACCEPTABLE_PROPERTY_TYPE:    4,
+    AdverseActionReason.UNABLE_TO_VERIFY_INFORMATION:  6,
+    AdverseActionReason.SUSPECTED_FRAUD:               6,
+    AdverseActionReason.APPLICATION_INCOMPLETE:        7,
+    AdverseActionReason.REGULATORY_RESTRICTION:        9,
+    AdverseActionReason.OTHER:                         9,
+}
+
+
+def hmda_codes_for(reasons: list[AdverseActionReason]) -> list[int]:
+    """Distinct HMDA denial codes for a list of canonical reasons, sorted."""
+    codes: list[int] = []
+    for r in reasons:
+        code = HMDA_DENIAL_CODE.get(r, 9)
+        if code not in codes:
+            codes.append(code)
+    return sorted(codes)
 
 
 class AdverseActionNotice(BaseModel):
@@ -119,6 +165,7 @@ class AdverseActionNotice(BaseModel):
     decision_output: DecisionOutcome
     reasons: list[AdverseActionReason]
     reason_descriptions: list[str] = Field(default_factory=list)
+    hmda_denial_codes: list[int] = Field(default_factory=list)  # Reg C 1–9
 
     # FCRA disclosures — required when a credit bureau report drove
     # the decision. AuditRecord.data_sources_used carries the signal.
@@ -172,11 +219,16 @@ def generate_notice(
     trace: DecisionTrace,
     *,
     applicant_value: Optional[dict[str, Any]] = None,
+    days_max: int = 30,
 ) -> AdverseActionNotice:
     """Build an AdverseActionNotice from an AuditRecord + DecisionTrace.
     Caller is responsible for asserting `is_adverse_action(record)`
     before invoking; the function generates a notice regardless of
-    whether the underlying decision actually qualifies."""
+    whether the underlying decision actually qualifies.
+
+    ``days_max`` is the notice deadline window (Reg B §1002.9 = 30 days); the
+    caller should pass the catalogue value (regulatory_rules) rather than rely
+    on the default, which is the RULE 9 safety net only."""
 
     reasons: list[AdverseActionReason] = []
     descriptions: list[str] = []
@@ -244,7 +296,7 @@ def generate_notice(
         applicant_name = full or None
 
     action_date = record.timestamp
-    notice_due_by = action_date + timedelta(days=30)
+    notice_due_by = action_date + timedelta(days=days_max)
 
     return AdverseActionNotice(
         audit_id=str(record.audit_id),
@@ -259,6 +311,7 @@ def generate_notice(
         decision_output=record.decision_output,
         reasons=reasons,
         reason_descriptions=descriptions,
+        hmda_denial_codes=hmda_codes_for(reasons),
         bureau_used=bureau_used,
         fcra_required=fcra_required,
     )
@@ -268,6 +321,9 @@ __all__ = [
     "ActionTaken",
     "AdverseActionNotice",
     "AdverseActionReason",
+    "HMDA_DENIAL_CODE",
+    "HMDA_REASON_TEXT",
+    "hmda_codes_for",
     "generate_notice",
     "is_adverse_action",
 ]
