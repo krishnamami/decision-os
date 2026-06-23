@@ -7,8 +7,9 @@
                      report, bank statements)
 
 Extractors are imported lazily so a missing optional dependency only affects the
-doc types that need it. Textract/Regex are stubs today (RA-EX-D builds Vision);
-they return a clearly-flagged empty result so the pipeline never crashes.
+doc types that need it. All three tiers are real (RA-EX-F): Tier 1 = pdfplumber,
+Tier 2 = Claude Vision, Tier 3 = regex. Each returns a clearly-flagged result
+(method + warnings) so the pipeline never crashes on unparseable input.
 """
 from __future__ import annotations
 

@@ -25,8 +25,11 @@ golden_record_builder (core/pipeline/golden_record_builder.py)
   •   entity_states.mid_credit_score   ← credit report
   • NULL if document not uploaded — never assumed
   ⚠️ DESIGN vs RUNTIME: golden_record_builder is the production-correct
-     derivation primitive set (15/15 unit tests) but is NOT the live population
-     path today. Meridian `entity_states` are hand-seeded fixtures
+     derivation primitive set (21/21 unit tests). The live population path now
+     exists for REAL tenants (RA-EX-E/F): POST /api/accord/documents/upload ->
+     ingest_document -> route_extraction (pdfplumber / Vision / regex) ->
+     document_index -> apply_golden_record(write=True) -> entity_states.
+     Meridian is HARD-REFUSED: its `entity_states` are hand-seeded fixtures
      (scripts/seed_meridian_tenant.py), intentionally tuned for scenario
      outcomes. Only SAFE additive corrections were applied to live data (RA-2).
   ↓
@@ -294,13 +297,15 @@ DONE:
 
 BACKLOG (after client demo):
   RA-P0/A/B    Pipeline + parallel runner
-  RA-EX/A-E    Extraction SHIPPED: audit (A), golden_record builder+writer (B),
+  RA-EX/A-F    Extraction SHIPPED: audit (A), golden_record builder+writer (B),
                gap-field derivation + demo seeding (C), pipeline + Claude Vision
-               extractor (D), upload trigger wired (E). Live path:
+               extractor (D), upload trigger wired (E), real Tier-1 pdfplumber +
+               Tier-3 regex extractors + field manifest (F). Live path:
                POST /api/accord/documents/upload -> ingest_document ->
-               route_extraction -> document_index -> golden_record -> entity_states.
-               Meridian is hard-refused (seeded fixtures). Textract/Regex tiers
-               still stubs (RA-EX-F).
+               route_extraction (3 tiers, all real) -> document_index ->
+               golden_record -> entity_states. Meridian is hard-refused (seeded
+               fixtures). Tier 1 = pdfplumber (no AWS creds; swap to Textract
+               later); Tier 2 = Claude Vision; Tier 3 = regex over text.
   RA-AUS/A/B/C AUS integration (DU + LP)
   RA-5/A/B     Policy transparency
   RA-7/A/B/C   Compliance (ATR/QM + adverse action + HMDA)
@@ -364,10 +369,14 @@ From RA-6A (all 8 checks PASS; these are documented, not blocking the demo):
     design). Current decisions: 0 NULL (the audit/replay invariant holds).
     Self-heals on re-run. Optional cleanup (backfill/prune) post-demo.
 
-(i) Only the Vision tier extracts today (RA-EX-D). Textract (W2/paystub/URLA)
-    and Regex (flood/HOI/rate-lock/credit/bank-statement) tiers are stubs
-    returning empty results — the upload trigger (RA-EX-E) runs end-to-end but
-    only Vision doc types yield fields. Real Textract/Regex = RA-EX-F.
+(i) CLOSED (RA-EX-F). All three tiers now extract for real: Tier 1 pdfplumber
+    (W2/paystub/URLA — boto3 is installed but no AWS creds, so pdfplumber is the
+    local stand-in; swap _extract_text for Textract when creds land), Tier 2
+    Claude Vision, Tier 3 regex (flood/HOI/rate-lock/credit/bank-statement).
+    Field-manifest dry-run on a throwaway tenant: 12/17 golden scalar fields
+    derived from real extraction; remaining nulls are absent inputs, not
+    extractor gaps. Patterns run on original text + IGNORECASE (the lower-case +
+    [A-Z] approach would drop capitalized captures like employer names).
 ```
 
 Also noted (persona-layer, separate from the resolver catalogue-isation):

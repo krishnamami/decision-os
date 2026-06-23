@@ -6,9 +6,9 @@ The composition the document-upload path should call:
               -> golden_record_writer.apply_golden_record(write=True)
               -> entity_states
 
-There is no live upload path today (document_index is created only by seed
-scripts), so this is the ready-to-wire entry point, not a change to existing
-code. It HARD-REFUSES the meridian tenant: its document_index + entity_states are
+The live upload path calls this (RA-EX-E): POST /api/accord/documents/upload ->
+ingest_document. All three extraction tiers are real (RA-EX-F: pdfplumber /
+Vision / regex). It HARD-REFUSES the meridian tenant: its document_index + entity_states are
 hand-seeded scenario fixtures and must never be overwritten by live extraction
 (that would break 16/16). Real tenants run the full flow.
 """
