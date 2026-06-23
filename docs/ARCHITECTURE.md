@@ -215,6 +215,8 @@ adverse_action_notices    ECOA/Reg B notice tracking — declines + 30-day deadl
                           + HMDA denial codes (RA-7B)
 hmda_lar                   HMDA Loan/Application Register — one row per app, loan +
                           action + demographic data, Reg C (RA-7C)
+aus_responses             Parsed AUS (DU/LP) recommendations — one per app+system
+                          (RA-AUS-A)
 ```
 
 ---
@@ -260,6 +262,11 @@ Notes:
   from the blocking upstream decisions, 30-day deadline from the catalogue. The
   enricher attaches the deadline only for this decision. Advisory; the persona
   never writes the DB (the population job fills adverse_action_notices).
+- approval_routing reads the parsed DU/AUS result (RA-AUS-A) when one exists and
+  emits AUS_ACCORD_CONFLICT if DU disagrees with Accord's underwriting outcome
+  (DU approve vs Accord decline, or DU refer/ineligible vs Accord approve). The
+  enricher attaches aus_result for this decision only; meridian has no DU data so
+  no signal fires. Advisory; reconciliation is RA-AUS-B.
 - underwriting_decision also emits a HMDA LAR record (RA-7C) into
   output_payload.hmda_lar on EVERY application. Demographic data (ethnicity/race/
   sex/age) is collected + reported but NEVER read by any decision logic — the
@@ -327,7 +334,14 @@ BACKLOG (after client demo):
                golden_record -> entity_states. Meridian is hard-refused (seeded
                fixtures). Tier 1 = pdfplumber (no AWS creds; swap to Textract
                later); Tier 2 = Claude Vision; Tier 3 = regex over text.
-  RA-AUS/A/B/C AUS integration (DU + LP)
+  RA-AUS-A     SHIPPED: DU (Desktop Underwriter) response parser. core/aus/
+               du_parser.py parses a DU response (Approve|Refer / Eligible|
+               Ineligible, EA tiers, findings, conditions) into a stable shape;
+               aus_responses table + store (ingest/load). approval_routing reads
+               the parsed result (enricher, gated) and emits AUS_ACCORD_CONFLICT
+               when DU disagrees with Accord's outcome. ADVISORY — reconciliation
+               is RA-AUS-B; no DU response -> no signal. 16/16 holds.
+  RA-AUS/B/C   AUS reconciliation engine + LP (Loan Product Advisor)
   RA-5/A/B     Policy transparency
   RA-7A        SHIPPED: ATR 8-factor checklist + QM classifier (12 CFR 1026.43)
                in compliance_check. Thresholds from regulatory_rules via the

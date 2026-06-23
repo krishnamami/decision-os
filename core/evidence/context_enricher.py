@@ -162,6 +162,19 @@ class ContextEnricher:
         except Exception:
             pass
 
+    async def _attach_aus_result(
+        self, base: dict, application_id: str, tenant_id: str
+    ) -> None:
+        """Surface the parsed DU/AUS result (RA-AUS-A) for approval_routing, if
+        one was ingested. None when no AUS response exists (not all lenders run
+        DU) — the persona then emits no AUS signal. Best-effort."""
+        try:
+            from core.aus.store import load_aus_result
+            base["aus_result"] = await load_aus_result(
+                self.conn, application_id, tenant_id)
+        except Exception:
+            pass
+
     async def _attach_hmda_fields(
         self, base: dict, application_id: str, tenant_id: str
     ) -> None:
@@ -306,6 +319,8 @@ class ContextEnricher:
             "adverse_action_rule_trace":   None,
             # HMDA LAR source fields (RA-7C) — only for underwriting_decision.
             "hmda_fields":                 None,
+            # Parsed AUS/DU result (RA-AUS-A) — only for approval_routing.
+            "aus_result":                  None,
         }
 
         # Thresholds + fraud first, so they ride on every return path.
@@ -319,6 +334,8 @@ class ContextEnricher:
         elif decision_id == "underwriting_decision":
             await self._attach_adverse_action(base, tenant_id)
             await self._attach_hmda_fields(base, application_id, tenant_id)
+        elif decision_id == "approval_routing":
+            await self._attach_aus_result(base, application_id, tenant_id)
 
         try:
             rows = await self.conn.fetch(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from core.aus.du_parser import detect_aus_conflict
 from core.context_store import ContextBundle
 from core.normalizer.models import DecisionOutcome
 from core.policy_engine import PolicyDecision
@@ -113,9 +114,26 @@ class WorkflowRoutingAgent(LendingPersona):
                        f"below {conf_min:.0%} (Fannie B3-3.1-01)."),
             ))
 
+        # ── RA-AUS-A: DU vs Accord reconciliation (advisory, OUTCOME-NEUTRAL) ─
+        # If a DU response was ingested for this app, surface a conflict between
+        # DU's recommendation and Accord's underwriting outcome for human
+        # reconciliation (RA-AUS-B resolves it). No DU response -> no signal
+        # (not all lenders run DU). proposed_outcome is never changed here.
+        aus_result = ev.get("aus_result")
+        aus_conflict = detect_aus_conflict(aus_result, outcome_label)
+        if aus_conflict:
+            signals.append(make_signal(
+                "AUS_ACCORD_CONFLICT", aus_conflict["du_recommendation"],
+                direction=SignalDirection.CONTRADICTS, source="aus", weight=2.0,
+                notes=aus_conflict["message"],
+            ))
+
         return OfflineReasoning(
             output_payload={
                 "routing_target": target,
+                # RA-AUS-A — DU/AUS result + conflict (None unless DU ran).
+                "aus_result": aus_result,
+                "aus_accord_conflict": aus_conflict,
                 # RA-PERSONA-C: evidence provenance (advisory).
                 "evidence_populated": evidence_populated,
                 "route_evidence_confidence": (
