@@ -112,6 +112,39 @@ class LTVAssessmentAgent(LendingPersona):
 
         confidence = 0.9 if appraised > 0 and not appraisal_disputed else 0.6
 
+        # ── RA-PERSONA-B: evidence quality (advisory, OUTCOME-NEUTRAL) ────
+        # LTV rests on the appraised value; weak/conflicting collateral evidence
+        # makes the ratio itself uncertain. ev_asset_confidence is the proxy for
+        # appraisal/collateral evidence quality. Raise QUALITY signals +
+        # provenance but do NOT move the ltv-driven outcome above — so 16/16
+        # holds. Threshold is the catalogue documentation-confidence floor
+        # (Fannie B3-3.1-01, governed_by=agency) on every bundle; the constant
+        # is a catalogue-unreachable safety net only.
+        ev = first_object(bundle, "evidence") or {}
+        evidence_populated = bool(ev.get("evidence_populated"))
+        ev_asset_conf = ev.get("ev_asset_confidence")
+        evidence_any_conflicts = bool(ev.get("evidence_any_conflicts"))
+        conf_min = ev.get("income_confidence_min")
+        if conf_min is None:
+            conf_min = 0.75
+        evidence_threshold_trace = ev.get("income_confidence_threshold_trace")
+        if evidence_populated and evidence_any_conflicts:
+            signals.append(make_signal(
+                "LTV_EVIDENCE_CONFLICT", True,
+                direction=SignalDirection.CONTRADICTS, source="evidence",
+                notes=("Evidence conflict on file — collateral/LTV basis should "
+                       "be reviewed alongside the appraisal."),
+            ))
+        if (evidence_populated and ev_asset_conf is not None
+                and ev_asset_conf < conf_min):
+            signals.append(make_signal(
+                "LTV_EVIDENCE_WEAK", round(float(ev_asset_conf), 3),
+                direction=SignalDirection.CONTRADICTS, source="evidence",
+                notes=(f"LTV rests on low-confidence collateral evidence "
+                       f"{ev_asset_conf:.0%} (< {conf_min:.0%}, Fannie "
+                       "B3-3.1-01). Treat the ratio as uncertain."),
+            ))
+
         return OfflineReasoning(
             output_payload={
                 "ltv_ratio": round(ltv, 3) if ltv != float("inf") else None,
@@ -120,6 +153,17 @@ class LTVAssessmentAgent(LendingPersona):
                 "appraised_value": appraised,
                 "loan_amount": loan_amount,
                 "appraisal_disputed": appraisal_disputed,
+                # RA-PERSONA-B: collateral-evidence provenance behind LTV (advisory).
+                "evidence_populated": evidence_populated,
+                "ltv_evidence_confidence": (
+                    round(float(ev_asset_conf), 3)
+                    if ev_asset_conf is not None else None
+                ),
+                "ltv_evidence_conflicts": evidence_any_conflicts,
+                "ltv_evidence_governed_by": (
+                    (evidence_threshold_trace or {}).get("governed_by")
+                ),
+                "evidence_threshold_trace": evidence_threshold_trace,
             },
             proposed_outcome=outcome,
             confidence=confidence,

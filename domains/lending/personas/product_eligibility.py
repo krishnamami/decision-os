@@ -223,6 +223,33 @@ class ProductEligibilityAgent(LendingPersona):
                 f"({appr_result.gap_pct:.1f}%)."
             )
 
+        # ── RA-PERSONA-B: evidence quality (advisory, OUTCOME-NEUTRAL) ────
+        # Eligibility depends on accurate property/collateral evidence. Raise
+        # QUALITY signals + provenance but do NOT move the catalogue/collateral-
+        # driven outcome above — so 16/16 holds. Threshold is the catalogue
+        # documentation-confidence floor (Fannie B3-3.1-01, governed_by=agency)
+        # on every bundle; the constant is a catalogue-unreachable safety net.
+        ev = first_object(bundle, "evidence") or {}
+        evidence_populated = bool(ev.get("evidence_populated"))
+        evidence_any_conflicts = bool(ev.get("evidence_any_conflicts"))
+        evidence_overall_conf = ev.get("evidence_overall_confidence")
+        evidence_threshold_trace = ev.get("income_confidence_threshold_trace")
+        if ev and not evidence_populated:
+            signals.append(make_signal(
+                "PRODUCT_MISSING_PROPERTY_DOCS", True,
+                direction=SignalDirection.CONTRADICTS, source="evidence",
+                notes=("No evidence facts on file — eligibility cannot be "
+                       "confirmed from documentary evidence. Obtain property "
+                       "and qualifying documents."),
+            ))
+        elif evidence_populated and evidence_any_conflicts:
+            signals.append(make_signal(
+                "PRODUCT_EVIDENCE_CONFLICT", True,
+                direction=SignalDirection.CONTRADICTS, source="evidence",
+                notes=("Evidence conflict on file — verify the property/"
+                       "qualifying data before confirming eligibility."),
+            ))
+
         return OfflineReasoning(
             output_payload={
                 "eligible_products": eligible,
@@ -231,6 +258,17 @@ class ProductEligibilityAgent(LendingPersona):
                 "no_guideline_exceptions_required": not exceptions_required,
                 "eligible_with_exceptions": bool(exceptions_required),
                 "guideline_exception_required": bool(exceptions_required),
+                # RA-PERSONA-B: evidence provenance behind eligibility (advisory).
+                "evidence_populated": evidence_populated,
+                "product_evidence_confidence": (
+                    round(float(evidence_overall_conf), 3)
+                    if evidence_overall_conf is not None else None
+                ),
+                "product_evidence_conflicts": evidence_any_conflicts,
+                "product_evidence_governed_by": (
+                    (evidence_threshold_trace or {}).get("governed_by")
+                ),
+                "evidence_threshold_trace": evidence_threshold_trace,
                 # CO-C additions
                 "collateral_conditions": collateral_conditions,
                 "appraisal_status": appr_result.status,

@@ -114,6 +114,38 @@ class DTICalculationAgent(LendingPersona):
 
         confidence = max(0.4, min(0.95, income_confidence))
 
+        # ── RA-PERSONA-B: evidence quality (advisory, OUTCOME-NEUTRAL) ────
+        # DTI is only as reliable as the income evidence it rests on. Raise
+        # QUALITY signals + provenance but do NOT move the dti/income-confidence-
+        # driven outcome above — so 16/16 holds. Threshold is the catalogue
+        # documentation-confidence floor (income_documentation_confidence_min,
+        # Fannie B3-3.1-01, governed_by=agency) the enricher attaches to every
+        # bundle; the constant is a catalogue-unreachable safety net only.
+        ev = latest_object(bundle, "evidence") or {}
+        evidence_populated = bool(ev.get("evidence_populated"))
+        ev_income_conf = ev.get("ev_income_confidence")
+        ev_income_conflicts = bool(ev.get("ev_income_conflicts"))
+        conf_min = ev.get("income_confidence_min")
+        if conf_min is None:
+            conf_min = 0.75
+        evidence_threshold_trace = ev.get("income_confidence_threshold_trace")
+        if evidence_populated and ev_income_conflicts:
+            signals.append(make_signal(
+                "DTI_INCOME_CONFLICT", True,
+                direction=SignalDirection.CONTRADICTS, source="evidence",
+                notes=("Income evidence conflict across documents — DTI "
+                       "reliability affected. UW review of the income basis."),
+            ))
+        if (evidence_populated and ev_income_conf is not None
+                and ev_income_conf < conf_min):
+            signals.append(make_signal(
+                "DTI_INCOME_LOW_CONFIDENCE", round(float(ev_income_conf), 3),
+                direction=SignalDirection.CONTRADICTS, source="evidence",
+                notes=(f"DTI rests on low-confidence income evidence "
+                       f"{ev_income_conf:.0%} (< {conf_min:.0%}, Fannie "
+                       "B3-3.1-01). Treat the ratio as uncertain."),
+            ))
+
         return OfflineReasoning(
             output_payload={
                 "dti_ratio": round(dti, 3) if dti != float("inf") else None,
@@ -121,6 +153,17 @@ class DTICalculationAgent(LendingPersona):
                 "verified_income": verified_income_annual,
                 "monthly_obligations": round(total_obligations, 2),
                 "monthly_income": round(monthly_income, 2),
+                # RA-PERSONA-B: income-evidence provenance behind the DTI (advisory).
+                "evidence_populated": evidence_populated,
+                "dti_income_evidence_confidence": (
+                    round(float(ev_income_conf), 3)
+                    if ev_income_conf is not None else None
+                ),
+                "dti_income_evidence_conflicts": ev_income_conflicts,
+                "dti_income_evidence_governed_by": (
+                    (evidence_threshold_trace or {}).get("governed_by")
+                ),
+                "evidence_threshold_trace": evidence_threshold_trace,
             },
             proposed_outcome=outcome,
             confidence=round(confidence, 3),
