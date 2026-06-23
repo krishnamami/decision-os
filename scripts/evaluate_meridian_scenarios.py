@@ -24,6 +24,14 @@ load_dotenv()
 
 TENANT = "meridian"
 
+# RA-P0-B / IN-B: process the 16 apps for each decision CONCURRENTLY (they are
+# independent — distinct application_id, stateless shared agent). Capped by a
+# semaphore so the asyncpg pools (decision_store + edms, each max_size=10) are
+# never exhausted: each app's _process_one acquires/releases ~1-2 conns
+# sequentially for a single decision, so 4 concurrent apps ≈ 4-8 peak conns.
+# Override with --concurrency=N; --seq forces sequential (=1).
+CONCURRENCY = 4
+
 # Expected key decision per scenario. The prompt's IDs are mapped to the real
 # Decision OS decision_ids (credit_check->credit_assessment,
 # employment_verification->employment_reconciliation,
@@ -86,35 +94,69 @@ SCENARIO_NOTES = {
 def _u(): return os.environ["DATABASE_URL"].replace("+asyncpg", "").replace("postgresql+psycopg2", "postgresql")
 
 
+def _parse_args() -> tuple[int, bool]:
+    """--seq -> sequential (concurrency 1); --concurrency=N -> N; default
+    CONCURRENCY. --direct is accepted but a no-op here: this script ALREADY
+    drives _process_one directly off the DB state (no S3/SQS/scheduler to
+    bypass), so 'direct' is the only mode it has."""
+    concurrency = CONCURRENCY
+    direct = "--direct" in sys.argv
+    if "--seq" in sys.argv:
+        concurrency = 1
+    for a in sys.argv:
+        if a.startswith("--concurrency="):
+            try:
+                concurrency = max(1, int(a.split("=", 1)[1]))
+            except ValueError:
+                pass
+    return concurrency, direct
+
+
 async def main():
     import asyncpg
     from core.cron.runner import PersonaRunner, WAVES, WAVE_CONFIG, DECISION_DEFAULTS
 
+    concurrency, direct = _parse_args()
     runner = PersonaRunner(os.environ["DATABASE_URL"])
     conn = await asyncpg.connect(_u())
     try:
         rows = await conn.fetch(
             "SELECT application_id FROM entity_states WHERE tenant_id=$1 ORDER BY application_id", TENANT)
         app_ids = [r["application_id"] for r in rows]
-        print(f"Evaluating {len(app_ids)} meridian loans across {sum(len(w) for w in WAVES)} decisions...")
+        print(f"Evaluating {len(app_ids)} meridian loans across {sum(len(w) for w in WAVES)} "
+              f"decisions (direct{' [--direct]' if direct else ''}, concurrency={concurrency})...")
 
-        errors = 0
+        # Apps within a (wave, decision) are independent, so process them
+        # concurrently under a semaphore. Waves + decisions stay sequential so
+        # every dependency is written before its dependents read it.
+        sem = asyncio.Semaphore(concurrency)
+        errors: list[tuple] = []
+
+        async def _run_one(app_id, decision_id, cfg, d, agent):
+            async with sem:
+                try:
+                    await runner._process_one(
+                        app_id, decision_id, cfg["wave"], list(cfg["upstream"]),
+                        d.get("mode", "recommend"), d.get("risk_level", "medium"),
+                        int(d.get("sla_seconds", 30)), agent, TENANT)
+                    return None
+                except Exception as exc:  # noqa: BLE001
+                    return (app_id, decision_id, exc)
+
         for wave in WAVES:
             for decision_id in wave:
                 cfg = WAVE_CONFIG[decision_id]
                 d = DECISION_DEFAULTS.get(decision_id, {})
                 agent = runner._get_agent(decision_id)
-                for app_id in app_ids:
-                    try:
-                        await runner._process_one(
-                            app_id, decision_id, cfg["wave"], list(cfg["upstream"]),
-                            d.get("mode", "recommend"), d.get("risk_level", "medium"),
-                            int(d.get("sla_seconds", 30)), agent, TENANT)
-                    except Exception as exc:  # noqa: BLE001
-                        errors += 1
-                        if errors <= 5:
-                            print(f"  ! {app_id}/{decision_id}: {exc}")
-        print(f"decision_outputs written (errors: {errors})\n")
+                results = await asyncio.gather(
+                    *[_run_one(app_id, decision_id, cfg, d, agent) for app_id in app_ids]
+                )
+                for r in results:
+                    if r is not None:
+                        errors.append(r)
+                        if len(errors) <= 5:
+                            print(f"  ! {r[0]}/{r[1]}: {r[2]}")
+        print(f"decision_outputs written (errors: {len(errors)})\n")
 
         # ── Verify the 16 expected outcomes ──
         print("=== SCENARIO VERIFICATION ===")
