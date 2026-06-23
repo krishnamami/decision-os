@@ -162,6 +162,42 @@ class ContextEnricher:
         except Exception:
             pass
 
+    async def _attach_hmda_fields(
+        self, base: dict, application_id: str, tenant_id: str
+    ) -> None:
+        """Surface HMDA LAR source fields for underwriting_decision: demographic
+        + loan data from vw_hmda_reporting (which reads borrower JSONB + the
+        loan/subject_property tables) plus a few entity_states scalars. Demographic
+        data is for the LAR record ONLY — never used in any decision. Best-effort."""
+        try:
+            v = await self.conn.fetchrow(
+                """SELECT race, ethnicity, sex, age, loan_amount, loan_purpose,
+                          loan_type
+                   FROM vw_hmda_reporting WHERE application_id=$1""",
+                application_id,
+            )
+            es = await self.conn.fetchrow(
+                """SELECT interest_rate, qualifying_monthly,
+                          property->>'lien_status' AS lien_status,
+                          loan_terms->>'loan_type' AS lt_loan_type
+                   FROM entity_states WHERE application_id=$1 AND tenant_id=$2""",
+                application_id, tenant_id,
+            )
+            fields = dict(v) if v else {}
+            if es:
+                fields["interest_rate"] = es["interest_rate"]
+                fields["qualifying_monthly"] = es["qualifying_monthly"]
+                fields["lien_status"] = (
+                    1 if (es["lien_status"] or "").lower() in ("first", "first_lien", "1")
+                    else fields.get("lien_status")
+                )
+                if not fields.get("loan_type"):
+                    fields["loan_type"] = es["lt_loan_type"]
+            fields["tenant_id"] = tenant_id
+            base["hmda_fields"] = fields
+        except Exception:
+            pass
+
     async def _attach_adverse_action(self, base: dict, tenant_id: str) -> None:
         """Resolve the ECOA adverse-action notice deadline (Reg B §1002.9 = 30
         days) from the catalogue for underwriting_decision. Best-effort: the
@@ -268,6 +304,8 @@ class ContextEnricher:
             # Adverse-action deadline (RA-7B) — only for underwriting_decision.
             "adverse_action_days_max":     None,
             "adverse_action_rule_trace":   None,
+            # HMDA LAR source fields (RA-7C) — only for underwriting_decision.
+            "hmda_fields":                 None,
         }
 
         # Thresholds + fraud first, so they ride on every return path.
@@ -280,6 +318,7 @@ class ContextEnricher:
             await self._attach_atr_factors(base, application_id, tenant_id)
         elif decision_id == "underwriting_decision":
             await self._attach_adverse_action(base, tenant_id)
+            await self._attach_hmda_fields(base, application_id, tenant_id)
 
         try:
             rows = await self.conn.fetch(

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from core.compliance.adverse_action_engine import AdverseActionEngine
+from core.compliance.hmda_lar import HMDALARGenerator
 from core.context_store import ContextBundle
 from core.normalizer.models import DecisionOutcome
 from core.policy_engine import PolicyDecision
@@ -178,12 +179,28 @@ class SeniorUnderwritingAgent(LendingPersona):
                        f"(Reg B §1002.9)."),
             ))
 
+        # ── RA-7C: HMDA LAR record (Reg C, 12 CFR Part 1003) ─────────────
+        # One LAR record per application. Demographic data (ethnicity/race/sex/
+        # age) is COLLECTED + REPORTED but NEVER used here — the record is built
+        # AFTER the outcome is set, purely from data the enricher surfaced.
+        # Advisory artifact; proposed_outcome untouched → 16/16 holds.
+        hmda_fields = ev.get("hmda_fields") or {}
+        hmda_lar = HMDALARGenerator().generate_lar_record(
+            bundle.application_id, hmda_fields,
+            outcome=outcome.value,
+            adverse_action=adverse_action,
+            tenant_id=hmda_fields.get("tenant_id"),
+            decision_date=(adverse_action or {}).get("decision_date"),
+        )
+
         return OfflineReasoning(
             output_payload={
                 "underwriting_outcome": underwriting_outcome,
                 # RA-7B — adverse-action notice data (None unless declined).
                 "adverse_action": adverse_action,
                 "adverse_action_rule_trace": ev.get("adverse_action_rule_trace"),
+                # RA-7C — HMDA LAR record (always present; advisory).
+                "hmda_lar": hmda_lar,
                 # RA-PERSONA-C: evidence provenance (advisory).
                 "evidence_populated": evidence_populated,
                 "uw_evidence_confidence": (
