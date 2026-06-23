@@ -382,6 +382,85 @@ def extract_monthly_obligations(
     return result
 
 
+# ── Aggregator — RA-EX-B ─────────────────────
+# Property-type can come from the appraisal OR the URLA; the appraisal extractor
+# (extract_property_type) only reads APPRAISAL_URAR, so the aggregator falls
+# back to the URLA's property_type (the live APPRAISAL_URAR has no property_type
+# field — RA-EX-A).
+def _property_type(doc_map: dict) -> Optional[str]:
+    pt = extract_property_type(doc_map)
+    if pt:
+        return pt
+    if 'URLA_1003' in doc_map:
+        raw = first_val(get_fields(doc_map['URLA_1003']),
+                        ['property_type', 'prop_type', 'property_use'])
+        if raw:
+            n = str(raw).lower().strip()
+            return PROPERTY_TYPE_MAP.get(n, next(
+                (v for k, v in PROPERTY_TYPE_MAP.items() if k in n), n))
+    return None
+
+
+def build_golden_record(
+    doc_map: dict,
+    *,
+    student_loan_rate_pct: float = 1.0,
+    exclude_medical: bool = True,
+) -> dict:
+    """Aggregate the per-document primitives into ONE golden-record field set
+    derived purely from document_index extracted_fields (keyed by document_type
+    in ``doc_map``). Pure — NO DB writes.
+
+    This is the canonical document -> entity_states derivation the ingestion path
+    should use. Field names map to the LIVE extracted_fields (RA-EX-A): the
+    governing mid score is the 3-bureau middle of CREDIT_REPORT
+    equifax/experian/transunion_score (falling back to its mid_score); LTV is the
+    lesser-of rule over URLA loan_amount, APPRAISAL_URAR appraised_value, and the
+    URLA purchase_price. Returns None for any field with no source document, so
+    the caller never invents a value."""
+    cr = get_fields(doc_map['CREDIT_REPORT']) if 'CREDIT_REPORT' in doc_map else {}
+    urla = get_fields(doc_map['URLA_1003']) if 'URLA_1003' in doc_map else {}
+    appr = get_fields(doc_map['APPRAISAL_URAR']) if 'APPRAISAL_URAR' in doc_map else {}
+
+    def _n(v):
+        v = parse_amount(v)
+        return v if v else None
+
+    mid = compute_mid_score(
+        _n(cr.get('equifax_score')),
+        _n(cr.get('experian_score')),
+        _n(cr.get('transunion_score')),
+    )
+    if mid is None:
+        mid = _n(first_val(cr, ['mid_score', 'mid_credit_score']))
+
+    loan_amount = _n(first_val(urla, ['loan_amount']))
+    appraised = _n(first_val(appr, ['appraised_value'])
+                   or first_val(urla, ['appraised_value']))
+    purchase_price = extract_purchase_price(doc_map)
+    ltv = compute_ltv(loan_amount or 0, appraised or 0, purchase_price)
+
+    obligations = extract_monthly_obligations(
+        doc_map, student_loan_rate_pct=student_loan_rate_pct,
+        exclude_medical=exclude_medical,
+    )
+
+    return {
+        'mid_credit_score':   mid,
+        'appraised_value':    appraised,
+        'purchase_price':     purchase_price,
+        'loan_amount':        loan_amount,
+        'ltv':                ltv,
+        'flood_zone':         extract_flood_zone(doc_map),
+        'property_type':      _property_type(doc_map),
+        'occupancy_type':     extract_occupancy_type(doc_map),
+        'loan_purpose':       extract_loan_purpose(doc_map),
+        'loan_type':          first_val(urla, ['loan_type']),
+        'monthly_obligations': obligations['total_monthly_obligations'] or None,
+        'obligations_breakdown': obligations,
+    }
+
+
 # ── Unit tests ───────────────────────────────
 def _unit_test():
     """
