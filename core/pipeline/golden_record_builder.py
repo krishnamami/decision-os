@@ -202,29 +202,31 @@ def extract_property_type(
     return normalized
 
 
-# ── FIX 5 — purchase_price from URLA ─────────
+# ── FIX 5 — purchase_price (RA-EX-C: purchase agreement first) ──
+_PRICE_KEYS = ['purchase_price', 'sales_price', 'contract_price',
+              'property_value', 'subject_property_value',
+              'purchase_contract_price', 'contract_sale_price']
+
+
 def extract_purchase_price(
     doc_map: dict
 ) -> Optional[float]:
     """
-    Extract purchase price from loan application.
-    This is what the borrower agreed to pay.
-    NOT derived from appraised value.
+    Extract purchase price — the contract price the borrower agreed to pay.
+    NOT derived from appraised value. The PURCHASE_AGREEMENT is authoritative
+    (RA-EX-C); the URLA is the fallback. The live URLA has no purchase_price
+    field (RA-EX-A), so this is None until the purchase agreement is extracted.
     Citation: Fannie Mae B4-1.1-01
     """
-    if 'URLA_1003' not in doc_map:
-        return None
-    raw = first_val(
-        get_fields(doc_map['URLA_1003']),
-        ['purchase_price', 'sales_price',
-         'contract_price', 'property_value',
-         'subject_property_value',
-         'purchase_contract_price']
-    )
-    if raw is None:
-        return None
-    val = parse_amount(raw)
-    return val if val > 0 else None
+    for dt in ('PURCHASE_AGREEMENT', 'URLA_1003'):
+        if dt not in doc_map:
+            continue
+        raw = first_val(get_fields(doc_map[dt]), _PRICE_KEYS)
+        if raw is not None:
+            val = parse_amount(raw)
+            if val > 0:
+                return val
+    return None
 
 
 # ── ADD 1 — occupancy_type from URLA ─────────
@@ -382,6 +384,99 @@ def extract_monthly_obligations(
     return result
 
 
+# ── RA-EX-C — bank statement: large deposits / NSF / statement date ──
+# Doc types that carry bank-statement transactions.
+_BANK_DOC_TYPES = (
+    'BANK_STATEMENT_M1', 'BANK_STATEMENT_M2', 'BANK_STATEMENT_M3',
+    'BANK_STATEMENT',
+)
+# Flag any single credit >= this for UW review. The ACTUAL sourcing threshold
+# (large_deposit_threshold_pct of qualifying income) is applied later by the
+# asset_verification persona from the catalogue rule — this is only a capture
+# flag, not a decision.
+LARGE_DEPOSIT_FLAG_USD = 1000.0
+_NSF_KEYWORDS = ('nsf', 'overdraft', 'insufficient', 'returned item',
+                 'returned check', 'od fee')
+
+
+def _bank_txns(fields: dict) -> list:
+    txns = fields.get('transactions') or fields.get('deposits') or []
+    return txns if isinstance(txns, list) else []
+
+
+def extract_large_deposits(
+    doc_map: dict, *, flag_threshold: float = LARGE_DEPOSIT_FLAG_USD
+) -> list:
+    """Large credit transactions (>= flag_threshold) across bank statements.
+    Returns [{date, amount, description}]. Empty when no transaction detail is
+    available (the live BANK_STATEMENT_M1 carries balances only — RA-EX-A)."""
+    out: list = []
+    for dt in _BANK_DOC_TYPES:
+        if dt not in doc_map:
+            continue
+        f = get_fields(doc_map[dt])
+        # Pre-extracted list, if the extractor already produced one.
+        pre = f.get('large_deposits')
+        if isinstance(pre, list):
+            out.extend(d for d in pre if isinstance(d, dict))
+        for t in _bank_txns(f):
+            if not isinstance(t, dict):
+                continue
+            amt = parse_amount(t.get('amount'))
+            is_credit = (str(t.get('type', '')).lower() in ('credit', 'deposit')
+                         if t.get('type') is not None else amt > 0)
+            if is_credit and amt >= flag_threshold:
+                out.append({'date': t.get('date'),
+                            'amount': round(amt, 2),
+                            'description': t.get('description', '')})
+    return out
+
+
+def extract_nsf_count(doc_map: dict) -> int:
+    """Count of NSF / overdraft events across bank statements. 0 when no
+    transaction detail (or an explicit nsf_count field) is available."""
+    count = 0
+    for dt in _BANK_DOC_TYPES:
+        if dt not in doc_map:
+            continue
+        f = get_fields(doc_map[dt])
+        explicit = f.get('nsf_count')
+        if explicit is not None:
+            count += int(parse_amount(explicit))
+            continue
+        for t in _bank_txns(f):
+            desc = str(t.get('description', '') if isinstance(t, dict) else t).lower()
+            if any(k in desc for k in _NSF_KEYWORDS):
+                count += 1
+    return count
+
+
+def extract_statement_date(doc_map: dict) -> Optional[str]:
+    """Most recent bank-statement end date (ISO YYYY-MM-DD) for staleness
+    checks. None when unavailable."""
+    dates: list = []
+    for dt in _BANK_DOC_TYPES:
+        if dt not in doc_map:
+            continue
+        d = first_val(get_fields(doc_map[dt]),
+                      ['statement_date', 'statement_end_date', 'period_end',
+                       'ending_date', 'as_of_date', 'statement_period_end'])
+        if d:
+            dates.append(str(d)[:10])
+    return max(dates) if dates else None
+
+
+# ── RA-EX-C — credit report: full tradelines array ──
+def extract_tradelines(doc_map: dict) -> list:
+    """Per-line tradeline detail from the credit report (the array the RA-4B
+    TradelineAnalyzer needs). Empty when only a count is extracted (the live
+    CREDIT_REPORT carries tradeline_count, not the array — RA-EX-A)."""
+    if 'CREDIT_REPORT' not in doc_map:
+        return []
+    tl = get_fields(doc_map['CREDIT_REPORT']).get('tradelines')
+    return tl if isinstance(tl, list) else []
+
+
 # ── Aggregator — RA-EX-B ─────────────────────
 # Property-type can come from the appraisal OR the URLA; the appraisal extractor
 # (extract_property_type) only reads APPRAISAL_URAR, so the aggregator falls
@@ -445,6 +540,10 @@ def build_golden_record(
         exclude_medical=exclude_medical,
     )
 
+    # Purchase-agreement detail (RA-EX-C) — None until the doc is extracted.
+    pa = get_fields(doc_map['PURCHASE_AGREEMENT']) \
+        if 'PURCHASE_AGREEMENT' in doc_map else {}
+
     return {
         'mid_credit_score':   mid,
         'appraised_value':    appraised,
@@ -458,6 +557,20 @@ def build_golden_record(
         'loan_type':          first_val(urla, ['loan_type']),
         'monthly_obligations': obligations['total_monthly_obligations'] or None,
         'obligations_breakdown': obligations,
+        # RA-EX-C — the three closed gaps (empty/None until extraction provides
+        # the inputs; the live meridian fixtures don't carry them).
+        'large_deposits':     extract_large_deposits(doc_map),
+        'nsf_count':          extract_nsf_count(doc_map),
+        'statement_date':     extract_statement_date(doc_map),
+        'tradelines':         extract_tradelines(doc_map),
+        'close_date':         (first_val(pa, ['close_date', 'closing_date',
+                                              'expected_closing_date']) or None),
+        'seller_concessions_pct': _n(first_val(pa, ['seller_concessions_pct',
+                                                    'seller_concession_pct'])),
+        'seller_concessions_amt': _n(first_val(pa, ['seller_concessions_amt',
+                                                    'seller_concessions', 'seller_credits'])),
+        'earnest_money':      _n(first_val(pa, ['earnest_money',
+                                                'earnest_money_deposit'])),
     }
 
 
@@ -631,8 +744,54 @@ def _unit_test():
     print(f'  ✅ Monthly obligations: '
           f'${oblig["total_monthly_obligations"]:,.0f}/mo')
 
+    # Test 16: purchase_price from PURCHASE_AGREEMENT (authoritative)
+    doc_pa = {
+        'PURCHASE_AGREEMENT': {'extracted_fields': {
+            'purchase_price': '$612,500', 'close_date': '2026-07-15',
+            'seller_concessions_pct': 3.0, 'earnest_money': 12000}},
+        'URLA_1003': {'extracted_fields': {'purchase_price': '$600,000'}},
+    }
+    assert extract_purchase_price(doc_pa) == 612500.0, 'PA price wins'
+    print(f'  ✅ Purchase price (PA wins over URLA): $612,500')
+
+    # Test 17: large_deposits flag (> $1,000 credits)
+    doc_bank = {'BANK_STATEMENT_M1': {'extracted_fields': {
+        'statement_period_end': '2026-06-30',
+        'transactions': [
+            {'date': '2026-06-03', 'amount': 1500, 'type': 'credit', 'description': 'Wire in'},
+            {'date': '2026-06-10', 'amount': 200, 'type': 'credit', 'description': 'Refund'},
+            {'date': '2026-06-12', 'amount': 3000, 'type': 'debit', 'description': 'Rent'},
+            {'date': '2026-06-20', 'amount': 90, 'type': 'debit', 'description': 'NSF FEE returned item'},
+        ]}}}
+    ld = extract_large_deposits(doc_bank)
+    assert len(ld) == 1 and ld[0]['amount'] == 1500, f'large_deposits: {ld}'
+    print(f'  ✅ Large deposits (>$1k credit): {len(ld)}')
+
+    # Test 18: nsf_count from transaction descriptions
+    assert extract_nsf_count(doc_bank) == 1, 'nsf_count'
+    print(f'  ✅ NSF count: {extract_nsf_count(doc_bank)}')
+
+    # Test 19: statement_date (ISO end date)
+    assert extract_statement_date(doc_bank) == '2026-06-30', 'statement_date'
+    print(f'  ✅ Statement date: {extract_statement_date(doc_bank)}')
+
+    # Test 20: tradelines array passthrough
+    doc_cr2 = {'CREDIT_REPORT': {'extracted_fields': {'tradelines': [
+        {'creditor_name': 'Chase', 'account_type': 'revolving', 'current_balance': 1200}]}}}
+    tl = extract_tradelines(doc_cr2)
+    assert len(tl) == 1 and tl[0]['creditor_name'] == 'Chase', 'tradelines'
+    print(f'  ✅ Tradelines array: {len(tl)} line(s)')
+
+    # Test 21: build_golden_record surfaces the RA-EX-C fields
+    gr = build_golden_record({**doc_pa, **doc_bank, **doc_cr2})
+    assert gr['purchase_price'] == 612500.0
+    assert gr['nsf_count'] == 1 and len(gr['large_deposits']) == 1
+    assert gr['statement_date'] == '2026-06-30' and len(gr['tradelines']) == 1
+    assert gr['close_date'] == '2026-07-15' and gr['earnest_money'] == 12000.0
+    print(f'  ✅ build_golden_record RA-EX-C fields present')
+
     print(f'\n✅ All unit tests passed.')
-    print(f'   15/15 assertions correct.')
+    print(f'   21/21 assertions correct.')
     return True
 
 
