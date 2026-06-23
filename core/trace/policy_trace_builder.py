@@ -176,6 +176,13 @@ class PolicyTraceBuilder:
                 'result': 'pass' if score >= eff_credit else 'fail',
             })
 
+        # RA-5B: surface the RA-5A five-column rule disclosures (the per-rule
+        # Federal | Agency | Overlay | Applied | Citation view the personas emit
+        # into output_payload) as a flat list for the workbench.
+        rule_disclosures = await self._collect_rule_disclosures(
+            application_id, tenant_id
+        )
+
         return {
             'policy_version': '2026.01',
             'evaluated_at': datetime.now(timezone.utc).isoformat(),
@@ -187,7 +194,47 @@ class PolicyTraceBuilder:
             'evaluations': evaluations,
             'passes': sum(1 for e in evaluations if e['result'] == 'pass'),
             'fails': sum(1 for e in evaluations if e['result'] == 'fail'),
+            # RA-5B — per-rule three-layer disclosure (Architecture Rule 3).
+            'rule_disclosures': rule_disclosures,
+            'rule_disclosure_count': len(rule_disclosures),
         }
+
+    async def _collect_rule_disclosures(
+        self, application_id: str, tenant_id: str
+    ) -> list:
+        """Aggregate the RA-5A ``*_rule_trace`` five-column disclosures from each
+        current decision's output_payload (decision_outputs.context_snapshot)
+        into one flat list, each entry tagged with its decision_id. Reads the
+        latest version per decision. Best-effort: returns [] on any error."""
+        try:
+            rows = await self.conn.fetch('''
+                SELECT decision_id, context_snapshot
+                FROM decision_outputs d
+                WHERE application_id = $1 AND tenant_id = $2
+                  AND version = (
+                    SELECT MAX(version) FROM decision_outputs d2
+                    WHERE d2.application_id = d.application_id
+                      AND d2.decision_id = d.decision_id
+                      AND d2.tenant_id = d.tenant_id
+                  )
+            ''', application_id, tenant_id)
+        except Exception:
+            return []
+
+        disclosures: list[dict] = []
+        for r in rows:
+            cs = _jsonb(r['context_snapshot'])
+            if not isinstance(cs, dict):
+                continue
+            for key, trace in cs.items():
+                # The RA-5A expanded traces are the *_rule_trace dicts whose
+                # entries carry 'applied_value' (the five-column marker).
+                if not key.endswith('_rule_trace') or not isinstance(trace, dict):
+                    continue
+                for rule_name, entry in trace.items():
+                    if isinstance(entry, dict) and 'applied_value' in entry:
+                        disclosures.append({'decision_id': r['decision_id'], **entry})
+        return disclosures
 
     async def update_trace_policy(
         self,
