@@ -128,10 +128,12 @@ class CreditRiskAgent(LendingPersona):
         # runner loaded them through rule_loader; resolvers stay sync/DB-less).
         credit_rules_obj = latest_object(bundle, "credit_rules") or {}
         credit_rule_values = credit_rules_obj or None
-        credit_rule_trace = {
-            k: {"governed_by": v.get("governed_by"), "layers": v.get("layers")}
-            for k, v in credit_rules_obj.items()
-        } if credit_rules_obj else None
+        # RA-5A: flatten each rule's three layers into the workbench disclosure
+        # (Federal | Agency | Overlay | Applied | Citation + deltas + risk).
+        from core.catalogue.rule_loader import expand_rule_traces
+        credit_rule_trace = (
+            expand_rule_traces(credit_rules_obj) if credit_rules_obj else None
+        )
 
         if tradelines:
             from core.credit.tradeline_analyzer import TradelineAnalyzer

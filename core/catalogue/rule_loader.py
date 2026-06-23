@@ -478,10 +478,82 @@ async def load_rules(
     return result
 
 
+# ─────────────────────────────────────────────────────────────────────
+# RA-5A — policy transparency. Flatten a resolved-rule entry's three
+# layers into the workbench disclosure shape (Architecture Rule 3:
+# Federal | Agency | Overlay | Applied | Citation). PURE — no DB.
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _num(x: Any) -> Optional[float]:
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return None
+
+
+def expand_rule_trace(rule_name: str, entry: dict) -> dict:
+    """Flatten one ``load_*_rules`` entry ({applied|value, governed_by, layers})
+    into the workbench three-layer view. Pure — uses only the layers dict the
+    loader already resolved via get_rule.
+
+    overlay_rules carries no citation column, so the overlay layer exposes its
+    ``direction`` (stricter / looser vs the agency floor) instead of a citation.
+    risk_level is the policy posture of the APPLIED value vs the agency floor:
+    at-or-stricter-than agency = GREEN; a lender overlay LOOSER than the agency
+    floor (or a safe_default fallback) = AMBER — the workbench's review flag."""
+    layers = (entry or {}).get("layers") or {}
+    reg = layers.get("regulatory") or {}
+    ag = layers.get("agency") or {}
+    ov = layers.get("overlay") or {}
+    applied = entry.get("applied", entry.get("value"))
+    governed_by = entry.get("governed_by")
+
+    out = {
+        "rule_name":        rule_name,
+        "applied_value":    applied,
+        "governed_by":      governed_by,
+        "federal_value":    reg.get("value"),
+        "federal_citation": reg.get("citation") or reg.get("authority"),
+        "agency_value":     ag.get("value"),
+        "agency_citation":  ag.get("citation"),
+        "overlay_value":    ov.get("value"),
+        "overlay_direction": ov.get("direction"),  # stricter / looser vs agency
+    }
+    a, f, g = _num(applied), _num(reg.get("value")), _num(ag.get("value"))
+    if a is not None and f is not None:
+        out["delta_applied_vs_federal"] = round(a - f, 2)
+    if a is not None and g is not None:
+        out["delta_applied_vs_agency"] = round(a - g, 2)
+
+    # Policy posture of the applied value vs the agency floor.
+    if governed_by == "overlay" and ov.get("direction") == "looser":
+        out["risk_level"] = "AMBER"      # lender looser than agency — review
+    elif governed_by in ("safe_default", "SAFE_DEFAULT") or entry.get("using_default"):
+        out["risk_level"] = "AMBER"      # not catalogued — fallback in use
+    else:
+        out["risk_level"] = "GREEN"      # at / stricter-than the agency floor
+    return out
+
+
+def expand_rule_traces(traces: Optional[dict]) -> dict:
+    """Map expand_rule_trace over a ``{rule_name: entry}`` trace dict (the shape
+    load_*_rules / its 'trace' returns). Returns {} for an empty/None input."""
+    if not traces:
+        return {}
+    return {
+        name: expand_rule_trace(name, entry)
+        for name, entry in traces.items()
+        if isinstance(entry, dict)
+    }
+
+
 __all__ = [
     'SAFE_DEFAULTS',
     'OVERLAY_ALIASES',
     'get_rule',
     'get_catalogue_value',
     'load_rules',
+    'expand_rule_trace',
+    'expand_rule_traces',
 ]

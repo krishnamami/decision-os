@@ -166,7 +166,9 @@ class AssetVerificationAgent(LendingPersona):
         # runner loaded them through rule_loader; resolvers stay sync/DB-less).
         asset_rules_obj = latest_object(bundle, "asset_rules") or {}
         asset_rule_values = asset_rules_obj.get("values")
-        asset_rule_trace = asset_rules_obj.get("trace")
+        # RA-5A: workbench three-layer disclosure per rule.
+        from core.catalogue.rule_loader import expand_rule_traces
+        asset_rule_trace = expand_rule_traces(asset_rules_obj.get("trace"))
 
         if asset_accounts:
             from core.assets.asset_resolver import AssetResolver

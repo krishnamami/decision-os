@@ -70,7 +70,9 @@ class TitleAssessmentAgent(LendingPersona):
         # RA-4D: catalogue-resolved lien treatments injected via the bundle
         # (the runner loaded them through rule_loader; resolver stays sync).
         lien_obj = first_object(bundle, "lien_rules") or {}
-        lien_rule_trace = lien_obj.get("trace")
+        # RA-5A: workbench three-layer disclosure per lien rule.
+        from core.catalogue.rule_loader import expand_rule_traces
+        lien_rule_trace = expand_rule_traces(lien_obj.get("trace"))
         resolution = LienResolver(lien_obj.get("values")).resolve_all(encumbrances)
         overall = resolution["overall_status"]          # clear/conditions/block/fatal_block
         blocking = resolution["blocking_count"]

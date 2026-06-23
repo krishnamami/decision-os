@@ -191,7 +191,9 @@ class ProductEligibilityAgent(LendingPersona):
         # (the runner loaded them through rule_loader; resolvers stay sync).
         collateral_obj = first_object(bundle, "collateral_rules") or {}
         collateral_values = collateral_obj.get("values")
-        collateral_rule_trace = collateral_obj.get("trace")
+        # RA-5A: workbench three-layer disclosure per rule.
+        from core.catalogue.rule_loader import expand_rule_traces
+        collateral_rule_trace = expand_rule_traces(collateral_obj.get("trace"))
 
         prop_result = PropertyEligibilityResolver(collateral_values).resolve(
             property_type=app.get("property_type") or "sfr",
