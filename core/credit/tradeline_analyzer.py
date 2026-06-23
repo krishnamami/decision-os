@@ -196,27 +196,39 @@ class TradelineAnalyzer:
                     })
 
             elif sl_type in ('ibr', 'paye', 'save'):
-                if ibr_payment > 0:
-                    computed_payment = ibr_payment
-                    flags.append(
-                        'student_loan_ibr_actual'
-                    )
-                else:
-                    # IBR payment is $0 — use 1%
-                    computed_payment = round(
-                        balance * 0.01, 2
-                    )
-                    flags.append(
-                        'student_loan_ibr_zero_'
-                        '1pct_rule'
-                    )
+                # IBR/PAYE/SAVE: the documented income-driven payment IS the
+                # obligation, even when $0 (Fannie B3-6-05) — use the actual
+                # ibr_payment, never 1% of balance. The 1% proxy applies only to
+                # DEFERRED loans with no payment plan (handled above via the
+                # catalogue rate); substituting it here would overstate DTI.
+                computed_payment = ibr_payment
+                flags.append('student_loan_ibr_actual')
+                if ibr_payment == 0:
+                    conditions.append({
+                        'code': 'CREDIT_STUDENT_IBR_ZERO',
+                        'text': (
+                            f'Student loan on income-driven plan ({sl_type}) '
+                            f'with documented $0 payment: {creditor}. Per Fannie '
+                            f'Mae B3-6-05 the actual $0 payment is used for DTI '
+                            f'(not 1% of balance). Verify the IDR documentation.'
+                        ),
+                        'blocks': False,
+                        'loe':    False,
+                    })
 
             elif sl_type == 'pslf':
-                # PSLF: use actual payment
+                # PSLF: use the actual payment; a documented $0 PSLF payment is
+                # excluded from DTI entirely (Fannie B3-6-05).
                 computed_payment = payment
-                flags.append(
-                    'student_loan_pslf_actual'
-                )
+                if payment == 0:
+                    included = False
+                    exclusion_reason = (
+                        'PSLF with documented $0 payment — excluded from DTI '
+                        'per Fannie Mae B3-6-05'
+                    )
+                    flags.append('student_loan_pslf_excluded')
+                else:
+                    flags.append('student_loan_pslf_actual')
 
         # ── RULE 4: Months remaining ───────────
         elif months_rem is not None \
