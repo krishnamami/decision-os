@@ -202,7 +202,9 @@ Storage:         core/storage/  s3_keys.py (MISMO key builder) + s3_client.py
                  (async boto3 wrapper, graceful no-AWS no-op)        (RA-P0-A ✅)
 Income model:    core/income/  income_aggregator.py (get_qualifying_income /
                  get_employment_gaps + INCOME_TYPES/BORROWER_ROLES consts) +
-                 w2_income_resolver.py (W2 base salary, sync/DB-less) (INC-A/B ✅)
+                 w2_income_resolver.py (W2 base salary) + retirement_income_resolver.py
+                 (SS/pension/asset-depletion/investment) + alimony_resolver.py
+                 (alimony/child support). All sync/DB-less.    (INC-A→F ✅)
 ```
 
 ---
@@ -303,6 +305,25 @@ PATH 2 (real tenants post-ingestion): income_sources rows -> get_qualifying_inco
   `VARIABLE_INCOME_TODO`. ENRICHER TODO: it does not yet attach W2/PAYSTUB
   extracted_fields to the income bundle, so the doc-level resolver runs on PATH 2
   only.
+- **INC-E — retirement/SS/asset-depletion/investment** (`retirement_income_resolver.py`):
+  qualify_ss (1.25× gross-up + 3yr continuance), qualify_pension, qualify_asset_depletion
+  (eligible-with-haircuts / 360), qualify_dividends_interest (2yr avg). 8 catalogue
+  rules (Fannie B3-3.1-09). Asset depletion runs on REAL data — the enricher's
+  `_attach_income_entity` surfaces `entity_states.total_liquid_assets` to the income
+  bundle; SS/pension/investment are foundation-only (no source docs). Advisory →
+  `output_payload.retirement_income_analysis`.
+- **INC-F — alimony/child support** (`alimony_resolver.py`):
+  qualify_alimony_received / qualify_child_support_received (3yr continuance gate),
+  treat_alimony_paid (monthly_debt | reduce_income per catalogue) / treat_child_support_paid
+  (always monthly_debt). 3 catalogue rules (B3-3.1-09 / B3-6-05). Input = DIVORCE_DECREE
+  Vision fields (RA-EX-D); meridian has no decree docs → all methods not_applicable
+  (foundation). Advisory → `output_payload.alimony_child_support_analysis`. DTI breakout
+  of alimony/child-support PAID is deferred to OB-A/B (an obligations resolver) — not
+  wired into dti_calculation yet.
+- All four income resolvers share ONE `income_rules` bundle key (w2_income_resolver.
+  INCOME_RULE_KEYS aggregates employment + retirement + alimony keys; the runner's
+  income_verification branch loads them all). INC-C/D (variable income, INC-G+) and
+  document→income_sources population remain extraction-prompt follow-ups.
 
 ---
 
@@ -380,9 +401,9 @@ Notes:
 ## Catalogue State (verified 2026-06-24)
 
 ```
-agency_guidelines:   84 rows  (Fannie 61 / FHA 13 / VA 8 / Freddie 2)
-                     (+2 SE ownership thresholds Gap c f35ae33;
-                      +1 employment_history_months_required INC-B 5e348d2)
+agency_guidelines:   95 rows  (Fannie 72 / FHA 13 / VA 8 / Freddie 2)
+                     (+2 SE ownership Gap c; +1 employment INC-B;
+                      +8 retirement/SS/depletion INC-E; +3 alimony/support INC-F)
 regulatory_rules:    23 rows
 overlay_rules:        6 rows  (Meridian 4 / Summit 2)
 verify gate:         59/59 exit 0   (scripts/verify_catalogue_ready.py)
