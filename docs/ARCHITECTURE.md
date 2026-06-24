@@ -205,6 +205,9 @@ Income model:    core/income/  income_aggregator.py (get_qualifying_income /
                  w2_income_resolver.py (W2 base salary) + retirement_income_resolver.py
                  (SS/pension/asset-depletion/investment) + alimony_resolver.py
                  (alimony/child support). All sync/DB-less.    (INC-A→F ✅)
+Obligations:     core/obligations/  obligation_resolver.py (ObligationResolver —
+                 per-type monthly debt: student/alimony/installment/revolving/
+                 heloc/business-debt/rental-offset; sync/DB-less)   (OB-A/B ✅)
 ```
 
 ---
@@ -325,6 +328,32 @@ PATH 2 (real tenants post-ingestion): income_sources rows -> get_qualifying_inco
   income_verification branch loads them all). INC-C/D (variable income, INC-G+) and
   document→income_sources population remain extraction-prompt follow-ups.
 
+### Obligations (OB-A / OB-B)
+
+`core/obligations/obligation_resolver.py:ObligationResolver` decomposes monthly
+debt obligations by type (Fannie B3-6-02 / B3-6-05 / B3-3.1-08), sync + DB-less,
+catalogue-driven (SAFE_DEFAULTS fallback). `resolve(obligations)` → total +
+per-type breakdown + excluded list. Routes:
+- **student_loan** — uses the PRE-COMPUTED TradelineAnalyzer payment (deferred-1%/
+  IBR/PSLF, RA-4I); never recomputed.
+- **alimony_paid / child_support_paid** — delegates to the INC-F AlimonyChildSupportResolver.
+- **installment** — actual, else balance/months; excluded ≤ months_remaining_exclusion (10).
+- **revolving** — reported min, else revolving_payment_factor_pct (5%) of balance.
+- **heloc** — actual, else heloc_payment_factor_pct (1%) of balance/limit (OB-A).
+- **business_debt** (OB-B) — EXCLUDED only if business-paid ≥ business_debt_exclusion_months
+  (12) with no 30-day delinquency; else INCLUDED + docs_needed. is_business_paying/
+  months_business_paid absent today → default to included.
+- **rental_property** (OB-B) — net = rental_net_monthly − pitia_monthly (B3-3.1-08);
+  ≥0 positive offset (not a DTI obligation), <0 shortfall added. Both inputs absent
+  today → not_applicable.
+
+Wired into dti_calculation via the runner's `obligation_rules` bundle key →
+`output_payload.obligation_breakdown` (ADVISORY). The DTI ratio (dti/dti_front/
+dti_back) is UNCHANGED — folding the breakdown into the ratio is a later OB slice.
+Meridian's dti bundle carries only the aggregate existing_debt_obligations (no
+per-type list), so the breakdown is foundation there; live per-obligation inputs
+(tradelines, decree, per-property PITIA) + RA-4G rental wiring flow on PATH 2.
+
 ---
 
 ## Persona Status
@@ -401,9 +430,10 @@ Notes:
 ## Catalogue State (verified 2026-06-24)
 
 ```
-agency_guidelines:   95 rows  (Fannie 72 / FHA 13 / VA 8 / Freddie 2)
-                     (+2 SE ownership Gap c; +1 employment INC-B;
-                      +8 retirement/SS/depletion INC-E; +3 alimony/support INC-F)
+agency_guidelines:   98 rows  (Fannie 75 / FHA 13 / VA 8 / Freddie 2)
+                     (Gap c +2; INC-B +1; INC-E +8; INC-F +3; OB-A +2
+                      revolving/heloc factors; OB-B +1 business_debt_exclusion;
+                      OB-A also updated student_loan_deferred_rate 1.0->0.5, gap d)
 regulatory_rules:    23 rows
 overlay_rules:        6 rows  (Meridian 4 / Summit 2)
 verify gate:         59/59 exit 0   (scripts/verify_catalogue_ready.py)
@@ -573,8 +603,10 @@ From RA-6A (all 8 checks PASS; these are documented, not blocking the demo):
     gate 50→25 and changed behavior). Value-equivalent — 16/16 holds. This was
     the LAST hardcoded lending value; RULE 1 now has ZERO exceptions.
 
-(d) Student-loan deferred rate: catalogue seeds 1.0%. Current Fannie B3-6-05
-    uses a 0.5% floor for $0 / unreported payments. Review before production.
+(d) CLOSED (OB-A, commit 1c7b2b4). student_loan_deferred_rate_pct updated
+    1.0 -> 0.5 per current Fannie B3-6-05 (0.5% floor for $0/unreported deferred
+    payments). Catalogue-driven (tradeline_analyzer reads value/100); 0 meridian
+    apps carry student-loan tradelines so 16/16 held.
 
 (e) months_remaining_exclusion is wired (RA-4J) but unreachable by the 16
     Meridian scenarios (no app carries months_remaining data).
