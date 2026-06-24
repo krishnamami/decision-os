@@ -72,6 +72,7 @@ SAFE_DEFAULTS = {
     'rental_vacancy_factor_pct':       25,
     'se_income_years_required':        2,
     'se_declining_use_lower_year':     True,
+    'employment_history_months_required': 24,   # INC-B (Fannie B3-3.1-01)
     # Property
     'ltv_purchase_max':                97,
     'ltv_cashout_max':                 80,

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from core.context_store import ContextBundle
+from core.income.w2_income_resolver import VARIABLE_INCOME_TODO, W2IncomeResolver
 from core.normalizer.models import DecisionOutcome
 from core.policy_engine import PolicyDecision
 from core.trace import SignalDirection
@@ -322,11 +323,50 @@ class IncomeVerificationAgent(LendingPersona):
                        f"{(ev_emp_conf or 0):.0%}. Verify employment history."),
             ))
 
+        # ── INC-B: W2 base-income analysis (ADVISORY, output_payload only) ──
+        # The W2IncomeResolver annotates the income picture with method/citation
+        # and the catalogue-driven 2-year employment-history requirement for the
+        # workbench. It does NOT change proposed_outcome or the verified_income
+        # figure the persona reports — meridian keeps its seeded qualifying_monthly
+        # (PATH 1). The doc-level resolver (qualify_from_w2_doc / qualify_from_
+        # paystub) runs on the real-tenant PATH 2 once the enricher attaches
+        # W2_CURRENT / PAYSTUB_CURRENT extracted_fields (not attached today —
+        # ENRICHER TODO). Resolver is sync/DB-less; rules fall back to SAFE_DEFAULTS.
+        w2_resolver = W2IncomeResolver(rules=None)
+        emp_for_history = {}
+        for rec in reconciled_employers:
+            if isinstance(rec, dict):
+                ps = (rec.get("period_start") or rec.get("start_date")
+                      or rec.get("employment_start"))
+                if ps:
+                    emp_for_history = {"period_start": ps}
+                    break
+        employment_history = w2_resolver.check_employment_history(emp_for_history)
+        income_analysis = {
+            "resolver": "W2IncomeResolver",
+            "scope": "base salary only (W2 box1 / paystub gross)",
+            "income_method": income_method,
+            "qualifying_monthly_reported": verified,
+            "employment_history": employment_history,
+            "variable_income_todo": VARIABLE_INCOME_TODO,
+            "data_path": {
+                "meridian": "seeded entity_states.qualifying_monthly (PATH 1, unchanged)",
+                "real_tenant": "income_sources via INC-A pipeline (PATH 2)",
+            },
+            "doc_fields_attached": False,
+            "enricher_todo": (
+                "Attach W2_CURRENT / PAYSTUB_CURRENT extracted_fields to the income "
+                "bundle so qualify_from_w2_doc / qualify_from_paystub run on PATH 2."
+            ),
+        }
+
         return OfflineReasoning(
             output_payload={
                 "verified_income": verified,
                 "income_confidence_score": round(confidence_score, 3),
                 "employment_type": employment_type,
+                # INC-B — advisory W2 base-income analysis (additive).
+                "income_analysis": income_analysis,
                 # RULE 5 — evidence resolution visible to auditors.
                 "income_source": income_source,
                 "income_method": income_method,
