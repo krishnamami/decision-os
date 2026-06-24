@@ -441,6 +441,15 @@ async def upload_document(
             result = await ingest_document(
                 conn, application_id, tenant_id, doc_type, file_bytes,
             )
+            # ── RA-P0-A: persist to S3 (MISMO-aligned, best-effort) ──────
+            # Additive + non-blocking: extraction already succeeded above. When
+            # AWS is not configured s3.put returns False and we leave s3_key as-is
+            # — S3 is never a hard dependency of the upload flow.
+            s3_stored = await _store_in_s3(
+                conn, tenant_id, application_id, doc_type,
+                result["document_id"], file.filename or f"{doc_type}",
+                file_bytes, result["extraction"].fields,
+            )
     except ValueError as exc:
         # meridian guard / validation -> 422 (not a server error)
         raise HTTPException(422, str(exc))
@@ -458,4 +467,36 @@ async def upload_document(
             "warnings": ext.warnings,
         },
         "entity_states_written": result["golden_written"],
+        "s3_stored": s3_stored,
     }
+
+
+async def _store_in_s3(
+    conn, tenant_id: str, application_id: str, doc_type: str,
+    document_id: str, filename: str, file_bytes: bytes, fields: dict,
+) -> bool:
+    """Store the raw file + extracted fields under their canonical MISMO keys and
+    stamp document_index.s3_key with the raw-object key. Best-effort: returns True
+    only when the raw object was actually stored (S3 configured). Never raises —
+    S3 must not break the upload flow."""
+    try:
+        from core.storage.s3_client import s3
+        from core.storage.s3_keys import doc_processed_key, doc_raw_key
+
+        raw_key = doc_raw_key(tenant_id, application_id, doc_type, filename)
+        stored = await s3.put(raw_key, file_bytes, content_type="application/pdf")
+        if not stored:
+            return False  # S3 not configured -> leave s3_key untouched
+
+        await s3.put(
+            doc_processed_key(tenant_id, application_id, doc_type),
+            json.dumps(fields).encode(),
+            content_type="application/json",
+        )
+        await conn.execute(
+            "UPDATE document_index SET s3_key=$1 WHERE document_id=$2",
+            raw_key, document_id,
+        )
+        return True
+    except Exception:
+        return False
