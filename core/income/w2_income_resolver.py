@@ -46,10 +46,16 @@ VARIABLE_INCOME_TODO = (
     "prompt before INC-B variable income."
 )
 
-# Catalogue rule names this resolver reads through rule_loader (INC-B followup).
+# Catalogue rule names the income personas read through rule_loader. The W2
+# resolver uses employment_history_months_required (INC-B); the INC-E retirement
+# resolver's keys ride on the SAME bundle key (income_rules) so one runner load
+# covers all income rules. Resolvers remain SEPARATE modules — only the key list
+# is unified here.
+from core.income.retirement_income_resolver import RETIREMENT_INCOME_RULE_KEYS
+
 INCOME_RULE_KEYS = [
     "employment_history_months_required",
-]
+] + RETIREMENT_INCOME_RULE_KEYS
 
 
 async def load_income_rules(conn, tenant_id: str, agency: str = "fannie") -> dict:

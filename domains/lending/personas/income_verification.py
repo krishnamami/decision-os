@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from core.context_store import ContextBundle
+from core.income.retirement_income_resolver import RetirementIncomeResolver
 from core.income.w2_income_resolver import VARIABLE_INCOME_TODO, W2IncomeResolver
 from core.normalizer.models import DecisionOutcome
 from core.policy_engine import PolicyDecision
@@ -367,6 +368,35 @@ class IncomeVerificationAgent(LendingPersona):
             ),
         }
 
+        # ── INC-E: retirement / SS / asset-depletion / investment (ADVISORY) ──
+        # Catalogue-driven (RetirementIncomeResolver reads the income_rules
+        # injected above). Asset depletion runs on REAL entity_states.
+        # total_liquid_assets (attached by the enricher); SS/pension/investment
+        # have no source docs yet → foundation only (advisory, no input → 0).
+        # output_payload only; proposed_outcome + verified_income UNCHANGED.
+        retire_resolver = RetirementIncomeResolver(rules=income_rule_values)
+        total_liquid_assets = ev.get("total_liquid_assets")
+        asset_depletion = retire_resolver.qualify_asset_depletion({
+            "cash_savings": float(total_liquid_assets or 0),
+            "retirement_assets": 0,
+            "equity_assets": 0,
+            "down_payment_used": 0,
+            "closing_costs_used": 0,
+        })
+        retirement_income_analysis = {
+            "resolver": "RetirementIncomeResolver",
+            "scope": ("asset_depletion runs on real total_liquid_assets; "
+                      "SS/pension/investment are foundation-only (no source docs)"),
+            "asset_depletion": asset_depletion,
+            "total_liquid_assets": total_liquid_assets,
+            "rule_trace": income_rules_obj.get("trace"),
+            "extraction_todo": (
+                "SS/pension/IRA/dividend income need a separate extraction prompt "
+                "(SSA_AWARD_LETTER, PENSION/1099-R, 1099-DIV/INT) before qualify_ss "
+                "/ qualify_pension / qualify_dividends_interest run on live data."
+            ),
+        }
+
         return OfflineReasoning(
             output_payload={
                 "verified_income": verified,
@@ -374,6 +404,8 @@ class IncomeVerificationAgent(LendingPersona):
                 "employment_type": employment_type,
                 # INC-B — advisory W2 base-income analysis (additive).
                 "income_analysis": income_analysis,
+                # INC-E — advisory retirement/SS/asset-depletion/investment (additive).
+                "retirement_income_analysis": retirement_income_analysis,
                 # RULE 5 — evidence resolution visible to auditors.
                 "income_source": income_source,
                 "income_method": income_method,

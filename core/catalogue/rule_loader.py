@@ -73,6 +73,15 @@ SAFE_DEFAULTS = {
     'se_income_years_required':        2,
     'se_declining_use_lower_year':     True,
     'employment_history_months_required': 24,   # INC-B (Fannie B3-3.1-01)
+    # INC-E — retirement / SS / asset-depletion / investment (Fannie B3-3.1-09)
+    'ss_non_taxable_gross_up_factor':            1.25,
+    'ss_continuance_months_required':            36,
+    'retirement_continuance_months_required':    36,
+    'asset_depletion_divisor_months':            360,
+    'asset_depletion_retirement_haircut_pct':    70,
+    'asset_depletion_cash_haircut_pct':          100,
+    'asset_depletion_equity_haircut_pct':        70,
+    'dividend_interest_history_months_required': 24,
     # Property
     'ltv_purchase_max':                97,
     'ltv_cashout_max':                 80,

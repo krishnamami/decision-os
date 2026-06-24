@@ -162,6 +162,23 @@ class ContextEnricher:
         except Exception:
             pass
 
+    async def _attach_income_entity(
+        self, base: dict, application_id: str, tenant_id: str
+    ) -> None:
+        """INC-E: surface entity_states.total_liquid_assets to income_verification
+        so the asset-depletion resolver can run on real data. Best-effort + read-
+        only; advisory output only (proposed_outcome untouched)."""
+        try:
+            es = await self.conn.fetchrow(
+                """SELECT total_liquid_assets FROM entity_states
+                   WHERE application_id=$1 AND tenant_id=$2""",
+                application_id, tenant_id,
+            )
+            if es and es["total_liquid_assets"] is not None:
+                base["total_liquid_assets"] = float(es["total_liquid_assets"])
+        except Exception:
+            pass
+
     async def _attach_aus_result(
         self, base: dict, application_id: str, tenant_id: str
     ) -> None:
@@ -325,6 +342,8 @@ class ContextEnricher:
             # Parsed AUS results — only for approval_routing.
             "aus_result":                  None,   # DU (RA-AUS-A)
             "aus_result_lp":               None,   # LP (RA-AUS-C)
+            # INC-E — only for income_verification (asset depletion input).
+            "total_liquid_assets":         None,
         }
 
         # Thresholds + fraud first, so they ride on every return path.
@@ -340,6 +359,8 @@ class ContextEnricher:
             await self._attach_hmda_fields(base, application_id, tenant_id)
         elif decision_id == "approval_routing":
             await self._attach_aus_result(base, application_id, tenant_id)
+        elif decision_id == "income_verification":
+            await self._attach_income_entity(base, application_id, tenant_id)
 
         try:
             rows = await self.conn.fetch(
