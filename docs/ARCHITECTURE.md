@@ -164,19 +164,43 @@ same transaction. The memory bundle is the source of truth during a live run;
 the PG bundle is the audit record (never read during a live run). Replay reads
 from `persona_bundles` directly — no view, no enricher.
 
-**RULE 11 — RESOLVER OUTPUT STANDARD (every resolver method)**
-Every resolver method that returns a findings dict MUST include:
-- `'data_source'` — where each input comes from (e.g. `"CREDIT_REPORT.tradelines"`,
-  `"entity_states.total_liquid_assets"`, `"DIVORCE_DECREE Vision (RA-EX-D)"`).
-- `'missing_inputs'` — the list of fields the method needs but that are NOT
-  extractable today (empty `[]` when all inputs are present).
-Never silently assume data is present: a missing input must surface in
-`missing_inputs` and degrade to a documented default / `not_applicable`, never a
-silent guess. This makes every advisory result auditable and makes the PATH-2
-extraction/wiring gap explicit to the UW workbench. Reference implementation:
-`core/obligations/obligation_resolver.py` (OB-B). Standard for ALL new/extended
-resolver methods; existing resolvers (asset/credit/income/...) adopt it
-incrementally as they are next touched — not a blanket retrofit.
+**RULE 11 — RESOLVER OUTPUT STANDARD**
+Every resolver method that returns a findings dict MUST include `'data_source'`
+and `'missing_inputs'`. See the **Resolver Output Standard** section below.
+
+---
+
+## Resolver Output Standard (RULE 11)
+
+Every resolver method that returns a findings dict MUST include two provenance
+keys, so every advisory result is auditable and the data gaps are explicit:
+
+- `'data_source'` — where each input came from, e.g. `"CREDIT_REPORT.tradelines"`,
+  `"entity_states.total_liquid_assets"`, `"DIVORCE_DECREE Vision (RA-EX-D)"`.
+- `'missing_inputs'` — the fields the method needs but that are NOT extractable
+  today; `[]` when every input is present.
+
+**Principle — never silently assume data is present.** A missing input MUST
+surface in `missing_inputs` and the method MUST degrade to a documented default /
+`not_applicable` — never a silent guess or an assumed value. This makes the
+PATH-2 extraction/wiring gap explicit on the UW workbench rather than hidden
+behind a fabricated number.
+
+Reference implementation — `core/obligations/obligation_resolver.py` (OB-B):
+
+```
+{
+  "type": "business_debt", "monthly_obligation": 600.0, "included": True,
+  "citation": "Fannie B3-3.4-02",
+  "data_source": "CREDIT_REPORT.tradelines",
+  "missing_inputs": ["is_business_paying", "months_business_paid"],
+  "docs_needed": ["12 months cancelled checks / business bank statements ..."],
+}
+```
+
+Standard for ALL new/extended resolver methods. Existing resolvers
+(asset/credit/income/title/fraud/...) adopt it incrementally as they are next
+touched — not a blanket retrofit.
 
 ---
 
@@ -203,7 +227,7 @@ Domain resolvers:
   core/title/       lien_resolver.py                                   (RA-4D ✅)
   core/fraud/       income_mismatch_detector.py + undisclosed_debt_detector.py
                     + employment_fraud_detector.py + fraud_rules.py    (RA-4F ✅)
-  core/income/      rental_income_resolver.py + self_employed_resolver.py (RA-4G pending)
+  core/income/      rental_income_resolver.py + self_employed_resolver.py (RA-4G ✅)
   core/compliance/  rule_validator.py                                  (RA-4E ✅)
 
 Seed scripts:    scripts/compliance/
@@ -232,7 +256,7 @@ Obligations:     core/obligations/  obligation_resolver.py (ObligationResolver �
 document_index            Raw extracted fields from each document
 entity_states             Actual values mapped from documents (one row per app)
 fact_nodes                Qualified evidence with confidence + method
-agency_guidelines         Fannie/FHA/VA/Freddie published rules (83 rows)
+agency_guidelines         Fannie/FHA/VA/Freddie published rules (98 rows)
 regulatory_rules          Federal law (CFPB/HUD/VA) (23 rows)
 overlay_rules             Lender credit policy — Meridian + Summit (6 rows)
 decision_outputs          What each persona decided (outcome + output_payload)
