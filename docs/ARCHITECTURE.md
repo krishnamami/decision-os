@@ -354,6 +354,15 @@ Meridian's dti bundle carries only the aggregate existing_debt_obligations (no
 per-type list), so the breakdown is foundation there; live per-obligation inputs
 (tradelines, decree, per-property PITIA) + RA-4G rental wiring flow on PATH 2.
 
+BACKLOG (later OB slice, when the DTI ratio is wired): the resolver output keys
+are the canonical `type` / `monthly_obligation` / `included` (consistent across
+all 7 obligation types + resolve() + the persona + tests). The OB-B spec proposed
+`obligation_type` / `monthly_payment` / `included_in_dti` — aspirational; the
+existing canonical naming is correct and stays. Do a clean naming refactor across
+the FULL ObligationResolver (all types + resolve() + tests in one pass) only when
+the breakdown is folded into the actual DTI ratio, so the rename and the
+ratio-wiring land together rather than churning the schema twice.
+
 ---
 
 ## Persona Status
