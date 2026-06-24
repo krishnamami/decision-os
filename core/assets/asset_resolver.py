@@ -69,6 +69,12 @@ ASSET_RULE_KEYS = [
     'qualifying_factor_stocks_bonds', 'qualifying_factor_crypto',
     'minimum_reserves_months', 'large_deposit_threshold_pct',
     'seasoning_days_required',
+    # SE business-asset tiers (Gap c — Fannie B3-3.4-02). Ownership cutoffs +
+    # usable-credit factors, all catalogue-driven (no Python literals).
+    'Self-Employed Business Ownership Sole Threshold',
+    'Self-Employed Business Ownership Majority Threshold',
+    'Self-Employed Full Business Asset Credit',
+    'Self-Employed Partial Business Asset Credit',
 ]
 
 
@@ -149,6 +155,30 @@ class AssetResolver:
     @property
     def _seasoning_days(self) -> int:
         return int(self._rules.get('seasoning_days_required', 60))
+
+    # ── SE business-asset tiers (Gap c — Fannie B3-3.4-02) ─────────────
+    # Ownership cutoffs (percent, compared to biz_pct) + usable-credit
+    # factors (catalogue stores percent; the math wants the fraction, same
+    # convention as _large_deposit_frac). SAFE_DEFAULTS back every key.
+    @property
+    def _biz_sole_threshold(self) -> float:
+        return float(self._rules.get(
+            'Self-Employed Business Ownership Sole Threshold', 100))
+
+    @property
+    def _biz_majority_threshold(self) -> float:
+        return float(self._rules.get(
+            'Self-Employed Business Ownership Majority Threshold', 50))
+
+    @property
+    def _biz_full_factor(self) -> float:
+        return float(self._rules.get(
+            'Self-Employed Full Business Asset Credit', 100)) / 100.0
+
+    @property
+    def _biz_majority_factor(self) -> float:
+        return float(self._rules.get(
+            'Self-Employed Partial Business Asset Credit', 50)) / 100.0
 
     def analyze_account(
         self,
@@ -236,18 +266,21 @@ class AssetResolver:
             })
 
         # ── Business account: needs CPA ────────
+        # SE business-asset tiers from the catalogue (Gap c, Fannie B3-3.4-02):
+        # sole owner (>= sole threshold) -> full credit; majority owner
+        # (>= majority threshold) -> partial credit; below -> not usable.
         elif is_biz:
-            if biz_pct >= 100:
-                factor = 1.00
-            elif biz_pct >= 50:
-                factor = 0.50
+            if biz_pct >= self._biz_sole_threshold:
+                factor = self._biz_full_factor
+            elif biz_pct >= self._biz_majority_threshold:
+                factor = self._biz_majority_factor
             else:
                 factor = 0.00
                 included = False
                 exclusion_reason = (
                     f'Business account with '
                     f'{biz_pct}% ownership — '
-                    f'need ≥50% to use'
+                    f'need ≥{self._biz_majority_threshold:.0f}% to use'
                 )
             if included:
                 flags.append(

@@ -51,6 +51,12 @@ SAFE_DEFAULTS = {
     'minimum_reserves_months':         2,
     'large_deposit_threshold_pct':     50,
     'seasoning_days_required':         60,
+    # SE business-asset tiers (Gap c — Fannie B3-3.4-02). Raw catalogue percents;
+    # asset_resolver divides the two *Asset Credit* factors by 100 (1.00 / 0.50).
+    'Self-Employed Business Ownership Sole Threshold':     100,
+    'Self-Employed Business Ownership Majority Threshold':  50,
+    'Self-Employed Full Business Asset Credit':            100,
+    'Self-Employed Partial Business Asset Credit':          50,
     # Credit (Fannie B3-5.3-07 worst case)
     'bankruptcy_ch7_waiting_years':    4,
     'bankruptcy_ch13_waiting_years':   2,
