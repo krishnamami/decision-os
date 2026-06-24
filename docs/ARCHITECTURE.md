@@ -266,7 +266,14 @@ Notes:
   emits AUS_ACCORD_CONFLICT if DU disagrees with Accord's underwriting outcome
   (DU approve vs Accord decline, or DU refer/ineligible vs Accord approve). The
   enricher attaches aus_result for this decision only; meridian has no DU data so
-  no signal fires. Advisory; reconciliation is RA-AUS-B.
+  no signal fires. Advisory.
+- approval_routing also runs the RA-AUS-B reconciliation engine
+  (core/aus/reconciliation.py) on the result: it classifies an Accord-vs-DU
+  disagreement into 4 named cases (risk tier + explanation + UW action + HMDA
+  implication) and emits AUS_CONFLICT_HIGH_RISK / AUS_CONFLICT_REVIEW on conflict
+  or AUS_ACCORD_AGREEMENT on agreement, reconciling against the upstream
+  UNDERWRITING outcome (not the routing outcome). output_payload.aus_reconciliation
+  on every decision. Advisory; proposed_outcome untouched; 16/16 holds.
 - underwriting_decision also emits a HMDA LAR record (RA-7C) into
   output_payload.hmda_lar on EVERY application. Demographic data (ethnicity/race/
   sex/age) is collected + reported but NEVER read by any decision logic — the
@@ -341,7 +348,19 @@ BACKLOG (after client demo):
                the parsed result (enricher, gated) and emits AUS_ACCORD_CONFLICT
                when DU disagrees with Accord's outcome. ADVISORY — reconciliation
                is RA-AUS-B; no DU response -> no signal. 16/16 holds.
-  RA-AUS/B/C   AUS reconciliation engine + LP (Loan Product Advisor)
+  RA-AUS-B     SHIPPED: AUS reconciliation engine (core/aus/reconciliation.py).
+               AUSReconciliationEngine.reconcile() classifies an Accord-vs-DU
+               disagreement into 4 named cases (ACCORD_BLOCK_DU_APPROVE HIGH /
+               ACCORD_RECOMMEND_DU_REFER HIGH / ACCORD_ESCALATE_DU_APPROVE MEDIUM
+               / ACCORD_RECOMMEND_DU_REFER_ELIGIBLE LOW), each with risk +
+               explanation + UW action + HMDA implication. approval_routing emits
+               AUS_CONFLICT_HIGH_RISK / AUS_CONFLICT_REVIEW (CONTRADICTS) on
+               conflict and AUS_ACCORD_AGREEMENT (SUPPORTS) on agreement; reconciles
+               against the upstream UNDERWRITING outcome, not the routing outcome.
+               output_payload.aus_reconciliation on every decision. ADVISORY —
+               proposed_outcome untouched; no DU response -> reconciliation_required
+               =False; meridian has no DU data so 16/16 holds.
+  RA-AUS-C     LP (Loan Product Advisor) parser + reconciliation
   RA-5/A/B     Policy transparency
   RA-7A        SHIPPED: ATR 8-factor checklist + QM classifier (12 CFR 1026.43)
                in compliance_check. Thresholds from regulatory_rules via the
@@ -415,9 +434,13 @@ From RA-6A (all 8 checks PASS; these are documented, not blocking the demo):
 (e) months_remaining_exclusion is wired (RA-4J) but unreachable by the 16
     Meridian scenarios (no app carries months_remaining data).
 
-(f) approval_routing conflict preference: ROUTE_CONFLICT_PRESENT is advisory
-    only. Conflicts should route to manual review (not auto-approve) — a
-    deliberate future OUTCOME change, out of the advisory-only scope.
+(f) approval_routing conflict→manual-review = advisory only. ROUTE_CONFLICT_PRESENT
+    and the RA-AUS-B reconciliation signals (AUS_CONFLICT_HIGH_RISK /
+    AUS_CONFLICT_REVIEW / AUS_ACCORD_AGREEMENT) surface conflicts as advisory
+    signals + a detailed reconciliation surface (output_payload.aus_reconciliation:
+    risk tier, explanation, UW action, HMDA implication) — but do NOT move the
+    routing outcome. Conflicts SHOULD route to manual review (not auto-approve):
+    that OUTCOME change is deliberate future work, out of the advisory-only scope.
 
 (g) Eval runs the 16 apps sequentially (~165s nominal). asyncio.gather +
     semaphore(5) -> ~40s. RA-P0-B backlog.

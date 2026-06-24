@@ -4081,3 +4081,18 @@ See the **Known Gaps** section in docs/ARCHITECTURE.md (gaps a–h). Headlines: 
 
 ### Next Steps (post-demo, backlog)
 RA-P0/EX (pipeline + extraction infra), RA-AUS-A/B/C (DU + LP), RA-5 (policy transparency), RA-7A/B/C (ATR/QM + adverse action + HMDA), Stage 2 audit (full production readiness).
+
+---
+
+## RA-AUS-B — AUS reconciliation engine — 2026-06-24
+
+**RA-AUS-B — AUS reconciliation engine (commit 1d947ff).** SHIPPED. Layers a detailed classifier on top of RA-AUS-A's lightweight `detect_aus_conflict` boolean. `core/aus/reconciliation.py:AUSReconciliationEngine.reconcile(accord_outcome, aus_result)` — pure + DB-less — turns an Accord-vs-DU disagreement into one of **4 named conflict cases**, each carrying `risk` / `title` / `explanation` / `uw_action` / `hmda_implication` from the `CONFLICT_EXPLANATIONS` map (strings never inlined at call sites):
+  - `ACCORD_BLOCK_DU_APPROVE` — HIGH risk (confidence LOW)
+  - `ACCORD_RECOMMEND_DU_REFER` — HIGH risk (DU refer/ineligible)
+  - `ACCORD_ESCALATE_DU_APPROVE` — MEDIUM risk
+  - `ACCORD_RECOMMEND_DU_REFER_ELIGIBLE` — LOW risk
+  Agreement cases → `reconciliation_required=False, agreement=True, confidence=HIGH`. No AUS response → `reconciliation_required=False` (not all lenders run DU). `_classify` treats `allow` (clean approve) like `recommend`.
+
+**Wiring — approval_routing persona.** Reconciles against the raw UNDERWRITING outcome (`uw_outcome` from `bundle.upstream_outputs["underwriting_decision"]`, falling back to the routing outcome label), NOT this persona's routing outcome — a decline routes as ALLOW and would misclassify. Emits via the real `SignalDirection.CONTRADICTS` enum: **`AUS_CONFLICT_HIGH_RISK`** (HIGH, weight 2.0) / **`AUS_CONFLICT_REVIEW`** (MEDIUM/LOW), plus a positive **`AUS_ACCORD_AGREEMENT`** SUPPORTS signal when a DU result exists and agrees. `output_payload.aus_reconciliation` + `aus_confidence` logged on every decision. **Advisory only — `proposed_outcome` untouched.**
+
+**Verification.** 9/9 reconciliation unit tests pass (`tests/test_aus_reconciliation.py`). Full-suite failures (9, in policy_engine / seed_scenarios / ui-views) are **pre-existing** — reproduced identically at clean HEAD with the AUS-B files stashed (e.g. seed_scenarios `15 != 13` is persona-count staleness, DB-state dependent); **zero new**. Demo (`block` + DU Approve/Eligible) → `ACCORD_BLOCK_DU_APPROVE` / HIGH / LOW. Meridian eval **16/16** (no DU data → `reconciliation_required=False` for all, no signal fires). Closes AU-B. Remaining: **RA-AUS-C** (LP / Loan Product Advisor).
