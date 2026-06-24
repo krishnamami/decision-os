@@ -193,6 +193,8 @@ Evaluate:        scripts/evaluate_meridian_scenarios.py
                  ⚠️ DO NOT IMPORT — runs asyncio.run(main()) at module level
                     (no __main__ guard). Call as a subprocess only.
 Bundles:         persona_bundles table (RA-3F — done; scripts/migrations/create_persona_bundles.sql)
+Storage:         core/storage/  s3_keys.py (MISMO key builder) + s3_client.py
+                 (async boto3 wrapper, graceful no-AWS no-op)        (RA-P0-A ✅)
 ```
 
 ---
@@ -219,6 +221,37 @@ aus_responses             Parsed AUS (DU/LP) recommendations — one per app+sys
                           (DU RA-AUS-A, LP RA-AUS-C). LP feedbacks stored in the
                           shared `findings` JSONB (no `feedbacks` column)
 ```
+
+---
+
+## Document Storage (S3 — RA-P0-A)
+
+`core/storage/` is the canonical object-storage layer. `s3_keys.py` builds keys
+(pure, no I/O — the single source of truth for layout); `s3_client.py` is the
+async boto3 wrapper that degrades to no-ops when AWS is unconfigured (local dev,
+CI, meridian), so S3 is never a hard dependency. Keys are tenant-isolated and
+discoverable (doc_type/system in the path, never opaque UUIDs).
+
+```
+s3://{S3_BUCKET (default accord-docs)}/
+  {tenant_id}/
+    {application_id}/
+      uploads/raw/{doc_type}/{filename}      original files as uploaded
+      uploads/processed/{doc_type}.json      extracted fields per doc
+      mismo/raw/{version}.xml                MISMO XML as received from the LOS
+      mismo/parsed/canonical.json            canonical fields extracted
+      aus/du/{casefile_id}.json              DU response files
+      aus/lp/{key_number}.json               LP response files
+    platform/onboarding/{filename}           Platform Studio uploads (tenant-level)
+    exports/hmda/{year}/{month}/lar.csv      HMDA LAR exports
+    exports/dmn/{version}/rules.xml          DMN rule export (MI-F future)
+```
+
+Live wiring (RA-P0-A): POST /api/accord/documents/upload, after extraction
+succeeds, stores the raw file (AES256) + processed JSON and stamps
+`document_index.s3_key` with the raw key — best-effort, gated on a successful put
+(S3 off -> s3_key untouched, extraction unaffected). The other key builders
+(mismo/aus/exports) are ready for their future producers.
 
 ---
 
@@ -335,7 +368,18 @@ DONE:
   RA-6B        Final lock-in + tag (rearch-core-complete)
 
 BACKLOG (after client demo):
-  RA-P0/A/B    Pipeline + parallel runner
+  RA-P0-A      SHIPPED: S3 document storage aligned to MISMO (FINAL re-arch
+               prompt). core/storage/s3_keys.py = canonical key builder (pure):
+               tenant-isolated {tenant}/{app}/... hierarchy, discoverable
+               (doc_type/system in path, no UUIDs). core/storage/s3_client.py =
+               async boto3 wrapper, AES256 on every put, graceful no-op when AWS
+               is unconfigured (detects creds via Session.get_credentials()
+               up front; put=False/get=None/exists=False). The /upload endpoint
+               stores raw + processed JSON and stamps document_index.s3_key —
+               best-effort, never a hard dependency (S3 off -> extraction
+               unaffected). 16/16 preserved. -> RA re-arch arc COMPLETE.
+  RA-P0-B      Parallel runner (asyncio.gather + semaphore) — perf only, see
+               gap (g). Not a correctness item.
   RA-EX/A-F    Extraction SHIPPED: audit (A), golden_record builder+writer (B),
                gap-field derivation + demo seeding (C), pipeline + Claude Vision
                extractor (D), upload trigger wired (E), real Tier-1 pdfplumber +
