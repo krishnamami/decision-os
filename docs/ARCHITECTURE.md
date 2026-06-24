@@ -331,7 +331,7 @@ PATH 2 (real tenants post-ingestion): income_sources rows -> get_qualifying_inco
 ### Obligations (OB-A / OB-B)
 
 `core/obligations/obligation_resolver.py:ObligationResolver` decomposes monthly
-debt obligations by type (Fannie B3-6-02 / B3-6-05 / B3-3.1-08), sync + DB-less,
+debt obligations by type (Fannie B3-6-02 / B3-6-05 / B3-3.4-02 / B3-3.1-08), sync + DB-less,
 catalogue-driven (SAFE_DEFAULTS fallback). `resolve(obligations)` → total +
 per-type breakdown + excluded list. Routes:
 - **student_loan** — uses the PRE-COMPUTED TradelineAnalyzer payment (deferred-1%/
@@ -340,9 +340,9 @@ per-type breakdown + excluded list. Routes:
 - **installment** — actual, else balance/months; excluded ≤ months_remaining_exclusion (10).
 - **revolving** — reported min, else revolving_payment_factor_pct (5%) of balance.
 - **heloc** — actual, else heloc_payment_factor_pct (1%) of balance/limit (OB-A).
-- **business_debt** (OB-B) — EXCLUDED only if business-paid ≥ business_debt_exclusion_months
-  (12) with no 30-day delinquency; else INCLUDED + docs_needed. is_business_paying/
-  months_business_paid absent today → default to included.
+- **business_debt** (OB-B, Fannie B3-3.4-02) — EXCLUDED only if business-paid ≥
+  business_debt_exclusion_months (12) with no 30-day delinquency; else INCLUDED +
+  docs_needed. is_business_paying/months_business_paid absent today → default to included.
 - **rental_property** (OB-B) — net = rental_net_monthly − pitia_monthly (B3-3.1-08);
   ≥0 positive offset (not a DTI obligation), <0 shortfall added. Both inputs absent
   today → not_applicable.
