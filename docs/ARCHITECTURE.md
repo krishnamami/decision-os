@@ -116,6 +116,11 @@ persona_bundles (persisted to DB — RA-3F, done)
 **RULE 1 — ZERO HARDCODED VALUES**
 Every threshold, rate, factor, period, percentage lives in a catalogue table.
 Never in Python. Test: grep for numeric lending constants in resolver files → zero hits.
+Holds with ZERO exceptions as of Gap (c) fix (f35ae33) — the SE business-ownership
+cutoffs + factors in asset_resolver were the last hardcoded lending value; now
+catalogue-driven. Remaining grep hits are structural (accumulator inits,
+sentinels like _NO_PRIORITY, the SAFE_DEFAULTS fallback, rule_validator's
+synthetic boundary-test loans).
 
 **RULE 2 — THREE LAYERS ONLY**
 `regulatory_rules` → federal law (floor, cannot override).
@@ -205,7 +210,7 @@ Storage:         core/storage/  s3_keys.py (MISMO key builder) + s3_client.py
 document_index            Raw extracted fields from each document
 entity_states             Actual values mapped from documents (one row per app)
 fact_nodes                Qualified evidence with confidence + method
-agency_guidelines         Fannie/FHA/VA/Freddie published rules (81 rows)
+agency_guidelines         Fannie/FHA/VA/Freddie published rules (83 rows)
 regulatory_rules          Federal law (CFPB/HUD/VA) (23 rows)
 overlay_rules             Lender credit policy — Meridian + Summit (6 rows)
 decision_outputs          What each persona decided (outcome + output_payload)
@@ -326,10 +331,11 @@ Notes:
 
 ---
 
-## Catalogue State (verified 2026-06-22)
+## Catalogue State (verified 2026-06-24)
 
 ```
-agency_guidelines:   81 rows  (Fannie 58 / FHA 13 / VA 8 / Freddie 2)
+agency_guidelines:   83 rows  (Fannie 60 / FHA 13 / VA 8 / Freddie 2)
+                     (+2 SE ownership thresholds, Gap c fix f35ae33)
 regulatory_rules:    23 rows
 overlay_rules:        6 rows  (Meridian 4 / Summit 2)
 verify gate:         59/59 exit 0   (scripts/verify_catalogue_ready.py)
@@ -485,11 +491,19 @@ From RA-6A (all 8 checks PASS; these are documented, not blocking the demo):
     not directly wired to any persona. SC12 rental income flows via the
     income_verification own path. Confirm/complete wiring post-demo.
 
-(c) SE business-ownership: asset_resolver.py hardcodes biz_pct >= 100/50
-    (factor 1.00/0.50/0.00). The catalogue rows (Self-Employed Business
-    Ownership Majority/Full/Partial = 25/100/50) are seeded but NOT read.
-    Fix: wire the resolver to read them from catalogue. (This is the one
-    remaining hardcoded lending-value site found by CHECK 1.)
+(c) CLOSED (Gap c fix, f35ae33). asset_resolver no longer hardcodes the SE
+    business-ownership cutoffs/factors — all 4 values are catalogue-driven via
+    the RA-4A property pattern. ACTUAL live rows (the earlier "Majority/Full/
+    Partial = 25/100/50" note was wrong; verified by query):
+      Self-Employed Business Ownership Sole Threshold     = 100  (cutoff, NEW)
+      Self-Employed Business Ownership Majority Threshold =  50  (cutoff, NEW)
+      Self-Employed Full Business Asset Credit            = 100  (factor /100 = 1.00)
+      Self-Employed Partial Business Asset Credit         =  50  (factor /100 = 0.50)
+    The two cutoffs had no catalogue backing (only "Business Ownership Majority"
+    =25, a different SE-definition threshold) so they were seeded fresh (Fannie
+    B3-3.4-02) rather than repurposing the 25% row (which would have moved the
+    gate 50→25 and changed behavior). Value-equivalent — 16/16 holds. This was
+    the LAST hardcoded lending value; RULE 1 now has ZERO exceptions.
 
 (d) Student-loan deferred rate: catalogue seeds 1.0%. Current Fannie B3-6-05
     uses a 0.5% floor for $0 / unreported payments. Review before production.
