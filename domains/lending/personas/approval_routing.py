@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from core.aus.du_parser import detect_aus_conflict
+from core.aus.reconciliation import AUSReconciliationEngine
 from core.context_store import ContextBundle
 from core.normalizer.models import DecisionOutcome
 from core.policy_engine import PolicyDecision
@@ -128,12 +129,46 @@ class WorkflowRoutingAgent(LendingPersona):
                 notes=aus_conflict["message"],
             ))
 
+        # ── RA-AUS-B: full reconciliation (advisory, OUTCOME-NEUTRAL) ─────
+        # Classify the disagreement into one of 4 named cases (risk tier + UW
+        # action) for the workbench — repurchase defense. accord_outcome is the
+        # raw UNDERWRITING outcome (block/recommend/escalate/allow), NOT this
+        # persona's routing outcome (a decline routes as ALLOW, which would
+        # misclassify). proposed_outcome is never changed → 16/16 holds.
+        uw_outcome = (
+            (bundle.upstream_outputs.get("underwriting_decision") or {}).get("outcome")
+            or outcome_label
+        )
+        aus_reconciliation = AUSReconciliationEngine().reconcile(uw_outcome, aus_result)
+        if aus_reconciliation.get("reconciliation_required"):
+            if aus_reconciliation["risk"] == "HIGH":
+                signals.append(make_signal(
+                    "AUS_CONFLICT_HIGH_RISK", aus_reconciliation["conflict"],
+                    direction=SignalDirection.CONTRADICTS, source="aus", weight=2.0,
+                    notes=aus_reconciliation["uw_action"],
+                ))
+            else:
+                signals.append(make_signal(
+                    "AUS_CONFLICT_REVIEW", aus_reconciliation["conflict"],
+                    direction=SignalDirection.CONTRADICTS, source="aus",
+                    notes=aus_reconciliation["uw_action"],
+                ))
+        elif aus_result:
+            signals.append(make_signal(
+                "AUS_ACCORD_AGREEMENT", "HIGH",
+                direction=SignalDirection.SUPPORTS, source="aus",
+                notes=aus_reconciliation.get("message"),
+            ))
+
         return OfflineReasoning(
             output_payload={
                 "routing_target": target,
                 # RA-AUS-A — DU/AUS result + conflict (None unless DU ran).
                 "aus_result": aus_result,
                 "aus_accord_conflict": aus_conflict,
+                # RA-AUS-B — full reconciliation + confidence (advisory).
+                "aus_reconciliation": aus_reconciliation,
+                "aus_confidence": aus_reconciliation.get("confidence"),
                 # RA-PERSONA-C: evidence provenance (advisory).
                 "evidence_populated": evidence_populated,
                 "route_evidence_confidence": (
