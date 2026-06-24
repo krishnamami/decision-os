@@ -32,6 +32,8 @@ from __future__ import annotations
 from typing import Optional
 
 _CITE = "Fannie B3-6-02"
+_CITE_BIZ = "Fannie B3-3.4-02"      # business-debt exclusion (OB-B)
+_CITE_RENTAL = "Fannie B3-3.1-08"  # rental mortgage offset (OB-B)
 
 
 def _f(v) -> float:
@@ -130,36 +132,57 @@ class ObligationResolver:
                 "citation": _CITE}
 
     def compute_business_debt(self, obl: dict) -> dict:
-        """OB-B — business-debt exclusion (Fannie B3-6-05). A debt is EXCLUDED from
-        DTI only when the business has paid it >= business_debt_exclusion_months
-        with no 30-day delinquency. is_business_paying / months_business_paid are
-        not in any data source today -> default to NOT proving the exclusion, so
-        the debt is INCLUDED with a docs_needed condition (the UW must supply the
-        12-month cancelled-check/bank-statement evidence to exclude). monthly_payment
-        / balance / delinquency_30 come from CREDIT_REPORT.tradelines."""
+        """OB-B — business-debt exclusion (Fannie B3-3.4-02). A debt is EXCLUDED
+        from DTI only when the business has paid it >= business_debt_exclusion_months
+        (catalogue, default 12) with no 30-day delinquency.
+
+        DATA SOURCES:
+          monthly_payment / current_balance / delinquency_30 -> CREDIT_REPORT.tradelines (present today)
+          is_business_paying / months_business_paid          -> NOT YET EXTRACTED
+            (future PATH-2 prompt: 12mo cancelled checks / business bank statements)
+            -> default False/0, so the debt is INCLUDED with a docs_needed condition.
+        Missing inputs are documented in the output (never assumed present)."""
         obl = obl or {}
         payment = _f(obl.get("monthly_payment"))
         balance = _f(obl.get("current_balance") or obl.get("balance"))
         is_business_paying = bool(obl.get("is_business_paying", False))
         months_business_paid = int(obl.get("months_business_paid", 0) or 0)
-        delinquent = bool(obl.get("delinquency_30", False))
+        delinquency_30 = int(obl.get("delinquency_30", 0) or 0)
+        required = self._business_debt_exclusion_months  # from catalogue
+        missing_inputs = [f for f in ("is_business_paying", "months_business_paid")
+                          if not obl.get(f)]
+        _DS = "CREDIT_REPORT.tradelines"
 
-        if (is_business_paying and not delinquent
-                and months_business_paid >= self._business_debt_exclusion_months):
+        if not payment and not balance:
             return {"type": "business_debt", "monthly_obligation": 0, "included": False,
-                    "excluded_reason": (f"business-paid {months_business_paid}mo >= "
-                                        f"{self._business_debt_exclusion_months}mo, no "
-                                        f"30-day delinquency (B3-6-05)"),
-                    "method": "business_debt_excluded_business_paid", "citation": "Fannie B3-6-05"}
-        docs = ["12-month business-paid evidence (cancelled checks / business bank "
-                "statements) + no 30-day delinquency to exclude from DTI"]
-        if delinquent:
-            docs.append("30-day delinquency present — cannot exclude even if "
-                        "business-paid (B3-6-05)")
+                    "method": "business_debt_zero_balance", "citation": _CITE_BIZ,
+                    "data_source": _DS}
+
+        if (is_business_paying and months_business_paid >= required
+                and delinquency_30 == 0):
+            return {"type": "business_debt", "monthly_obligation": 0, "included": False,
+                    "method": f"business_debt_excluded_{months_business_paid}mo_business_paying",
+                    "citation": _CITE_BIZ, "required_months": required, "docs_needed": [],
+                    "data_source": _DS + " + business bank statements"}
+
+        docs_needed, exclusion_reason = [], []
+        if not is_business_paying:
+            docs_needed.append("12 months cancelled checks / business bank statements "
+                               "proving the business pays this debt (Fannie B3-3.4-02)")
+            exclusion_reason.append("is_business_paying not documented")
+        elif months_business_paid < required:
+            docs_needed.append(f"{required}-month business payment history required "
+                               f"({months_business_paid} months provided)")
+            exclusion_reason.append(f"only {months_business_paid}/{required} months documented")
+        if delinquency_30 > 0:
+            docs_needed.append("No 30-day lates allowed for business-debt exclusion")
+            exclusion_reason.append(f"{delinquency_30}x 30-day late payment on record")
         return {"type": "business_debt", "monthly_obligation": round(payment, 2),
                 "included": payment > 0, "balance": balance,
-                "method": "business_debt_included_no_exclusion_evidence",
-                "citation": "Fannie B3-6-05", "docs_needed": docs}
+                "method": "business_debt_included_pending_evidence", "citation": _CITE_BIZ,
+                "required_months": required, "exclusion_reason": exclusion_reason,
+                "docs_needed": docs_needed, "data_source": _DS,
+                "missing_inputs": missing_inputs}
 
     def compute_rental_offset(self, rental: dict) -> dict:
         """OB-B — rental mortgage offset (Fannie B3-3.1-08). net = rental_net_monthly
@@ -172,20 +195,34 @@ class ObligationResolver:
         rental = rental or {}
         rental_net = _f(rental.get("rental_net_monthly"))
         pitia = _f(rental.get("pitia_monthly"))
+        property_address = rental.get("property_address", "unknown")
+        data_source = rental.get("data_source", "not_specified")
         if not rental_net and not pitia:
             return {"type": "rental_property", "monthly_obligation": 0, "included": False,
-                    "method": "rental_offset_not_applicable",
-                    "note": "no rental_net_monthly / pitia_monthly on the bundle "
-                            "(RA-4G not wired + per-property PITIA absent)"}
+                    "method": "rental_offset_no_data", "citation": _CITE_RENTAL,
+                    "property_address": property_address,
+                    "missing_inputs": [
+                        "rental_net_monthly (requires RA-4G rental_income_resolver "
+                        "wired into bundle)",
+                        "pitia_monthly (requires per-property PITIA in bundle)"],
+                    "note": "Rental offset not computed — data not yet in bundle. "
+                            "Wire RA-4G to enable."}
         net = round(rental_net - pitia, 2)
         if net >= 0:
             return {"type": "rental_property", "monthly_obligation": 0, "included": False,
                     "net_offset": net, "income_contribution": net,
-                    "method": "rental_positive_offset", "citation": "Fannie B3-3.1-08",
-                    "note": f"net rental ${net:,.0f}/mo offsets PITIA — not a DTI obligation"}
-        return {"type": "rental_property", "monthly_obligation": round(abs(net), 2),
+                    "method": "rental_positive_cash_flow_no_obligation",
+                    "citation": _CITE_RENTAL, "property_address": property_address,
+                    "data_source": data_source,
+                    "note": f"net rental {rental_net} >= PITIA {pitia} — positive cash flow"}
+        shortfall = round(abs(net), 2)
+        return {"type": "rental_property", "monthly_obligation": shortfall,
                 "included": True, "net_offset": net,
-                "method": "rental_negative_added_to_dti", "citation": "Fannie B3-3.1-08"}
+                "method": "rental_negative_cash_flow_shortfall_in_dti",
+                "citation": _CITE_RENTAL, "property_address": property_address,
+                "data_source": data_source,
+                "docs_needed": ["Schedule E showing rental income and expenses"],
+                "note": f"shortfall {shortfall:.0f}/mo (PITIA {pitia} > net rental {rental_net})"}
 
     # ── routing ─────────────────────────────────────────────────────────
     def _route_one(self, obl: dict) -> dict:

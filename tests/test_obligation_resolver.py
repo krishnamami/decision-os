@@ -93,37 +93,59 @@ class RoutingTests(unittest.TestCase):
 
 
 class BusinessDebtTests(unittest.TestCase):
-    def test_default_included_with_docs(self):
-        # is_business_paying defaults False -> INCLUDED + docs_needed to exclude.
+    def test_default_included_with_docs_and_missing_inputs(self):
+        # is_business_paying defaults False -> INCLUDED + docs_needed + missing_inputs.
         r = R.compute_business_debt({"monthly_payment": 600, "current_balance": 30000})
         self.assertEqual(r["monthly_obligation"], 600.0)
         self.assertTrue(r["included"])
         self.assertTrue(r["docs_needed"])
+        self.assertIn("is_business_paying", r["missing_inputs"])
+        self.assertIn("months_business_paid", r["missing_inputs"])
+        self.assertEqual(r["data_source"], "CREDIT_REPORT.tradelines")
 
-    def test_excluded_when_business_paid_12mo(self):
+    def test_excluded_when_business_paid_12mo_default(self):
         r = R.compute_business_debt({"monthly_payment": 600, "is_business_paying": True,
-                                     "months_business_paid": 12, "delinquency_30": False})
+                                     "months_business_paid": 12, "delinquency_30": 0})
         self.assertEqual(r["monthly_obligation"], 0)
         self.assertFalse(r["included"])
-        self.assertIn("excluded_reason", r)
+        self.assertTrue(r["method"].startswith("business_debt_excluded"))
+
+    def test_included_when_8mo_default_threshold(self):
+        r = R.compute_business_debt({"monthly_payment": 600, "is_business_paying": True,
+                                     "months_business_paid": 8})
+        self.assertTrue(r["included"])
+        self.assertTrue(r["docs_needed"])
 
     def test_not_excluded_if_delinquent(self):
         r = R.compute_business_debt({"monthly_payment": 600, "is_business_paying": True,
-                                     "months_business_paid": 24, "delinquency_30": True})
+                                     "months_business_paid": 24, "delinquency_30": 1})
         self.assertTrue(r["included"])  # delinquency blocks exclusion
         self.assertEqual(r["monthly_obligation"], 600.0)
+        self.assertTrue(any("late" in x for x in r["exclusion_reason"]))
 
-    def test_not_excluded_if_under_12mo(self):
-        r = R.compute_business_debt({"monthly_payment": 600, "is_business_paying": True,
-                                     "months_business_paid": 6})
-        self.assertTrue(r["included"])
+    def test_zero_balance_not_applicable(self):
+        r = R.compute_business_debt({"monthly_payment": 0, "current_balance": 0})
+        self.assertEqual(r["method"], "business_debt_zero_balance")
+        self.assertFalse(r["included"])
+
+    def test_custom_threshold_flows_through(self):
+        # Custom 6-month threshold: 6mo excluded, 5mo included (proves catalogue flow).
+        r6 = ObligationResolver(rules={"business_debt_exclusion_months": 6})
+        ex = r6.compute_business_debt({"monthly_payment": 600, "is_business_paying": True,
+                                       "months_business_paid": 6, "delinquency_30": 0})
+        self.assertFalse(ex["included"])  # 6 >= 6 custom threshold
+        inc = r6.compute_business_debt({"monthly_payment": 600, "is_business_paying": True,
+                                        "months_business_paid": 5, "delinquency_30": 0})
+        self.assertTrue(inc["included"])  # 5 < 6
+        self.assertEqual(inc["required_months"], 6)
 
 
 class RentalOffsetTests(unittest.TestCase):
-    def test_not_applicable_when_no_data(self):
+    def test_no_data_documents_missing_inputs(self):
         r = R.compute_rental_offset({})
-        self.assertEqual(r["method"], "rental_offset_not_applicable")
+        self.assertEqual(r["method"], "rental_offset_no_data")
         self.assertFalse(r["included"])
+        self.assertEqual(len(r["missing_inputs"]), 2)
 
     def test_positive_offset_not_an_obligation(self):
         r = R.compute_rental_offset({"rental_net_monthly": 2000, "pitia_monthly": 1500})
@@ -136,6 +158,11 @@ class RentalOffsetTests(unittest.TestCase):
         self.assertTrue(r["included"])
         self.assertEqual(r["monthly_obligation"], 500.0)  # abs(1000-1500)
         self.assertEqual(r["net_offset"], -500.0)
+
+    def test_breakeven_no_obligation(self):
+        r = R.compute_rental_offset({"rental_net_monthly": 1500, "pitia_monthly": 1500})
+        self.assertFalse(r["included"])  # net 0 >= 0
+        self.assertEqual(r["monthly_obligation"], 0)
 
     def test_routing_business_and_rental(self):
         out = R.resolve([

@@ -19,7 +19,7 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
-_CITE = "Fannie Mae Selling Guide B3-6-05"
+_CITE = "Fannie Mae Selling Guide B3-3.4-02"
 ROWS = [
     ("business_debt_exclusion_months", 12, "12 months",
      "A debt on the borrower's personal credit report may be excluded from DTI "
