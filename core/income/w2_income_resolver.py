@@ -46,6 +46,29 @@ VARIABLE_INCOME_TODO = (
     "prompt before INC-B variable income."
 )
 
+# Catalogue rule names this resolver reads through rule_loader (INC-B followup).
+INCOME_RULE_KEYS = [
+    "employment_history_months_required",
+]
+
+
+async def load_income_rules(conn, tenant_id: str, agency: str = "fannie") -> dict:
+    """Resolve every income rule from the catalogue via rule_loader. Returns
+    {'values': {key: applied}, 'trace': {key: {applied, governed_by, layers}}}.
+    Called on the ASYNC snapshot path (runner) — never inside the sync persona —
+    and injected into W2IncomeResolver. Mirrors load_asset_rules (RA-4A)."""
+    from core.catalogue.rule_loader import get_rule
+    values, trace = {}, {}
+    for key in INCOME_RULE_KEYS:
+        r = await get_rule(conn, key, tenant_id, agency=agency)
+        values[key] = r.get("applied")
+        trace[key] = {
+            "applied":     r.get("applied"),
+            "governed_by": r.get("governed_by"),
+            "layers":      r.get("layers", {}),
+        }
+    return {"values": values, "trace": trace}
+
 
 class W2IncomeResolver:
     """Base W2/salaried income qualification. All thresholds from ``rules``."""
@@ -187,4 +210,5 @@ class W2IncomeResolver:
         }
 
 
-__all__ = ["W2IncomeResolver", "VARIABLE_INCOME_TODO"]
+__all__ = ["W2IncomeResolver", "VARIABLE_INCOME_TODO",
+           "INCOME_RULE_KEYS", "load_income_rules"]

@@ -332,7 +332,13 @@ class IncomeVerificationAgent(LendingPersona):
         # paystub) runs on the real-tenant PATH 2 once the enricher attaches
         # W2_CURRENT / PAYSTUB_CURRENT extracted_fields (not attached today —
         # ENRICHER TODO). Resolver is sync/DB-less; rules fall back to SAFE_DEFAULTS.
-        w2_resolver = W2IncomeResolver(rules=None)
+        # Catalogue income rules injected by the runner (_inject_decision_rules)
+        # — the RA-4A pattern. Closes the catalogue→resolver loop:
+        # employment_history_months_required is now read from the catalogue at
+        # runtime (SAFE_DEFAULTS only as the degraded fallback). Same value (24).
+        income_rules_obj = latest_object(bundle, "income_rules") or {}
+        income_rule_values = income_rules_obj.get("values")
+        w2_resolver = W2IncomeResolver(rules=income_rule_values)
         emp_for_history = {}
         for rec in reconciled_employers:
             if isinstance(rec, dict):
@@ -348,6 +354,7 @@ class IncomeVerificationAgent(LendingPersona):
             "income_method": income_method,
             "qualifying_monthly_reported": verified,
             "employment_history": employment_history,
+            "employment_history_rule_trace": income_rules_obj.get("trace"),
             "variable_income_todo": VARIABLE_INCOME_TODO,
             "data_path": {
                 "meridian": "seeded entity_states.qualifying_monthly (PATH 1, unchanged)",

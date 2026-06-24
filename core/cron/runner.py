@@ -489,6 +489,9 @@ class PersonaRunner:
         elif decision_id == "title_assessment":
             from core.title.lien_resolver import load_lien_rules
             key, loader = "lien_rules", load_lien_rules
+        elif decision_id == "income_verification":
+            from core.income.w2_income_resolver import load_income_rules
+            key, loader = "income_rules", load_income_rules
         else:
             return
 
@@ -535,7 +538,8 @@ class PersonaRunner:
         evidence_snap = objects.pop("evidence", {})
         rules_snap = {
             k: objects.pop(k)
-            for k in ("asset_rules", "credit_rules", "collateral_rules", "lien_rules")
+            for k in ("asset_rules", "credit_rules", "collateral_rules",
+                      "lien_rules", "income_rules")
             if k in objects
         }
         entity_snap = objects  # whatever remains = entity_states / view projection
