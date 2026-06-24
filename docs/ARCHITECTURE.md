@@ -164,6 +164,20 @@ same transaction. The memory bundle is the source of truth during a live run;
 the PG bundle is the audit record (never read during a live run). Replay reads
 from `persona_bundles` directly — no view, no enricher.
 
+**RULE 11 — RESOLVER OUTPUT STANDARD (every resolver method)**
+Every resolver method that returns a findings dict MUST include:
+- `'data_source'` — where each input comes from (e.g. `"CREDIT_REPORT.tradelines"`,
+  `"entity_states.total_liquid_assets"`, `"DIVORCE_DECREE Vision (RA-EX-D)"`).
+- `'missing_inputs'` — the list of fields the method needs but that are NOT
+  extractable today (empty `[]` when all inputs are present).
+Never silently assume data is present: a missing input must surface in
+`missing_inputs` and degrade to a documented default / `not_applicable`, never a
+silent guess. This makes every advisory result auditable and makes the PATH-2
+extraction/wiring gap explicit to the UW workbench. Reference implementation:
+`core/obligations/obligation_resolver.py` (OB-B). Standard for ALL new/extended
+resolver methods; existing resolvers (asset/credit/income/...) adopt it
+incrementally as they are next touched — not a blanket retrofit.
+
 ---
 
 ## Real File Paths
