@@ -17,6 +17,10 @@ ROUTING (one entry per obligation, dispatched on ``type``):
   revolving          -> reported min payment, else balance * revolving_payment_factor_pct
   heloc              -> actual payment, else (draw period / $0 payment) credit_limit
                         or balance * heloc_payment_factor_pct
+  business_debt      -> EXCLUDED only if business-paid >= business_debt_exclusion_months
+                        (12) with no 30-day delinquency; else INCLUDED + docs_needed (OB-B)
+  rental_property    -> rental_net_monthly - pitia_monthly; >=0 positive offset (not a DTI
+                        obligation), <0 shortfall added to DTI (Fannie B3-3.1-08) (OB-B)
 
 ADVISORY (OB-A): wired into dti_calculation as an output_payload breakdown only —
 it does NOT change dti_front / dti_back / the DTI ratio (that is a later OB slice).
@@ -42,6 +46,7 @@ OBLIGATION_RULE_KEYS = [
     "revolving_payment_factor_pct",
     "heloc_payment_factor_pct",
     "months_remaining_exclusion",
+    "business_debt_exclusion_months",      # OB-B
     # alimony-paid treatment is read by the delegated AlimonyChildSupportResolver
     "alimony_paid_dti_treatment",
 ]
@@ -75,6 +80,8 @@ class ObligationResolver:
         self._heloc_pct = float(r.get("heloc_payment_factor_pct", 1))
         self._months_remaining_exclusion = int(
             float(r.get("months_remaining_exclusion", 10)))
+        self._business_debt_exclusion_months = int(
+            float(r.get("business_debt_exclusion_months", 12)))
 
     # ── per-type calculators ────────────────────────────────────────────
     def compute_installment(self, obl: dict) -> dict:
@@ -122,6 +129,64 @@ class ObligationResolver:
                 "method": f"heloc_{self._heloc_pct:.0f}pct_of_balance_or_limit",
                 "citation": _CITE}
 
+    def compute_business_debt(self, obl: dict) -> dict:
+        """OB-B — business-debt exclusion (Fannie B3-6-05). A debt is EXCLUDED from
+        DTI only when the business has paid it >= business_debt_exclusion_months
+        with no 30-day delinquency. is_business_paying / months_business_paid are
+        not in any data source today -> default to NOT proving the exclusion, so
+        the debt is INCLUDED with a docs_needed condition (the UW must supply the
+        12-month cancelled-check/bank-statement evidence to exclude). monthly_payment
+        / balance / delinquency_30 come from CREDIT_REPORT.tradelines."""
+        obl = obl or {}
+        payment = _f(obl.get("monthly_payment"))
+        balance = _f(obl.get("current_balance") or obl.get("balance"))
+        is_business_paying = bool(obl.get("is_business_paying", False))
+        months_business_paid = int(obl.get("months_business_paid", 0) or 0)
+        delinquent = bool(obl.get("delinquency_30", False))
+
+        if (is_business_paying and not delinquent
+                and months_business_paid >= self._business_debt_exclusion_months):
+            return {"type": "business_debt", "monthly_obligation": 0, "included": False,
+                    "excluded_reason": (f"business-paid {months_business_paid}mo >= "
+                                        f"{self._business_debt_exclusion_months}mo, no "
+                                        f"30-day delinquency (B3-6-05)"),
+                    "method": "business_debt_excluded_business_paid", "citation": "Fannie B3-6-05"}
+        docs = ["12-month business-paid evidence (cancelled checks / business bank "
+                "statements) + no 30-day delinquency to exclude from DTI"]
+        if delinquent:
+            docs.append("30-day delinquency present — cannot exclude even if "
+                        "business-paid (B3-6-05)")
+        return {"type": "business_debt", "monthly_obligation": round(payment, 2),
+                "included": payment > 0, "balance": balance,
+                "method": "business_debt_included_no_exclusion_evidence",
+                "citation": "Fannie B3-6-05", "docs_needed": docs}
+
+    def compute_rental_offset(self, rental: dict) -> dict:
+        """OB-B — rental mortgage offset (Fannie B3-3.1-08). net = rental_net_monthly
+        - pitia_monthly. net >= 0 -> positive offset (NOT a DTI obligation; the
+        surplus is income handled by income_verification). net < 0 -> the shortfall
+        is added to DTI obligations. rental_net_monthly comes from RA-4G (not yet on
+        the bundle) and pitia_monthly is per-rental-property (not on the bundle) —
+        both default 0 -> not_applicable (no meridian app carries rental offset
+        data; 16/16 by construction)."""
+        rental = rental or {}
+        rental_net = _f(rental.get("rental_net_monthly"))
+        pitia = _f(rental.get("pitia_monthly"))
+        if not rental_net and not pitia:
+            return {"type": "rental_property", "monthly_obligation": 0, "included": False,
+                    "method": "rental_offset_not_applicable",
+                    "note": "no rental_net_monthly / pitia_monthly on the bundle "
+                            "(RA-4G not wired + per-property PITIA absent)"}
+        net = round(rental_net - pitia, 2)
+        if net >= 0:
+            return {"type": "rental_property", "monthly_obligation": 0, "included": False,
+                    "net_offset": net, "income_contribution": net,
+                    "method": "rental_positive_offset", "citation": "Fannie B3-3.1-08",
+                    "note": f"net rental ${net:,.0f}/mo offsets PITIA — not a DTI obligation"}
+        return {"type": "rental_property", "monthly_obligation": round(abs(net), 2),
+                "included": True, "net_offset": net,
+                "method": "rental_negative_added_to_dti", "citation": "Fannie B3-3.1-08"}
+
     # ── routing ─────────────────────────────────────────────────────────
     def _route_one(self, obl: dict) -> dict:
         otype = (obl or {}).get("type")
@@ -150,6 +215,10 @@ class ObligationResolver:
             return self.compute_revolving(obl)
         if otype == "heloc":
             return self.compute_heloc(obl)
+        if otype == "business_debt":
+            return self.compute_business_debt(obl)
+        if otype in ("rental_property", "rental_offset"):
+            return self.compute_rental_offset(obl)
         return {"type": otype or "unknown", "monthly_obligation": 0, "included": False,
                 "excluded_reason": f"unrecognized obligation type: {otype}",
                 "method": "unrouted"}

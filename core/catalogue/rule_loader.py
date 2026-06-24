@@ -89,6 +89,8 @@ SAFE_DEFAULTS = {
     # OB-A — obligation payment factors (Fannie B3-6-02)
     'revolving_payment_factor_pct':              5,
     'heloc_payment_factor_pct':                  1,
+    # OB-B — business-debt exclusion (Fannie B3-6-05)
+    'business_debt_exclusion_months':            12,
     # Property
     'ltv_purchase_max':                97,
     'ltv_cashout_max':                 80,

@@ -92,6 +92,63 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(out["per_type"], [])
 
 
+class BusinessDebtTests(unittest.TestCase):
+    def test_default_included_with_docs(self):
+        # is_business_paying defaults False -> INCLUDED + docs_needed to exclude.
+        r = R.compute_business_debt({"monthly_payment": 600, "current_balance": 30000})
+        self.assertEqual(r["monthly_obligation"], 600.0)
+        self.assertTrue(r["included"])
+        self.assertTrue(r["docs_needed"])
+
+    def test_excluded_when_business_paid_12mo(self):
+        r = R.compute_business_debt({"monthly_payment": 600, "is_business_paying": True,
+                                     "months_business_paid": 12, "delinquency_30": False})
+        self.assertEqual(r["monthly_obligation"], 0)
+        self.assertFalse(r["included"])
+        self.assertIn("excluded_reason", r)
+
+    def test_not_excluded_if_delinquent(self):
+        r = R.compute_business_debt({"monthly_payment": 600, "is_business_paying": True,
+                                     "months_business_paid": 24, "delinquency_30": True})
+        self.assertTrue(r["included"])  # delinquency blocks exclusion
+        self.assertEqual(r["monthly_obligation"], 600.0)
+
+    def test_not_excluded_if_under_12mo(self):
+        r = R.compute_business_debt({"monthly_payment": 600, "is_business_paying": True,
+                                     "months_business_paid": 6})
+        self.assertTrue(r["included"])
+
+
+class RentalOffsetTests(unittest.TestCase):
+    def test_not_applicable_when_no_data(self):
+        r = R.compute_rental_offset({})
+        self.assertEqual(r["method"], "rental_offset_not_applicable")
+        self.assertFalse(r["included"])
+
+    def test_positive_offset_not_an_obligation(self):
+        r = R.compute_rental_offset({"rental_net_monthly": 2000, "pitia_monthly": 1500})
+        self.assertFalse(r["included"])
+        self.assertEqual(r["net_offset"], 500.0)
+        self.assertEqual(r["monthly_obligation"], 0)
+
+    def test_negative_added_to_dti(self):
+        r = R.compute_rental_offset({"rental_net_monthly": 1000, "pitia_monthly": 1500})
+        self.assertTrue(r["included"])
+        self.assertEqual(r["monthly_obligation"], 500.0)  # abs(1000-1500)
+        self.assertEqual(r["net_offset"], -500.0)
+
+    def test_routing_business_and_rental(self):
+        out = R.resolve([
+            {"type": "business_debt", "monthly_payment": 600},              # included (default)
+            {"type": "business_debt", "monthly_payment": 600, "is_business_paying": True,
+             "months_business_paid": 18},                                   # excluded
+            {"type": "rental_property", "rental_net_monthly": 1000, "pitia_monthly": 1500},  # +500 obligation
+            {"type": "rental_property", "rental_net_monthly": 2000, "pitia_monthly": 1500},  # offset, 0
+        ])
+        self.assertEqual(out["total_qualifying_obligations"], 1100.0)  # 600 + 500
+        self.assertEqual(len(out["excluded"]), 2)  # the excluded business debt + positive offset
+
+
 class RulesInjectionTests(unittest.TestCase):
     def test_custom_revolving_pct_flows_through(self):
         r10 = ObligationResolver(rules={"revolving_payment_factor_pct": 10})
