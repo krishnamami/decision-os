@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from core.context_store import ContextBundle
+from core.income.alimony_resolver import AlimonyChildSupportResolver
 from core.income.retirement_income_resolver import RetirementIncomeResolver
 from core.income.w2_income_resolver import VARIABLE_INCOME_TODO, W2IncomeResolver
 from core.normalizer.models import DecisionOutcome
@@ -397,6 +398,30 @@ class IncomeVerificationAgent(LendingPersona):
             ),
         }
 
+        # ── INC-F: alimony / child support (ADVISORY, foundation) ──────────
+        # Catalogue-driven (AlimonyChildSupportResolver reads income_rules).
+        # Input shape = the DIVORCE_DECREE Vision extractor fields; meridian has
+        # no decree docs, so every method returns not_applicable (correct — this
+        # is a foundation pass). output_payload only; proposed_outcome untouched.
+        # Live data flows on PATH 2 (ingest_document -> income_sources).
+        alimony_resolver = AlimonyChildSupportResolver(rules=income_rule_values)
+        decree = latest_object(bundle, "DivorceDecree") or {}
+        alimony_child_support_analysis = {
+            "resolver": "AlimonyChildSupportResolver",
+            "scope": "received (3yr continuance) + paid (DTI treatment); foundation only",
+            "alimony_received": alimony_resolver.qualify_alimony_received(decree),
+            "child_support_received": alimony_resolver.qualify_child_support_received(decree),
+            "alimony_paid": alimony_resolver.treat_alimony_paid(decree),
+            "child_support_paid": alimony_resolver.treat_child_support_paid(decree),
+            "rule_trace": income_rules_obj.get("trace"),
+            "decree_present": bool(decree),
+            "extraction_todo": (
+                "DIVORCE_DECREE docs (Vision extractor RA-EX-D emits alimony_monthly/"
+                "receiving/termination_date + child_support_monthly/paying) must be "
+                "ingested + populated to income_sources/obligations for PATH 2."
+            ),
+        }
+
         return OfflineReasoning(
             output_payload={
                 "verified_income": verified,
@@ -406,6 +431,8 @@ class IncomeVerificationAgent(LendingPersona):
                 "income_analysis": income_analysis,
                 # INC-E — advisory retirement/SS/asset-depletion/investment (additive).
                 "retirement_income_analysis": retirement_income_analysis,
+                # INC-F — advisory alimony/child-support (additive).
+                "alimony_child_support_analysis": alimony_child_support_analysis,
                 # RULE 5 — evidence resolution visible to auditors.
                 "income_source": income_source,
                 "income_method": income_method,

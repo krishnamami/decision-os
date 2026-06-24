@@ -51,11 +51,12 @@ VARIABLE_INCOME_TODO = (
 # resolver's keys ride on the SAME bundle key (income_rules) so one runner load
 # covers all income rules. Resolvers remain SEPARATE modules — only the key list
 # is unified here.
+from core.income.alimony_resolver import ALIMONY_RULE_KEYS
 from core.income.retirement_income_resolver import RETIREMENT_INCOME_RULE_KEYS
 
 INCOME_RULE_KEYS = [
     "employment_history_months_required",
-] + RETIREMENT_INCOME_RULE_KEYS
+] + RETIREMENT_INCOME_RULE_KEYS + ALIMONY_RULE_KEYS
 
 
 async def load_income_rules(conn, tenant_id: str, agency: str = "fannie") -> dict:

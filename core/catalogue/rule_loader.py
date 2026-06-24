@@ -82,6 +82,10 @@ SAFE_DEFAULTS = {
     'asset_depletion_cash_haircut_pct':          100,
     'asset_depletion_equity_haircut_pct':        70,
     'dividend_interest_history_months_required': 24,
+    # INC-F — alimony / child support (Fannie B3-3.1-09 / B3-6-05)
+    'alimony_continuance_months_required':       36,
+    'child_support_continuance_months_required': 36,
+    'alimony_paid_dti_treatment':                'monthly_debt',
     # Property
     'ltv_purchase_max':                97,
     'ltv_cashout_max':                 80,
