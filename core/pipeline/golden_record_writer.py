@@ -76,6 +76,63 @@ def _num(v: Any) -> Optional[float]:
         return None
 
 
+async def _write_w2_income_source(
+    conn, application_id: str, tenant_id: str,
+) -> bool:
+    """INC-A: populate income_sources with the primary borrower's W2 stream from
+    the extracted W2 document. ADDITIVE — entity_states.qualifying_monthly is left
+    untouched (the 14 personas still read it). Best-effort: returns False (never
+    raises) if there is no W2 doc, no wages, or the income_sources table is
+    absent. Idempotent — replaces the current primary W2 row on re-ingest."""
+    try:
+        row = await conn.fetchrow(
+            """SELECT document_id, extracted_fields, confidence_score
+               FROM document_index
+               WHERE application_id=$1 AND tenant_id=$2
+                 AND document_type='W2_CURRENT' AND is_current=true
+               LIMIT 1""",
+            application_id, tenant_id,
+        )
+        if not row:
+            return False
+        fields = row["extracted_fields"]
+        if isinstance(fields, str):
+            fields = json.loads(fields) if fields else {}
+        fields = fields or {}
+        annual = _num(fields.get("box1_wages"))
+        if not annual:
+            return False
+        monthly = round(annual / 12.0, 2)
+        employer = fields.get("employer_name")
+        confidence = _num(row["confidence_score"]) or 0.0
+
+        # Idempotent: clear any prior current primary W2 stream, then insert.
+        await conn.execute(
+            """UPDATE income_sources SET is_current=false, updated_at=NOW()
+               WHERE application_id=$1 AND tenant_id=$2
+                 AND borrower_role='primary' AND income_type='W2'
+                 AND is_current=true""",
+            application_id, tenant_id,
+        )
+        await conn.execute(
+            """INSERT INTO income_sources (
+                   application_id, tenant_id, borrower_role, income_type,
+                   employer_name, monthly_amount, frequency, is_current,
+                   confidence, method, doc_references)
+               VALUES ($1,$2,'primary','W2',$3,$4,'monthly',true,$5,
+                       'W2 box1/12',$6)""",
+            application_id, tenant_id, employer, monthly, confidence,
+            [row["document_id"]],
+        )
+        logger.info("income_sources: wrote W2 stream %s/mo for %s",
+                    monthly, application_id)
+        return True
+    except Exception as exc:  # noqa: BLE001 — additive, must never break ingestion
+        logger.warning("income_sources W2 write skipped for %s: %s",
+                       application_id, exc)
+        return False
+
+
 async def apply_golden_record(
     conn,
     application_id: str,
@@ -140,7 +197,15 @@ async def apply_golden_record(
         written = True
         logger.info("golden_record: wrote %s for %s", list(diff), application_id)
 
-    return {"golden": golden, "current": current, "diff": diff, "written": written}
+    # INC-A: also populate income_sources (additive; W2 stream). Only on the real
+    # write path — meridian raised above, dry-run leaves the model alone.
+    income_written = False
+    if write:
+        income_written = await _write_w2_income_source(
+            conn, application_id, tenant_id)
+
+    return {"golden": golden, "current": current, "diff": diff,
+            "written": written, "income_written": income_written}
 
 
 __all__ = ["apply_golden_record", "load_doc_map", "build_golden_record"]
