@@ -165,13 +165,16 @@ class ContextEnricher:
     async def _attach_aus_result(
         self, base: dict, application_id: str, tenant_id: str
     ) -> None:
-        """Surface the parsed DU/AUS result (RA-AUS-A) for approval_routing, if
-        one was ingested. None when no AUS response exists (not all lenders run
-        DU) — the persona then emits no AUS signal. Best-effort."""
+        """Surface the parsed DU result (RA-AUS-A) AND the parsed LP result
+        (RA-AUS-C) for approval_routing, if either was ingested. Each is None when
+        no response exists for that system (not all lenders run DU and/or LP) — the
+        persona reconciles whichever exist. Best-effort."""
         try:
             from core.aus.store import load_aus_result
             base["aus_result"] = await load_aus_result(
-                self.conn, application_id, tenant_id)
+                self.conn, application_id, tenant_id, "DU")
+            base["aus_result_lp"] = await load_aus_result(
+                self.conn, application_id, tenant_id, "LP")
         except Exception:
             pass
 
@@ -319,8 +322,9 @@ class ContextEnricher:
             "adverse_action_rule_trace":   None,
             # HMDA LAR source fields (RA-7C) — only for underwriting_decision.
             "hmda_fields":                 None,
-            # Parsed AUS/DU result (RA-AUS-A) — only for approval_routing.
-            "aus_result":                  None,
+            # Parsed AUS results — only for approval_routing.
+            "aus_result":                  None,   # DU (RA-AUS-A)
+            "aus_result_lp":               None,   # LP (RA-AUS-C)
         }
 
         # Thresholds + fraud first, so they ride on every return path.

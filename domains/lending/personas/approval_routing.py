@@ -19,6 +19,30 @@ _TARGETS: dict[str, str] = {
 }
 
 
+def _aus_conservatism(aus_result: Optional[dict]) -> int:
+    """Rank a parsed AUS result by how PERMISSIVE it is (higher = more
+    permissive): approve=2, eligible-but-not-approve (DU Refer/Eligible or LP
+    Caution)=1, ineligible=0. Used to pick the more CONSERVATIVE of DU + LP."""
+    if not aus_result:
+        return 99  # absent -> never "more conservative" than a present result
+    if aus_result.get("approve"):
+        return 2
+    if aus_result.get("eligible"):
+        return 1
+    return 0
+
+
+def _more_conservative(du_result: Optional[dict],
+                       lp_result: Optional[dict]) -> Optional[dict]:
+    """Return the more conservative (less permissive) of the DU and LP results so
+    a single Caution/Refer is never masked by the other system's Approve. Returns
+    the lone result if only one ran, or None if neither did. Ties favour DU."""
+    if du_result and lp_result:
+        return lp_result if (_aus_conservatism(lp_result)
+                             < _aus_conservatism(du_result)) else du_result
+    return du_result or lp_result
+
+
 class WorkflowRoutingAgent(LendingPersona):
     """approval_routing — depends_on underwriting_decision.
 
@@ -115,12 +139,14 @@ class WorkflowRoutingAgent(LendingPersona):
                        f"below {conf_min:.0%} (Fannie B3-3.1-01)."),
             ))
 
-        # ── RA-AUS-A: DU vs Accord reconciliation (advisory, OUTCOME-NEUTRAL) ─
-        # If a DU response was ingested for this app, surface a conflict between
-        # DU's recommendation and Accord's underwriting outcome for human
-        # reconciliation (RA-AUS-B resolves it). No DU response -> no signal
-        # (not all lenders run DU). proposed_outcome is never changed here.
-        aus_result = ev.get("aus_result")
+        # ── RA-AUS-A/C: DU + LP vs Accord reconciliation (advisory, NEUTRAL) ─
+        # If a DU and/or LP response was ingested for this app, surface a conflict
+        # between the AUS recommendation and Accord's underwriting outcome for
+        # human reconciliation. Neither response -> no signal (not all lenders run
+        # DU and/or LP). proposed_outcome is never changed here.
+        aus_result = ev.get("aus_result")        # DU (RA-AUS-A)
+        lp_result = ev.get("aus_result_lp")      # LP (RA-AUS-C)
+        # RA-AUS-A signal stays DU-anchored (unchanged behaviour).
         aus_conflict = detect_aus_conflict(aus_result, outcome_label)
         if aus_conflict:
             signals.append(make_signal(
@@ -129,17 +155,21 @@ class WorkflowRoutingAgent(LendingPersona):
                 notes=aus_conflict["message"],
             ))
 
-        # ── RA-AUS-B: full reconciliation (advisory, OUTCOME-NEUTRAL) ─────
+        # ── RA-AUS-B/C: full reconciliation (advisory, OUTCOME-NEUTRAL) ─────
         # Classify the disagreement into one of 4 named cases (risk tier + UW
-        # action) for the workbench — repurchase defense. accord_outcome is the
-        # raw UNDERWRITING outcome (block/recommend/escalate/allow), NOT this
-        # persona's routing outcome (a decline routes as ALLOW, which would
-        # misclassify). proposed_outcome is never changed → 16/16 holds.
+        # action) for the workbench — repurchase defense. When both DU and LP ran,
+        # reconcile against the MORE CONSERVATIVE result (RA-AUS-C) so an LP Caution
+        # is never masked by a DU Approve. accord_outcome is the raw UNDERWRITING
+        # outcome (block/recommend/escalate/allow), NOT this persona's routing
+        # outcome (a decline routes as ALLOW, which would misclassify).
+        # proposed_outcome is never changed → 16/16 holds.
+        primary_aus = _more_conservative(aus_result, lp_result)
+        aus_system = (primary_aus or {}).get("system")
         uw_outcome = (
             (bundle.upstream_outputs.get("underwriting_decision") or {}).get("outcome")
             or outcome_label
         )
-        aus_reconciliation = AUSReconciliationEngine().reconcile(uw_outcome, aus_result)
+        aus_reconciliation = AUSReconciliationEngine().reconcile(uw_outcome, primary_aus)
         if aus_reconciliation.get("reconciliation_required"):
             if aus_reconciliation["risk"] == "HIGH":
                 signals.append(make_signal(
@@ -153,7 +183,7 @@ class WorkflowRoutingAgent(LendingPersona):
                     direction=SignalDirection.CONTRADICTS, source="aus",
                     notes=aus_reconciliation["uw_action"],
                 ))
-        elif aus_result:
+        elif primary_aus:
             signals.append(make_signal(
                 "AUS_ACCORD_AGREEMENT", "HIGH",
                 direction=SignalDirection.SUPPORTS, source="aus",
@@ -163,12 +193,16 @@ class WorkflowRoutingAgent(LendingPersona):
         return OfflineReasoning(
             output_payload={
                 "routing_target": target,
-                # RA-AUS-A — DU/AUS result + conflict (None unless DU ran).
+                # RA-AUS-A — DU result + conflict (None unless DU ran).
                 "aus_result": aus_result,
+                # RA-AUS-C — LP result (None unless LP ran).
+                "aus_result_lp": lp_result,
                 "aus_accord_conflict": aus_conflict,
-                # RA-AUS-B — full reconciliation + confidence (advisory).
+                # RA-AUS-B/C — full reconciliation + confidence (advisory). Run
+                # against the more conservative of DU + LP; aus_system names it.
                 "aus_reconciliation": aus_reconciliation,
                 "aus_confidence": aus_reconciliation.get("confidence"),
+                "aus_reconciled_system": aus_system,
                 # RA-PERSONA-C: evidence provenance (advisory).
                 "evidence_populated": evidence_populated,
                 "route_evidence_confidence": (
