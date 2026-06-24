@@ -200,6 +200,9 @@ Evaluate:        scripts/evaluate_meridian_scenarios.py
 Bundles:         persona_bundles table (RA-3F — done; scripts/migrations/create_persona_bundles.sql)
 Storage:         core/storage/  s3_keys.py (MISMO key builder) + s3_client.py
                  (async boto3 wrapper, graceful no-AWS no-op)        (RA-P0-A ✅)
+Income model:    core/income/  income_aggregator.py (get_qualifying_income /
+                 get_employment_gaps + INCOME_TYPES/BORROWER_ROLES consts) +
+                 w2_income_resolver.py (W2 base salary, sync/DB-less) (INC-A/B ✅)
 ```
 
 ---
@@ -225,6 +228,11 @@ hmda_lar                   HMDA Loan/Application Register — one row per app, l
 aus_responses             Parsed AUS (DU/LP) recommendations — one per app+system
                           (DU RA-AUS-A, LP RA-AUS-C). LP feedbacks stored in the
                           shared `findings` JSONB (no `feedbacks` column)
+income_sources            One row per income stream per borrower (INC-A) — type,
+                          monthly/annual (generated), confidence, method,
+                          fact_node_ids. Additive to entity_states.qualifying_monthly
+employment_history        Per-job history (INC-A) — start/end, is_self_employed,
+                          ownership_pct; FK income_source_id
 ```
 
 ---
@@ -257,6 +265,44 @@ succeeds, stores the raw file (AES256) + processed JSON and stamps
 `document_index.s3_key` with the raw key — best-effort, gated on a successful put
 (S3 off -> s3_key untouched, extraction unaffected). The other key builders
 (mismo/aus/exports) are ready for their future producers.
+
+---
+
+## Income Model (INC-A / INC-B — UW OS)
+
+`entity_states.qualifying_monthly` is a single scalar; it cannot represent
+multiple income streams, per-stream evidence, or co-borrower separation. The
+income model (INC-A) adds that WITHOUT removing the scalar — **two data paths,
+both must work**:
+
+```
+PATH 1 (meridian / seeded tenants):  entity_states.qualifying_monthly  (UNCHANGED)
+PATH 2 (real tenants post-ingestion): income_sources rows -> get_qualifying_income()
+```
+
+- **income_sources / employment_history** tables + `vw_employment_gaps` view
+  (INC-A, `scripts/migrations/create_income_tables.sql`). Additive; no RLS yet
+  (a later INC slice adds tenant policy).
+- **core/income/income_aggregator.py** (INC-A): `get_qualifying_income()` sums
+  current streams across borrower roles; `get_employment_gaps()` reads the view;
+  `INCOME_TYPES` / `BORROWER_ROLES` constants (no magic strings). Read-only.
+- **golden_record_writer.apply_golden_record(write=True)** (INC-A) additively
+  writes the primary W2 stream into income_sources (best-effort, idempotent);
+  `entity_states.qualifying_monthly` is never touched. income_sources is EMPTY
+  for meridian (its writes are hard-refused — seeded fixtures).
+- **core/income/w2_income_resolver.py** (INC-B): W2 base salary only —
+  `qualify_from_w2_doc` (box1/12), `qualify_from_paystub` (gross×freq/12),
+  `check_employment_history` (24-month, catalogue `employment_history_months_required`
+  Fannie B3-3.1-01), `select_qualifying_income` (lesser-of). SYNC + DB-LESS;
+  SAFE_DEFAULTS fallback. income_verification consumes it ADVISORY-only
+  (output_payload.income_analysis) — proposed_outcome + the seeded
+  qualifying_monthly are unchanged (16/16 holds).
+- **Variable income** (overtime/bonus/commission/hourly) is OUT of scope until
+  the paystub extractor adds the fields (overtime_ytd, bonus_ytd, commission_ytd,
+  hourly_rate, hours_per_week) — none exist in document_index today. See
+  `VARIABLE_INCOME_TODO`. ENRICHER TODO: it does not yet attach W2/PAYSTUB
+  extracted_fields to the income bundle, so the doc-level resolver runs on PATH 2
+  only.
 
 ---
 
@@ -334,8 +380,9 @@ Notes:
 ## Catalogue State (verified 2026-06-24)
 
 ```
-agency_guidelines:   83 rows  (Fannie 60 / FHA 13 / VA 8 / Freddie 2)
-                     (+2 SE ownership thresholds, Gap c fix f35ae33)
+agency_guidelines:   84 rows  (Fannie 61 / FHA 13 / VA 8 / Freddie 2)
+                     (+2 SE ownership thresholds Gap c f35ae33;
+                      +1 employment_history_months_required INC-B 5e348d2)
 regulatory_rules:    23 rows
 overlay_rules:        6 rows  (Meridian 4 / Summit 2)
 verify gate:         59/59 exit 0   (scripts/verify_catalogue_ready.py)
