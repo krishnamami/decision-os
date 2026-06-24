@@ -216,7 +216,8 @@ adverse_action_notices    ECOA/Reg B notice tracking — declines + 30-day deadl
 hmda_lar                   HMDA Loan/Application Register — one row per app, loan +
                           action + demographic data, Reg C (RA-7C)
 aus_responses             Parsed AUS (DU/LP) recommendations — one per app+system
-                          (RA-AUS-A)
+                          (DU RA-AUS-A, LP RA-AUS-C). LP feedbacks stored in the
+                          shared `findings` JSONB (no `feedbacks` column)
 ```
 
 ---
@@ -262,17 +263,20 @@ Notes:
   from the blocking upstream decisions, 30-day deadline from the catalogue. The
   enricher attaches the deadline only for this decision. Advisory; the persona
   never writes the DB (the population job fills adverse_action_notices).
-- approval_routing reads the parsed DU/AUS result (RA-AUS-A) when one exists and
+- approval_routing reads the parsed DU result (RA-AUS-A) when one exists and
   emits AUS_ACCORD_CONFLICT if DU disagrees with Accord's underwriting outcome
   (DU approve vs Accord decline, or DU refer/ineligible vs Accord approve). The
   enricher attaches aus_result for this decision only; meridian has no DU data so
   no signal fires. Advisory.
-- approval_routing also runs the RA-AUS-B reconciliation engine
-  (core/aus/reconciliation.py) on the result: it classifies an Accord-vs-DU
-  disagreement into 4 named cases (risk tier + explanation + UW action + HMDA
-  implication) and emits AUS_CONFLICT_HIGH_RISK / AUS_CONFLICT_REVIEW on conflict
-  or AUS_ACCORD_AGREEMENT on agreement, reconciling against the upstream
-  UNDERWRITING outcome (not the routing outcome). output_payload.aus_reconciliation
+- AUS phase COMPLETE (RA-AUS-A/B/C): DU + LP both wired end-to-end. The enricher
+  attaches BOTH aus_result (DU) and aus_result_lp (LP) for approval_routing only.
+  The persona runs the RA-AUS-B reconciliation engine (core/aus/reconciliation.py)
+  against the MORE CONSERVATIVE of the two systems (RA-AUS-C — an LP Caution is
+  never masked by a DU Approve): it classifies an Accord-vs-AUS disagreement into
+  4 named cases (risk tier + explanation + UW action + HMDA implication) and emits
+  AUS_CONFLICT_HIGH_RISK / AUS_CONFLICT_REVIEW on conflict or AUS_ACCORD_AGREEMENT
+  on agreement, reconciling against the upstream UNDERWRITING outcome (not the
+  routing outcome). output_payload carries aus_reconciliation + aus_reconciled_system
   on every decision. Advisory; proposed_outcome untouched; 16/16 holds.
 - underwriting_decision also emits a HMDA LAR record (RA-7C) into
   output_payload.hmda_lar on EVERY application. Demographic data (ethnicity/race/
@@ -360,7 +364,22 @@ BACKLOG (after client demo):
                output_payload.aus_reconciliation on every decision. ADVISORY —
                proposed_outcome untouched; no DU response -> reconciliation_required
                =False; meridian has no DU data so 16/16 holds.
-  RA-AUS-C     LP (Loan Product Advisor) parser + reconciliation
+  RA-AUS-C     SHIPPED: LP (Loan Prospector / Loan Product Advisor) parser —
+               Freddie's AUS. core/aus/lp_parser.py:LPParser mirrors the DUParser
+               shape (Accept/Caution/Ineligible/Out of Scope + A+/A/B/C/D/E grade
+               + risk scale -> exceptional..not_eligible; feedbacks + conditions).
+               LP Caution = ELIGIBLE-but-not-accept (DU Refer/Eligible analogue),
+               NEVER conflated with Refer/Ineligible. Parsed dict exposes `approve`
+               as an alias for `accept` so AUSReconciliationEngine consumes LP
+               identically to DU (engine UNCHANGED). store.ingest_lp_response upserts
+               under aus_system='LP' (feedbacks stored in the shared `findings`
+               JSONB; full dict in parsed_response — no `feedbacks` column).
+               Enricher attaches BOTH aus_result (DU) + aus_result_lp (LP);
+               approval_routing reconciles against the MORE CONSERVATIVE of the two
+               (LP Caution not masked by DU Approve). ADVISORY — proposed_outcome
+               untouched; meridian has no LP data so 16/16 holds.
+               -> AUS phase RA-AUS-A/B/C COMPLETE: DU + LP both parsed, stored,
+               reconciled with Accord end-to-end.
   RA-5/A/B     Policy transparency
   RA-7A        SHIPPED: ATR 8-factor checklist + QM classifier (12 CFR 1026.43)
                in compliance_check. Thresholds from regulatory_rules via the
