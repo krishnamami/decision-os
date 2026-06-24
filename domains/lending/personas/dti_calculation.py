@@ -4,6 +4,7 @@ from typing import Optional
 
 from core.context_store import ContextBundle
 from core.normalizer.models import DecisionOutcome
+from core.obligations.obligation_resolver import ObligationResolver
 from core.policy_engine import PolicyDecision
 from core.trace import SignalDirection
 
@@ -146,9 +147,35 @@ class DTICalculationAgent(LendingPersona):
                        "B3-3.1-01). Treat the ratio as uncertain."),
             ))
 
+        # ── OB-A: obligation breakdown (ADVISORY, additive) ───────────────
+        # Decompose monthly obligations by type for the UW workbench. Reads the
+        # catalogue obligation rules injected by the runner; routes each item
+        # (student loans pre-computed by tradeline_analyzer, alimony/child-support
+        # paid via the INC-F resolver, installment/revolving/heloc calculators).
+        # output_payload ONLY — dti/dti_front/dti_back + total_obligations above
+        # are UNCHANGED (changing the DTI math is a later OB slice). Meridian's
+        # dti bundle carries only the aggregate existing_debt_obligations (no
+        # per-type list), so the breakdown is foundation there; live per-obligation
+        # inputs (tradelines/decree) flow on PATH 2.
+        obligation_rules_obj = latest_object(bundle, "obligation_rules") or {}
+        obligation_rule_values = obligation_rules_obj.get("values")
+        obligations_input = application.get("obligations") or []
+        obligation_breakdown = ObligationResolver(
+            rules=obligation_rule_values).resolve(obligations_input)
+        obligation_breakdown["aggregate_existing_debt_monthly"] = round(
+            existing_debt_monthly, 2)
+        obligation_breakdown["rule_trace"] = obligation_rules_obj.get("trace")
+        obligation_breakdown["note"] = (
+            "Advisory breakdown — DTI ratio unchanged. Per-obligation inputs "
+            "(tradelines, decree) populate on PATH 2; meridian carries only the "
+            "aggregate existing_debt_obligations."
+        )
+
         return OfflineReasoning(
             output_payload={
                 "dti_ratio": round(dti, 3) if dti != float("inf") else None,
+                # OB-A — advisory obligation breakdown (additive).
+                "obligation_breakdown": obligation_breakdown,
                 "dti": round(dti, 3) if dti != float("inf") else None,
                 "verified_income": verified_income_annual,
                 "monthly_obligations": round(total_obligations, 2),

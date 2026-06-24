@@ -86,6 +86,9 @@ SAFE_DEFAULTS = {
     'alimony_continuance_months_required':       36,
     'child_support_continuance_months_required': 36,
     'alimony_paid_dti_treatment':                'monthly_debt',
+    # OB-A — obligation payment factors (Fannie B3-6-02)
+    'revolving_payment_factor_pct':              5,
+    'heloc_payment_factor_pct':                  1,
     # Property
     'ltv_purchase_max':                97,
     'ltv_cashout_max':                 80,
