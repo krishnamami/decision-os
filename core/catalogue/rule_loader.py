@@ -116,6 +116,12 @@ SAFE_DEFAULTS = {
     'credit_report_validity_days':               120,
     'w2_tax_year_lookback_years':                2,
     'tax_return_lookback_years':                 2,
+    # CO-D — ADU + multi-unit rental income (Fannie B3-3.1-08 / B5-6-01)
+    'market_rent_qualifying_factor_pct':         75,
+    'subject_2_4_unit_rental_factor':            75,
+    'adu_rental_income_allowed':                 True,
+    'adu_owner_occupancy_required':              True,
+    'adu_max_units':                             1,
     # Property
     'ltv_purchase_max':                97,
     'ltv_cashout_max':                 80,
