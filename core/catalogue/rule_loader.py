@@ -107,6 +107,15 @@ SAFE_DEFAULTS = {
     'exception_score_senior_min':                9,
     'exception_score_manager_min':               5,
     'exception_score_uw_min':                    2,
+    # EV-G — document staleness / recency (Fannie B3-2-10 / B3-4.3-05 / B3-5.3-01 /
+    # B3-3.1-01/02 / B7-2-03; FHA HUD 4000.1)
+    'appraisal_validity_days_conventional':      120,
+    'appraisal_validity_days_fha':               180,
+    'paystub_max_age_days':                      30,
+    'bank_statement_max_age_days':               60,
+    'credit_report_validity_days':               120,
+    'w2_tax_year_lookback_years':                2,
+    'tax_return_lookback_years':                 2,
     # Property
     'ltv_purchase_max':                97,
     'ltv_cashout_max':                 80,
