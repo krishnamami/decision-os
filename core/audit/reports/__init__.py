@@ -13,6 +13,7 @@ from .base import Report
 from .bias import generate_bias_report
 from .fair_lending import generate_fair_lending_report
 from .hmda import generate_hmda_report
+from .mismo_bpm_conformance import generate_mismo_bpm_conformance_report
 from .overrides import generate_exception_register, generate_overrides_report
 from .repurchase_defense import generate_repurchase_defense_report
 from .security import generate_security_report
@@ -26,5 +27,6 @@ __all__ = [
     "generate_overrides_report",
     "generate_exception_register",
     "generate_repurchase_defense_report",
+    "generate_mismo_bpm_conformance_report",
     "generate_security_report",
 ]
