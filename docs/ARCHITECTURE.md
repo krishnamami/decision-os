@@ -251,6 +251,10 @@ Exceptions:      core/exceptions/  exception_engine.py (ExceptionEngine — elig
                  (CompensatingFactorsEngine — detect 6 factors); sync/DB-less  (EX-A/B ✅)
                  + exception_writer.py (population job) + exception_workflow.py
                  (RBAC + status transitions); DB writers, NOT runner-wired (EX-C ✅)
+Intelligence:    core/intelligence/  change_impact_simulator.py (ChangeImpactSimulator —
+                 read-only "what-if" over recorded decisions; no engine re-run) (CI-A ✅)
+                 API: api/accord/intelligence.py (POST /simulate-impact + GET
+                 /simulatable-rules)
 ```
 
 ---
@@ -461,6 +465,56 @@ moving proposed_outcome (Known Gap f stands).
     OUTCOME change remains deliberate future work). NOTE: `decision_outputs` stores the
     persona payload in `context_snapshot` (there is NO output_payload column) — the
     writer reads context_snapshot.
+
+---
+
+## Change Impact Simulation (CI-A)
+
+`core/intelligence/change_impact_simulator.py` answers "if we moved this overlay
+rule, what happens to the pipeline?" — **read-only**, never writing the catalogue
+or any decision (same posture as `core/audit/reports`). It does NOT re-run the
+engine; the full 14-persona dry-run re-evaluation is CI-B (future).
+
+**Approach (delta short-circuit + binding-constraint cross-check):** each
+simulatable overlay rule maps to one `entity_states` field + one upstream persona
++ a gate direction —
+
+```
+SIMULATABLE_FIELDS = {
+  "credit_floor":     ("mid_credit_score", "credit_assessment", "gte"),  # floor
+  "dti_back_max":     ("dti_back",          "dti_calculation",   "lte"),  # ceiling
+  "ltv_max_purchase": ("ltv",               "ltv_assessment",    "lte"),  # ceiling
+}
+```
+
+For each application: re-evaluate ONLY that gate against the hypothetical
+threshold; flip the controlled persona's outcome ONLY if the field gate itself
+flips (a persona that blocked for a non-threshold reason — bankruptcy, thin file —
+is left intact); then **re-reduce the recorded upstream persona outcomes** (with
+that one persona swapped) to the simulated underwriting outcome. The reducer is
+the real boundary — *any block → block; else any escalate → escalate; else
+recommend* — and reproduces all **16/16** recorded meridian outcomes.
+
+**Correctness guarantee — an app only flips if the simulated rule is its SOLE
+binding constraint.** Because the full upstream set is re-reduced, multi-constraint
+apps are excluded automatically: clearing credit on an app that also has
+`product_eligibility=block` still reduces to block. A would-be flip that is
+masked by another blocker is reported as `shadowed` (dollars NOT counted toward
+unblocks), not silently dropped.
+
+**Data source (spec correction, important):** the binding constraint is read from
+the authoritative `decision_outputs.upstream_decisions` column (a `{persona:
+outcome}` map), NOT from `output_payload.signals` — that array is EMPTY in the
+live data, and using it would make every app look sole-binding (false flips
+everywhere). RULE 11 holds: a NULL field (e.g. SC03 `dti_back`) is reported in
+`missing_inputs` and skipped, never assumed. Every result carries `data_source`
++ `missing_inputs`; the top-level result carries a plain-language `honesty_caveat`
+(true unblocks vs shadowed-by-other-constraint, dollars excluded, NULL skips,
+dataset size). Thresholds are always caller-supplied — nothing hardcoded.
+
+CI-B (future): inject an override rules dict into the runner and re-run all 14
+personas for full cascade fidelity (captures effects this single-gate model
+approximates).
 
 ---
 
