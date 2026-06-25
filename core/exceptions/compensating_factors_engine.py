@@ -27,6 +27,10 @@ COMPENSATING_FACTOR_RULE_KEYS = [
     "long_employment_months",
     "minimal_debt_obligations_max_pct",
     "minimum_reserves_months",   # already seeded — baseline floor
+    # EX-C — score -> approval-level thresholds (de-hardcoded from detect_all)
+    "exception_score_senior_min",
+    "exception_score_manager_min",
+    "exception_score_uw_min",
 ]
 
 
@@ -57,6 +61,10 @@ class CompensatingFactorsEngine:
         self._long_employment_months = float(r.get("long_employment_months", 60))
         self._minimal_debt_pct = float(r.get("minimal_debt_obligations_max_pct", 10))
         self._baseline_reserves = float(r.get("minimum_reserves_months", 2))
+        # EX-C — score -> approval-level thresholds (catalogue, not hardcoded).
+        self._score_senior_min = int(r.get("exception_score_senior_min", 9))
+        self._score_manager_min = int(r.get("exception_score_manager_min", 5))
+        self._score_uw_min = int(r.get("exception_score_uw_min", 2))
 
     def detect_reserves(self, inputs: dict) -> dict:
         inputs = inputs or {}
@@ -225,11 +233,11 @@ class CompensatingFactorsEngine:
         ]
         present = [f for f in factors if f.get("present")]
         score = sum(_STRENGTH_SCORE.get(f.get("strength"), 0) for f in factors)
-        if score >= 9:
+        if score >= self._score_senior_min:
             approval_level = "senior_uw_approval"
-        elif score >= 5:
+        elif score >= self._score_manager_min:
             approval_level = "uw_manager_approval"
-        elif score >= 2:
+        elif score >= self._score_uw_min:
             approval_level = "uw_approval"
         else:
             approval_level = "insufficient_factors"

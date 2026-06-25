@@ -63,3 +63,70 @@ def generate_overrides_report(
         },
         rows=rows,
     )
+
+
+async def generate_exception_register(
+    conn, tenant_id: str, start_date: str = None, end_date: str = None,
+) -> dict:
+    """EX-C — exception register from loan_exceptions, for ECOA consistent-treatment
+    review (12 CFR 202.9 / Fannie B3-2-02). Async DB read (the table is populated by
+    the exception_writer backfill). Demographic data is NEVER collected or used in
+    exception decisions (mirrors HMDA RA-7C)."""
+    import json
+    rows = await conn.fetch(
+        """SELECT le.id, le.application_id, le.exception_type, le.blocked_signal,
+                  le.breach_pct, le.below_agency_floor, le.status, le.granted,
+                  le.denial_reason, le.requested_at, le.reviewed_at, le.requested_by,
+                  le.reviewed_by, le.threshold_source, le.compensating_factors
+           FROM loan_exceptions le
+           WHERE le.tenant_id = $1
+             AND ($2::date IS NULL OR le.requested_at >= $2::date)
+             AND ($3::date IS NULL OR le.requested_at <= $3::date)
+           ORDER BY le.requested_at DESC""",
+        tenant_id, start_date, end_date,
+    )
+
+    total = len(rows)
+    granted = sum(1 for r in rows if r["granted"] is True)
+    denied = sum(1 for r in rows if r["granted"] is False)
+    pending = sum(1 for r in rows if r["status"] in ("requested", "under_review"))
+
+    by_type: dict = {}
+    for r in rows:
+        t = r["exception_type"]
+        b = by_type.setdefault(t, {"total": 0, "granted": 0, "denied": 0})
+        b["total"] += 1
+        if r["granted"] is True:
+            b["granted"] += 1
+        elif r["granted"] is False:
+            b["denied"] += 1
+
+    def _ser(r):
+        d = dict(r)
+        for k in ("requested_at", "reviewed_at"):
+            if d.get(k) is not None and hasattr(d[k], "isoformat"):
+                d[k] = d[k].isoformat()
+        cf = d.get("compensating_factors")
+        if isinstance(cf, str):
+            try:
+                d["compensating_factors"] = json.loads(cf)
+            except Exception:
+                pass
+        d["id"] = str(d["id"])
+        return d
+
+    return {
+        "tenant_id": tenant_id,
+        "period": {"start": start_date, "end": end_date},
+        "summary": {
+            "total": total, "granted": granted, "denied": denied, "pending": pending,
+            "grant_rate": round(granted / total * 100, 1) if total else 0,
+        },
+        "by_type": by_type,
+        "exceptions": [_ser(r) for r in rows],
+        "cfpb_note": ("Exception register for ECOA consistent-treatment review. "
+                      "Demographic data not collected or used in exception decisions."),
+        "citation": "12 CFR 202.9, Fannie B3-2-02",
+        "data_source": "loan_exceptions + compensating_factors tables",
+        "missing_inputs": [],
+    }

@@ -103,6 +103,10 @@ SAFE_DEFAULTS = {
     'excellent_credit_delta_pts':                60,
     'long_employment_months':                    60,
     'minimal_debt_obligations_max_pct':          10,
+    # EX-C — exception score -> approval-level thresholds (Fannie B3-2-02)
+    'exception_score_senior_min':                9,
+    'exception_score_manager_min':               5,
+    'exception_score_uw_min':                    2,
     # Property
     'ltv_purchase_max':                97,
     'ltv_cashout_max':                 80,

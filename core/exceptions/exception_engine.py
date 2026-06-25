@@ -37,6 +37,10 @@ EXCEPTION_RULE_KEYS = [
     "long_employment_months",
     "minimal_debt_obligations_max_pct",
     "minimum_reserves_months",   # baseline floor (already seeded)
+    # EX-C — score -> approval-level thresholds (CompensatingFactorsEngine reads these).
+    "exception_score_senior_min",
+    "exception_score_manager_min",
+    "exception_score_uw_min",
 ]
 
 

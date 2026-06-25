@@ -11,9 +11,16 @@ from core.exceptions.exception_engine import (
     ExceptionEngine,
     load_exception_rules,
 )
+from core.exceptions.exception_workflow import (
+    APPROVER_AUTHORITY,
+    ExceptionWorkflowService,
+)
+from core.exceptions.exception_writer import populate_exception_records
 
 __all__ = [
     "ExceptionEngine", "EXCEPTION_RULE_KEYS", "load_exception_rules",
     "CompensatingFactorsEngine", "COMPENSATING_FACTOR_RULE_KEYS",
     "load_compensating_factor_rules",
+    "ExceptionWorkflowService", "APPROVER_AUTHORITY",
+    "populate_exception_records",
 ]
