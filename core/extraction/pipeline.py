@@ -34,12 +34,17 @@ async def ingest_document(
     applicant_id: Optional[str] = None,
     document_id: Optional[str] = None,
     write_golden: bool = True,
+    classification: Optional[dict] = None,
 ) -> dict:
     """Extract one document, store it in document_index, and (optionally) derive
     entity_states. Returns {extraction, document_id, golden_written}.
 
     Refuses meridian (seeded fixtures). For real tenants, write_golden=True runs
-    apply_golden_record(write=True) so entity_states reflects the documents."""
+    apply_golden_record(write=True) so entity_states reflects the documents.
+
+    `classification` (IN-E): when the doc_type was auto-classified, this provenance
+    dict (method / confidence / candidates) is stamped into extracted_fields under
+    the reserved `_classification` key — additive, no schema change."""
     if tenant_id == "meridian":
         raise ValueError(
             "ingest_document refuses the meridian demo tenant — its "
@@ -48,6 +53,11 @@ async def ingest_document(
         )
 
     result = await route_extraction(file_bytes, doc_type, application_id)
+
+    # IN-E: carry classification provenance alongside the extracted fields.
+    stored_fields = dict(result.fields)
+    if classification:
+        stored_fields["_classification"] = classification
 
     # Upsert the document_index row for this (app, doc_type, tenant).
     existing = await conn.fetchrow(
@@ -61,7 +71,7 @@ async def ingest_document(
         await conn.execute(
             "UPDATE document_index SET extracted_fields=$1::jsonb, "
             "confidence_score=$2, extraction_method=$3 WHERE document_id=$4",
-            json.dumps(result.fields), result.confidence, result.method,
+            json.dumps(stored_fields), result.confidence, result.method,
             document_id,
         )
     else:
@@ -83,7 +93,7 @@ async def ingest_document(
             """,
             document_id, applicant_id or f"APPLICANT-{application_id}",
             application_id, doc_type,
-            json.dumps(result.fields), result.confidence, result.method,
+            json.dumps(stored_fields), result.confidence, result.method,
             tenant_id,
         )
 

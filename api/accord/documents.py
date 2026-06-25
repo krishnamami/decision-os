@@ -420,7 +420,7 @@ async def source_match(application_id: str, tenant_id: str = Depends(get_tenant_
 @router.post("/upload")
 async def upload_document(
     application_id: str = Form(...),
-    doc_type: str = Form(...),
+    doc_type: Optional[str] = Form(None),
     file: UploadFile = File(...),
     tenant_id: str = Depends(get_tenant_id),
 ) -> dict:
@@ -428,11 +428,37 @@ async def upload_document(
     pipeline on the uploaded file: route_extraction -> document_index
     .extracted_fields -> golden_record -> entity_states. The tenant comes from
     auth, so the meridian demo is protected by ingest_document's hard guard
-    (its document_index + entity_states are hand-seeded fixtures)."""
+    (its document_index + entity_states are hand-seeded fixtures).
+
+    IN-E: doc_type is now OPTIONAL. When omitted, the document is auto-classified
+    from its content (hybrid rules + Vision); an UNKNOWN classification returns 422
+    asking the caller to supply doc_type. When supplied, the classifier validates it
+    and flags (never rejects) a confident content mismatch."""
     _require_db()
     file_bytes = await file.read()
     if not file_bytes:
         raise HTTPException(400, "empty file")
+
+    from core.extraction.classifier import DocumentClassifier
+    filename = file.filename or ""
+
+    # IN-E: resolve doc_type — caller-supplied wins; else auto-classify.
+    classification: Optional[dict] = None
+    mismatch: Optional[dict] = None
+    classifier = DocumentClassifier()
+    if not doc_type:
+        classification = await classifier.classify(file_bytes, filename)
+        doc_type = classification["doc_type"]
+        if doc_type == "UNKNOWN":
+            raise HTTPException(422, detail={
+                "error": "document_type_required",
+                "message": "Could not classify the document automatically. "
+                           "Please supply doc_type explicitly.",
+                "candidates": classification.get("candidates", {}),
+                "matched_signals": classification.get("matched_signals", []),
+            })
+    else:
+        mismatch = classifier.validate_supplied(file_bytes, doc_type, filename)
 
     from core.extraction.pipeline import ingest_document
     pool = await _get_pool()
@@ -440,6 +466,7 @@ async def upload_document(
         async with pool.acquire() as conn:
             result = await ingest_document(
                 conn, application_id, tenant_id, doc_type, file_bytes,
+                classification=classification,
             )
             # ── RA-P0-A: persist to S3 (MISMO-aligned, best-effort) ──────
             # Additive + non-blocking: extraction already succeeded above. When
@@ -460,6 +487,15 @@ async def upload_document(
         "application_id": application_id,
         "document_id": result["document_id"],
         "doc_type": doc_type,
+        "doc_type_source": "auto_classified" if classification else "caller_supplied",
+        "classification": ({
+            "method": classification["method"],
+            "confidence": classification["confidence"],
+            "path": classification.get("classification_path"),
+            "matched_signals": classification.get("matched_signals", []),
+            "candidates": classification.get("candidates", {}),
+        } if classification else None),
+        "doc_type_mismatch_warning": mismatch,
         "extraction": {
             "method": ext.method,
             "confidence": ext.confidence,
