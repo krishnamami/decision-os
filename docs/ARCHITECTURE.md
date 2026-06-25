@@ -249,6 +249,8 @@ Obligations:     core/obligations/  obligation_resolver.py (ObligationResolver �
 Exceptions:      core/exceptions/  exception_engine.py (ExceptionEngine — eligibility:
                  agency-floor/overlay-breach/factors gates) + compensating_factors_engine.py
                  (CompensatingFactorsEngine — detect 6 factors); sync/DB-less  (EX-A/B ✅)
+                 + exception_writer.py (population job) + exception_workflow.py
+                 (RBAC + status transitions); DB writers, NOT runner-wired (EX-C ✅)
 ```
 
 ---
@@ -280,9 +282,11 @@ income_sources            One row per income stream per borrower (INC-A) — typ
 employment_history        Per-job history (INC-A) — start/end, is_self_employed,
                           ownership_pct; FK income_source_id
 loan_exceptions           Structured exception request→review→grant lifecycle
-                          (EX-A) — FK decision_outputs + loan_actions; breach_pct,
-                          below_agency_floor, compensating_factors JSONB
-compensating_factors      Per-factor detail per exception (EX-A); FK loan_exceptions
+                          (EX-A schema; EX-C populates via exception_writer) — FK
+                          decision_outputs + loan_actions; breach_pct,
+                          below_agency_floor, status, compensating_factors JSONB
+compensating_factors      Per-factor detail per exception (EX-A schema; EX-C populates);
+                          FK loan_exceptions
 ```
 
 ---
@@ -434,9 +438,29 @@ moving proposed_outcome (Known Gap f stands).
   bundle as `cf_inputs`; detected factors feed the EX-A ExceptionEngine.
 - Both engines: sync + DB-less, catalogue-driven (SAFE_DEFAULTS fallback), RULE 11
   (data_source + missing_inputs on every return). One shared `exception_rules`
-  bundle key (EXCEPTION_RULE_KEYS aggregates the 4 exception + 6 factor + baseline
-  reserves keys; the runner's approval_routing branch loads them all). Writing the
-  loan_exceptions / compensating_factors TABLES is EX-C.
+  bundle key (EXCEPTION_RULE_KEYS aggregates the 4 exception + 6 factor + 3 score
+  + baseline reserves keys; the runner's approval_routing branch loads them all).
+- **EX-C — workflow + approver hierarchy + register** (the WRITE layer):
+  - `exception_writer.py:populate_exception_records` — post-decision POPULATION JOB
+    (persona stays DB-less, RULE 5/6): reads `decision_outputs.context_snapshot`
+    (output_payload.exception_analysis + compensating_factors_analysis) and persists
+    `loan_exceptions` + `compensating_factors`. Idempotent per decision_output. Same
+    pattern as the adverse_action / hmda backfills — `backfill_exception_records.py`
+    runs it; NOT runner-wired, so the decision path + 16/16 are untouched.
+  - `exception_workflow.py:ExceptionWorkflowService` — `can_approve` (role × required
+    level × ABSOLUTE agency floor) + `transition_status` (requested → under_review →
+    granted/denied with valid-transition + RBAC checks, writing a `loan_actions`
+    audit row). APPROVER_AUTHORITY = role→levels RBAC map; the agency floor can never
+    be breached by any role (catalogue exception_cannot_breach_agency_floor).
+  - `overrides.py:generate_exception_register` — ECOA consistent-treatment / CFPB
+    report (total/granted/denied/pending + by_type + grant_rate); demographic data
+    never collected or used (mirrors HMDA RA-7C).
+  - **RULE 1 gap from EX-B CLOSED**: the score→approval-level thresholds (9/5/2) are
+    now catalogue-driven (`exception_score_{senior,manager,uw}_min`), not hardcoded.
+  - proposed_outcome UNCHANGED — Known Gap (f) still holds (the conflict→manual-review
+    OUTCOME change remains deliberate future work). NOTE: `decision_outputs` stores the
+    persona payload in `context_snapshot` (there is NO output_payload column) — the
+    writer reads context_snapshot.
 
 ---
 
@@ -514,9 +538,9 @@ Notes:
 ## Catalogue State (verified 2026-06-24)
 
 ```
-agency_guidelines:   108 rows  (Fannie 85 / FHA 13 / VA 8 / Freddie 2)
+agency_guidelines:   114 rows  (Fannie 91 / FHA 13 / VA 8 / Freddie 2)
                      (Gap c +2; INC-B +1; INC-E +8; INC-F +3; OB-A +2; OB-B +1;
-                      EX-A +4 exception framework; EX-B +6 compensating-factor bars;
+                      EX-A +4; EX-B +6; EX-C +6 score thresholds + approver roles;
                       OB-A also updated student_loan_deferred_rate 1.0->0.5, gap d)
 regulatory_rules:    23 rows
 overlay_rules:        6 rows  (Meridian 4 / Summit 2)

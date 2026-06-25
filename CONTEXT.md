@@ -4205,3 +4205,25 @@ Doc update batched across EX-A + EX-B (per user). Both ADVISORY foundation passe
 **Deviations (surfaced, consistent with prior phases):** seed via proper scripts not inline python (no governed_by column; JSONB values); engines use rule_loader.SAFE_DEFAULTS not local dups (RULE 9); EX-B intentionally extended EXCEPTION_RULE_KEYS (updated the EX-A test_rule_keys to a subset check — the one "new failure" the gate caught, expected).
 
 **Verification.** EX-A 9 engine tests + EX-B 20 cf-engine tests (thresholds proven from the rules dict; RULE 11 on every path). Full suite after EX-B: **13 failed / 591 passed** (the 13 are the established pre-existing env/DB baseline; zero new). Meridian eval **16/16** on both (factors detect on real data; advisory). Catalogue 108 / Fannie 85. Remaining: EX-C writes approved exceptions to loan_exceptions/compensating_factors; payment_shock + residual_income need extraction; the conflict→manual-review OUTCOME change (Gap f) stays deferred.
+
+---
+
+## EX-C — exception workflow + approver hierarchy — exceptions phase COMPLETE — 2026-06-24
+
+**EX-C (commit 498080e).** The WRITE/workflow layer on the EX-A/B foundation — exceptions phase (EX-A/B/C) complete.
+
+**PART 0 — RULE 1 fix (EX-B gap).** The score→approval-level thresholds (9/5/2) were HARDCODED in CompensatingFactorsEngine.detect_all (a RULE 1 violation EX-B introduced). De-hardcoded → `self._score_{senior,manager,uw}_min` read from the catalogue (`exception_score_senior_min`=9 / `_manager_min`=5 / `_uw_min`=2). grep-verified zero hardcoded 9/5/2; RULE 1 clean across all exception code. Loaded via the shared `exception_rules` bundle key (EXCEPTION_RULE_KEYS extended).
+
+**PART 1 — catalogue (108→114, Fannie 91; B3-2-02):** the 3 score thresholds + 3 approver roles (approver_uw_role=uw / approver_manager_role=uw_manager / approver_senior_role=senior_credit_officer). `seed_ex_c_approver_hierarchy.py` + rule_loader.SAFE_DEFAULTS (3 score keys).
+
+**PART 2 — exception_writer.py (population job).** Persona stays DB-less (RULE 5/6); `populate_exception_records` reads `decision_outputs.context_snapshot` (exception_analysis + compensating_factors_analysis) and persists loan_exceptions + compensating_factors. Idempotent per decision_output. `backfill_exception_records.py` runs it over current approval_routing decisions — pattern of adverse_action/hmda backfills; NOT runner-wired (decision path + 16/16 untouched by construction).
+
+**PART 3 — exception_workflow.py.** `ExceptionWorkflowService.can_approve` (role × required-level × ABSOLUTE agency-floor guardrail; pure) + `transition_status` (requested→under_review→granted/denied with valid-transition + RBAC enforcement, writing a loan_actions audit row). APPROVER_AUTHORITY role→levels map; agency floor never breachable by any role.
+
+**PART 4 — exception register.** `overrides.py:generate_exception_register` — ECOA consistent-treatment / CFPB report (total/granted/denied/pending + by_type + grant_rate); demographic data never collected/used (mirrors HMDA RA-7C).
+
+**Four spec corrections (verified vs live schema):** (1) `decision_outputs` has NO output_payload column → read `context_snapshot`; (2) loan_exceptions insert made idempotent (delete-then-insert per decision_output — no conflict target existed); (3) required_level read from the persisted approval_level (the spec's factor_type read was a bug) — stored in threshold_source + the compensating_factors JSONB blob; (4) related_decision_id is varchar → `str()` the decision_output UUID (a DataError the functional run caught — pure tests wouldn't have).
+
+**Functional verification (the write path actually runs):** backfill wrote **16 loan_exceptions across 13/16** meridian approval_routing decisions (+ **35 compensating_factors**); register summarized them (16 total, by_type manual_underwrite 3 / other 13); workflow GRANTED a manager-level exception, and correctly BLOCKED a uw approving a manager-level one (insufficient_authority) + an invalid requested→granted skip; 2 loan_actions audit rows written.
+
+**Verification.** 11 new unit tests (can_approve RBAC + agency-floor + de-hardcoded score thresholds; RULE 11 on every return). Full suite **13 failed / 602 passed** (the 13 are the established pre-existing env/DB baseline; zero new). Meridian eval **16/16**. proposed_outcome UNCHANGED — **Gap (f) still holds** (conflict→manual-review OUTCOME change remains deliberate future work). **Exceptions phase EX-A/B/C COMPLETE**: eligibility (EX-A) → factor detection/scoring (EX-B) → write/workflow/register (EX-C). loan_exceptions + compensating_factors now populated.
