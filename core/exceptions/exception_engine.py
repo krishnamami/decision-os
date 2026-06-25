@@ -28,6 +28,15 @@ EXCEPTION_RULE_KEYS = [
     "exception_max_dti_overlay_breach_pct",
     "exception_max_ltv_overlay_breach_pct",
     "exception_cannot_breach_agency_floor",
+    # EX-B — compensating-factor bar thresholds ride on the SAME exception_rules
+    # bundle key (one runner branch); CompensatingFactorsEngine reads them.
+    "substantial_reserves_months",
+    "exceptional_reserves_months",
+    "low_ltv_factor_max_pct",
+    "excellent_credit_delta_pts",
+    "long_employment_months",
+    "minimal_debt_obligations_max_pct",
+    "minimum_reserves_months",   # baseline floor (already seeded)
 ]
 
 

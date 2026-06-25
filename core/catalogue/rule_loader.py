@@ -96,6 +96,13 @@ SAFE_DEFAULTS = {
     'exception_max_dti_overlay_breach_pct':      5,
     'exception_max_ltv_overlay_breach_pct':      5,
     'exception_cannot_breach_agency_floor':      True,
+    # EX-B — compensating-factor bar thresholds (Fannie B3-2-02)
+    'substantial_reserves_months':               6,
+    'exceptional_reserves_months':               12,
+    'low_ltv_factor_max_pct':                    75,
+    'excellent_credit_delta_pts':                60,
+    'long_employment_months':                    60,
+    'minimal_debt_obligations_max_pct':          10,
     # Property
     'ltv_purchase_max':                97,
     'ltv_cashout_max':                 80,

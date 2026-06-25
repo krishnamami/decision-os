@@ -79,8 +79,13 @@ class ClassifyTests(unittest.TestCase):
 
 class MetaTests(unittest.TestCase):
     def test_rule_keys(self):
-        self.assertEqual(len(EXCEPTION_RULE_KEYS), 4)
-        self.assertIn("exception_cannot_breach_agency_floor", EXCEPTION_RULE_KEYS)
+        # The 4 core exception keys must be present; EX-B extended the list with
+        # the compensating-factor thresholds (one shared exception_rules bundle key).
+        for k in ("exception_requires_compensating_factors",
+                  "exception_max_dti_overlay_breach_pct",
+                  "exception_max_ltv_overlay_breach_pct",
+                  "exception_cannot_breach_agency_floor"):
+            self.assertIn(k, EXCEPTION_RULE_KEYS)
 
     def test_every_return_has_rule_11_keys(self):
         # RULE 11: data_source + missing_inputs on every path.

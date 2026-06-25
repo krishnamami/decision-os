@@ -4,6 +4,7 @@ from typing import Optional
 
 from core.aus.du_parser import detect_aus_conflict
 from core.aus.reconciliation import AUSReconciliationEngine
+from core.exceptions.compensating_factors_engine import CompensatingFactorsEngine
 from core.exceptions.exception_engine import ExceptionEngine
 from core.context_store import ContextBundle
 from core.normalizer.models import DecisionOutcome
@@ -200,7 +201,15 @@ class WorkflowRoutingAgent(LendingPersona):
         # (documented via RULE-11 missing_inputs); EX-B/C feed real values +
         # compensating factors. proposed_outcome is UNCHANGED — Known Gap (f) holds.
         exception_rules_obj = latest_object(bundle, "exception_rules") or {}
-        exception_engine = ExceptionEngine(rules=exception_rules_obj.get("values"))
+        exception_rule_values = exception_rules_obj.get("values")
+        exception_engine = ExceptionEngine(rules=exception_rule_values)
+        # EX-B: detect compensating factors from the enricher-attached cf_inputs
+        # (real entity_states data); feed the present factors into the eligibility
+        # check so it reports eligible_with_factors instead of factors-required.
+        cf_inputs = ev.get("cf_inputs") or {}
+        compensating_factors_analysis = CompensatingFactorsEngine(
+            rules=exception_rule_values).detect_all(cf_inputs)
+        present_factors = compensating_factors_analysis.get("factors_present", [])
         blocking_signals = []
         if outcome_label in ("decline", "escalate"):
             blocking_signals.append(f"UW_OUTCOME_{outcome_label.upper()}")
@@ -212,7 +221,7 @@ class WorkflowRoutingAgent(LendingPersona):
         for sig in blocking_signals:
             elig = exception_engine.evaluate_exception_eligibility(
                 blocked_signal=sig, actual_value=None, overlay_threshold=None,
-                agency_floor=None, compensating_factors=[],
+                agency_floor=None, compensating_factors=present_factors,
             )
             exceptions_available.append({
                 "blocked_signal": sig,
@@ -225,11 +234,17 @@ class WorkflowRoutingAgent(LendingPersona):
                                 for e in exceptions_available),
             "below_agency_floor": any(e.get("reason") == "below_agency_floor"
                                       for e in exceptions_available),
+            "compensating_factors_present": compensating_factors_analysis.get(
+                "factors_present_count", 0),
+            "exception_score": compensating_factors_analysis.get("exception_score", 0),
+            "recommended_approval_level": compensating_factors_analysis.get(
+                "approval_level"),
             "exception_rule_trace": exception_rules_obj.get("trace"),
             "note": ("Advisory exception pathways for the blocking signals "
-                     "approval_routing sees; DTI/LTV actuals + overlay/agency "
-                     "thresholds + compensating factors are wired in EX-B/C. "
-                     "proposed_outcome unchanged (Gap f)."),
+                     "approval_routing sees, now scored against detected "
+                     "compensating factors (EX-B). DTI/LTV actuals + overlay/agency "
+                     "thresholds are wired in a later slice. proposed_outcome "
+                     "unchanged (Gap f)."),
         }
 
         return OfflineReasoning(
@@ -247,6 +262,8 @@ class WorkflowRoutingAgent(LendingPersona):
                 "aus_reconciled_system": aus_system,
                 # EX-A — advisory exception eligibility (additive).
                 "exception_analysis": exception_analysis,
+                # EX-B — advisory compensating-factors detection (additive).
+                "compensating_factors_analysis": compensating_factors_analysis,
                 # RA-PERSONA-C: evidence provenance (advisory).
                 "evidence_populated": evidence_populated,
                 "route_evidence_confidence": (

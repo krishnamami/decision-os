@@ -179,6 +179,49 @@ class ContextEnricher:
         except Exception:
             pass
 
+    async def _attach_compensating_factor_inputs(
+        self, base: dict, application_id: str, tenant_id: str
+    ) -> None:
+        """EX-B: surface the compensating-factor input scalars to approval_routing
+        so CompensatingFactorsEngine can detect factors on real data. Reads the
+        entity_states scalars + borrower.employment.period_start, and the agency
+        Minimum Credit Score floor via rule_loader (RULE 4 gateway). Best-effort,
+        read-only, advisory (proposed_outcome untouched)."""
+        try:
+            import json as _json
+            es = await self.conn.fetchrow(
+                """SELECT mid_credit_score, ltv, piti_monthly, total_liquid_assets,
+                          monthly_obligations, qualifying_monthly, borrower
+                   FROM entity_states WHERE application_id=$1 AND tenant_id=$2""",
+                application_id, tenant_id,
+            )
+            if not es:
+                return
+            borrower = es["borrower"]
+            if isinstance(borrower, str):
+                borrower = _json.loads(borrower) if borrower else {}
+            emp = (borrower or {}).get("employment", {}) if isinstance(borrower, dict) else {}
+            cf = {
+                "mid_credit_score":        es["mid_credit_score"],
+                "ltv":                     es["ltv"],
+                "piti_monthly":            es["piti_monthly"],
+                "total_liquid_assets":     es["total_liquid_assets"],
+                "monthly_obligations":     es["monthly_obligations"],
+                "qualifying_monthly":      es["qualifying_monthly"],
+                "employment_period_start": (emp or {}).get("period_start"),
+            }
+            try:
+                from core.catalogue.rule_loader import get_rule
+                r = await get_rule(self.conn, "Minimum Credit Score", tenant_id,
+                                   is_ceiling=False)
+                if r.get("applied") is not None:
+                    cf["min_credit_score_applied"] = float(r["applied"])
+            except Exception:
+                pass
+            base["cf_inputs"] = cf
+        except Exception:
+            pass
+
     async def _attach_aus_result(
         self, base: dict, application_id: str, tenant_id: str
     ) -> None:
@@ -344,6 +387,8 @@ class ContextEnricher:
             "aus_result_lp":               None,   # LP (RA-AUS-C)
             # INC-E — only for income_verification (asset depletion input).
             "total_liquid_assets":         None,
+            # EX-B — compensating-factor inputs, only for approval_routing.
+            "cf_inputs":                   None,
         }
 
         # Thresholds + fraud first, so they ride on every return path.
@@ -359,6 +404,7 @@ class ContextEnricher:
             await self._attach_hmda_fields(base, application_id, tenant_id)
         elif decision_id == "approval_routing":
             await self._attach_aus_result(base, application_id, tenant_id)
+            await self._attach_compensating_factor_inputs(base, application_id, tenant_id)
         elif decision_id == "income_verification":
             await self._attach_income_entity(base, application_id, tenant_id)
 
