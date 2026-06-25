@@ -231,6 +231,80 @@ class IncomeMismatchDetector:
 
         return signals_written
 
+    async def detect_transcript_mismatch(
+        self,
+        application_id: str,
+        tenant_id: str,
+    ) -> list:
+        """FR-G — cross-check borrower-submitted income against the 4506-C IRS
+        transcript (the authoritative IRS-reported figures). Transcript-GATED: if
+        no IRS_TRANSCRIPT exists for the app this returns [] immediately and writes
+        nothing — so meridian (0 transcripts) is a pure no-op and 16/16 is
+        unaffected. Separate from detect() so the verified W2-vs-URLA path is
+        untouched. Writes a fraud_signal on a confirmed mismatch (dedup-guarded)."""
+        rows = await self.conn.fetch('''
+            SELECT document_type, extracted_fields
+            FROM document_index
+            WHERE application_id = $1 AND tenant_id = $2 AND is_current = true
+            AND document_type IN ('IRS_TRANSCRIPT', 'W2_CURRENT', 'SCHEDULE_C')
+        ''', application_id, tenant_id)
+        fields_by_type: dict = {}
+        for r in rows:
+            f = r['extracted_fields']
+            if isinstance(f, str):
+                f = json.loads(f) if f else {}
+            fields_by_type[r['document_type']] = f or {}
+
+        transcript = fields_by_type.get('IRS_TRANSCRIPT')
+        if not transcript:
+            return []  # no transcript -> nothing to cross-check (meridian path)
+
+        qm = await self.conn.fetchval(
+            "SELECT qualifying_monthly FROM entity_states "
+            "WHERE application_id=$1 AND tenant_id=$2", application_id, tenant_id)
+
+        from core.fraud.transcript_income_verifier import TranscriptIncomeVerifier
+        verifier = TranscriptIncomeVerifier(rules=self._injected)
+        result = verifier.run_all_checks(
+            w2_fields=fields_by_type.get('W2_CURRENT') or None,
+            schedule_c_fields=fields_by_type.get('SCHEDULE_C') or None,
+            transcript_fields=transcript,
+            qualifying_monthly=float(qm) if qm else None,
+        )
+        if result.get("status") != "fraud_detected":
+            return []
+
+        existing = await self.conn.fetchval('''
+            SELECT COUNT(*) FROM fraud_signals
+            WHERE application_id=$1 AND tenant_id=$2
+            AND signal_type='transcript_income_mismatch'
+        ''', application_id, tenant_id)
+        if existing and int(existing) > 0:
+            return []  # already detected
+
+        worst = next((c for c in result["checks"]
+                      if c.get("severity") == result["highest_severity"]), result["checks"][0])
+        signal_id = await self.conn.fetchval('''
+            INSERT INTO fraud_signals (
+                application_id, tenant_id, signal_type, severity, description,
+                detected_value, expected_value, variance_pct, source_docs,
+                auto_block, requires_review, condition_code
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id
+        ''', application_id, tenant_id, 'transcript_income_mismatch',
+            result["highest_severity"] or 'medium',
+            (f"Borrower income disagrees with IRS 4506-C transcript by "
+             f"{worst.get('variance_pct')}% ({worst.get('check_type')}). "
+             f"{'AUTO-BLOCK: ' if result['auto_block'] else ''}IRS-reported income is authoritative."),
+            f"${worst.get('submitted', 0):,.0f} (submitted)",
+            f"${worst.get('irs_reported', 0):,.0f} (IRS transcript)",
+            worst.get("variance_pct", 0), ['IRS_TRANSCRIPT', 'W2_CURRENT'],
+            result["auto_block"], True, 'FRAUD_TRANSCRIPT_INCOME_MISMATCH')
+        return [{
+            "id": str(signal_id), "signal_type": "transcript_income_mismatch",
+            "severity": result["highest_severity"], "auto_block": result["auto_block"],
+            "variance_pct": worst.get("variance_pct"),
+        }]
+
     async def run_all_meridian(self) -> dict:
         """Run detector across all meridian apps."""
         rows = await self.conn.fetch('''
@@ -245,6 +319,9 @@ class IncomeMismatchDetector:
             signals = await self.detect(
                 app_id, 'meridian'
             )
+            # FR-G: transcript cross-check (no-op on meridian — 0 transcripts).
+            signals = list(signals or []) + await self.detect_transcript_mismatch(
+                app_id, 'meridian')
             if signals:
                 results[app_id] = signals
         # RA-4F: catalogue provenance for the variance cutoffs used this run.
