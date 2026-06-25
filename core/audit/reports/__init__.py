@@ -13,7 +13,8 @@ from .base import Report
 from .bias import generate_bias_report
 from .fair_lending import generate_fair_lending_report
 from .hmda import generate_hmda_report
-from .overrides import generate_overrides_report
+from .overrides import generate_exception_register, generate_overrides_report
+from .repurchase_defense import generate_repurchase_defense_report
 from .security import generate_security_report
 
 __all__ = [
@@ -23,5 +24,7 @@ __all__ = [
     "generate_fair_lending_report",
     "generate_hmda_report",
     "generate_overrides_report",
+    "generate_exception_register",
+    "generate_repurchase_defense_report",
     "generate_security_report",
 ]
