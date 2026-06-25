@@ -257,6 +257,12 @@ Intelligence:    core/intelligence/  change_impact_simulator.py (ChangeImpactSim
                  recorded decision against a different tenant_rules version) (CI-B ✅)
                  API: api/accord/intelligence.py (POST /simulate-impact + GET
                  /simulatable-rules)
+Scenarios:       core/scenarios/  base.py (Scenario + ScenarioCondition dataclasses) +
+                 meridian.py (16 typed scenarios — single source of truth) (SC-B ✅)
+                 + runner.py (ScenarioRunner — tenant-agnostic shared engine) (SC-C ✅)
+                 CLI: scripts/generate_scenarios.py (--tenant any; library->PASS/FAIL,
+                 else REPORTED). scripts/evaluate_meridian_scenarios.py = the meridian
+                 16/16 gate (delegates the run loop to ScenarioRunner)
 ```
 
 ---
@@ -561,6 +567,67 @@ remaining issue was an UNBOUNDED await: a single stuck RDS call hung the whole
 `asyncio.wait_for(timeout=SCENARIO_TIMEOUT)` (default 30s, env-tunable) so a stuck
 decision becomes a bounded `TIMEOUT` error and the run continues. Gap g is now
 addressed (concurrency + timeout); the remaining latency is network RTT to live RDS.
+
+---
+
+## Scenario Infrastructure (SC-B / SC-C)
+
+`core/scenarios/` is the typed scenario library + the tenant-agnostic engine that
+runs it. Read-only over the decision path — it runs EXISTING apps (never fabricates
+synthetic loans) and writes nothing new beyond the normal `decision_outputs` the
+engine already produces.
+
+### SC-B — the Scenario library (`base.py` + `meridian.py`)
+
+`base.py` defines `Scenario` + `ScenarioCondition` (dataclasses). A `Scenario`
+carries identity, the real loan inputs (from `entity_states`), BOTH the
+`expected_key_decision`/`expected_outcome` (the per-persona decision the 16/16 eval
+verifies) AND the `underwriting_outcome` (the loan aggregate — they legitimately
+differ, e.g. SC16's key `closing_readiness`=escalate vs the loan = recommend), plus
+provenance (`conditions`, `notify_role`, `explanation`) and RULE 11 `data_source` +
+`missing_inputs`. Helpers: `reserve_months`, `is_multi_block`, `demo_talking_points`.
+
+`meridian.py` holds the 16 meridian scenarios as the **single source of truth**,
+consolidating what were two loose dicts (`EXPECTED_OUTCOMES` + `SCENARIO_NOTES`) plus
+the `entity_states` inputs. Built from LIVE data (cross-checked 0 mismatches);
+`conditions` are computed from each loan's real value vs the meridian overlays
+(credit 660 / dti 43 / ltv 95) — factual breaches only, never fabricated (SC03's NULL
+dti → `missing_inputs`, no fabricated condition). The overlay constants are inlined
+as fixture data — acceptable for a fixture library, NOT production rule code
+(production reads them from the catalogue via rule_loader/ThresholdResolver).
+
+### SC-C — `ScenarioRunner` (the tenant-agnostic engine)
+
+`runner.py:ScenarioRunner(database_url, tenant_id, concurrency, timeout)` is the
+shared engine extracted from the meridian eval so the 16/16 gate AND
+`generate_scenarios.py` drive the SAME production path:
+- `execute(app_ids)` — runs every `(wave, decision)` for every app through the REAL
+  `PersonaRunner._process_one` (one decision per call, written not returned), apps
+  concurrent under a semaphore, each bounded by `SCENARIO_TIMEOUT` (the CI-B guard).
+- `verify_one(scenario)` — PASS/FAIL on the KEY decision (the eval's criterion); the
+  underwriting aggregate is reported as context, derived with the shared CI-A reducer
+  (`core.intelligence.change_impact_simulator._reduce_outcome`) — never re-implemented.
+- `report_one(app_id)` — for tenants WITHOUT a library: the actual outcome is REPORTED,
+  never an invented PASS/FAIL.
+- `run_all` + `_build_summary` — status counts / outcome breakdown / dollars / pass-rate.
+
+**Tenant landscape:** 7 tenants have `entity_states` (meridian 16, summit 49,
+atlas/heartland/pacific 50 each, demo 8696, default 1). Only **meridian** has a
+curated `core/scenarios` library today, so "tenant-agnostic" means the ENGINE
+generalizes — meridian gets PASS/FAIL, every other tenant gets REPORTED outcomes
+(no fabricated expectations).
+
+`scripts/generate_scenarios.py` is the CLI: `--tenant <t>` (any tenant),
+`--concurrency N`, `--seq`, `--direct` (compat — direct-off-DB is the only mode),
+`--scenario SCxx` (single scenario, library tenants only).
+
+**Honest flag — the meridian eval keeps its ordered dicts.** `evaluate_meridian_
+scenarios.py` delegates only its RUN LOOP to `ScenarioRunner.execute()`; it keeps
+`EXPECTED_OUTCOMES` + `SCENARIO_NOTES` + the verification prints/query verbatim so the
+16/16 output is byte-identical. Rebuilding `EXPECTED_OUTCOMES` from the library would
+reorder the verification lines (the dict's insertion order ≠ SC01–SC16), so the dicts
+stay; the library is the typed source of truth for `generate_scenarios.py` + tests. A
+full eval→library migration is a deferred cosmetic pass.
 
 ---
 
