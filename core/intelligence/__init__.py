@@ -16,6 +16,11 @@ from .change_impact_simulator import (
     simulate_dti_change,
     simulate_ltv_change,
 )
+from .decision_replay import (
+    REPLAY_GATES,
+    replay_all_decisions,
+    replay_decision,
+)
 
 __all__ = [
     "SIMULATABLE_FIELDS",
@@ -23,4 +28,7 @@ __all__ = [
     "simulate_credit_floor_change",
     "simulate_dti_change",
     "simulate_ltv_change",
+    "REPLAY_GATES",
+    "replay_decision",
+    "replay_all_decisions",
 ]

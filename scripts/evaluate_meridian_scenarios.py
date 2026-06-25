@@ -32,6 +32,12 @@ TENANT = "meridian"
 # Override with --concurrency=N; --seq forces sequential (=1).
 CONCURRENCY = 4
 
+# CI-B gap-g fix: per-decision wall-clock cap so a single stuck RDS call can no
+# longer hang the whole asyncio.gather (the eval is already concurrent — the hang
+# was an UNBOUNDED await on a degraded network, not a sequential structure).
+# A timed-out decision is reported as an error and the run continues.
+PER_SCENARIO_TIMEOUT = int(os.getenv("SCENARIO_TIMEOUT", "30"))
+
 # Expected key decision per scenario. The prompt's IDs are mapped to the real
 # Decision OS decision_ids (credit_check->credit_assessment,
 # employment_verification->employment_reconciliation,
@@ -124,7 +130,8 @@ async def main():
             "SELECT application_id FROM entity_states WHERE tenant_id=$1 ORDER BY application_id", TENANT)
         app_ids = [r["application_id"] for r in rows]
         print(f"Evaluating {len(app_ids)} meridian loans across {sum(len(w) for w in WAVES)} "
-              f"decisions (direct{' [--direct]' if direct else ''}, concurrency={concurrency})...")
+              f"decisions (direct{' [--direct]' if direct else ''}, concurrency={concurrency}, "
+              f"per-decision timeout={PER_SCENARIO_TIMEOUT}s)...")
 
         # Apps within a (wave, decision) are independent, so process them
         # concurrently under a semaphore. Waves + decisions stay sequential so
@@ -135,11 +142,16 @@ async def main():
         async def _run_one(app_id, decision_id, cfg, d, agent):
             async with sem:
                 try:
-                    await runner._process_one(
-                        app_id, decision_id, cfg["wave"], list(cfg["upstream"]),
-                        d.get("mode", "recommend"), d.get("risk_level", "medium"),
-                        int(d.get("sla_seconds", 30)), agent, TENANT)
+                    await asyncio.wait_for(
+                        runner._process_one(
+                            app_id, decision_id, cfg["wave"], list(cfg["upstream"]),
+                            d.get("mode", "recommend"), d.get("risk_level", "medium"),
+                            int(d.get("sla_seconds", 30)), agent, TENANT),
+                        timeout=PER_SCENARIO_TIMEOUT)
                     return None
+                except asyncio.TimeoutError:
+                    return (app_id, decision_id,
+                            f"TIMEOUT >{PER_SCENARIO_TIMEOUT}s (network-degraded)")
                 except Exception as exc:  # noqa: BLE001
                     return (app_id, decision_id, exc)
 
