@@ -119,55 +119,28 @@ def _parse_args() -> tuple[int, bool]:
 
 
 async def main():
-    import asyncpg
-    from core.cron.runner import PersonaRunner, WAVES, WAVE_CONFIG, DECISION_DEFAULTS
+    # SC-C: the run loop now lives in the shared, tenant-agnostic ScenarioRunner
+    # (core/scenarios/runner.py), which generate_scenarios.py also drives. This
+    # script stays the meridian 16/16 gate and keeps its ordered EXPECTED_OUTCOMES
+    # + SCENARIO_NOTES + verification prints verbatim so the output is byte-stable
+    # (rebuilding EXPECTED_OUTCOMES from core/scenarios would reorder these lines).
+    from core.cron.runner import WAVES
+    from core.scenarios.runner import ScenarioRunner
 
     concurrency, direct = _parse_args()
-    runner = PersonaRunner(os.environ["DATABASE_URL"])
-    conn = await asyncpg.connect(_u())
+    sr = await ScenarioRunner(
+        os.environ["DATABASE_URL"], TENANT, concurrency=concurrency,
+        timeout=PER_SCENARIO_TIMEOUT).setup()
     try:
-        rows = await conn.fetch(
-            "SELECT application_id FROM entity_states WHERE tenant_id=$1 ORDER BY application_id", TENANT)
-        app_ids = [r["application_id"] for r in rows]
+        app_ids = await sr.app_ids()
         print(f"Evaluating {len(app_ids)} meridian loans across {sum(len(w) for w in WAVES)} "
               f"decisions (direct{' [--direct]' if direct else ''}, concurrency={concurrency}, "
               f"per-decision timeout={PER_SCENARIO_TIMEOUT}s)...")
 
-        # Apps within a (wave, decision) are independent, so process them
-        # concurrently under a semaphore. Waves + decisions stay sequential so
-        # every dependency is written before its dependents read it.
-        sem = asyncio.Semaphore(concurrency)
-        errors: list[tuple] = []
+        def _on_error(r, n):
+            print(f"  ! {r[0]}/{r[1]}: {r[2]}")
 
-        async def _run_one(app_id, decision_id, cfg, d, agent):
-            async with sem:
-                try:
-                    await asyncio.wait_for(
-                        runner._process_one(
-                            app_id, decision_id, cfg["wave"], list(cfg["upstream"]),
-                            d.get("mode", "recommend"), d.get("risk_level", "medium"),
-                            int(d.get("sla_seconds", 30)), agent, TENANT),
-                        timeout=PER_SCENARIO_TIMEOUT)
-                    return None
-                except asyncio.TimeoutError:
-                    return (app_id, decision_id,
-                            f"TIMEOUT >{PER_SCENARIO_TIMEOUT}s (network-degraded)")
-                except Exception as exc:  # noqa: BLE001
-                    return (app_id, decision_id, exc)
-
-        for wave in WAVES:
-            for decision_id in wave:
-                cfg = WAVE_CONFIG[decision_id]
-                d = DECISION_DEFAULTS.get(decision_id, {})
-                agent = runner._get_agent(decision_id)
-                results = await asyncio.gather(
-                    *[_run_one(app_id, decision_id, cfg, d, agent) for app_id in app_ids]
-                )
-                for r in results:
-                    if r is not None:
-                        errors.append(r)
-                        if len(errors) <= 5:
-                            print(f"  ! {r[0]}/{r[1]}: {r[2]}")
+        errors = await sr.execute(app_ids, on_error=_on_error)
         print(f"decision_outputs written (errors: {len(errors)})\n")
 
         # ── Verify the 16 expected outcomes ──
@@ -179,7 +152,7 @@ async def main():
                 flagged += 1
                 print(f"  -  {app_id} asset_verification -> NO PERSONA  FLAG")
                 continue
-            actual = await conn.fetchval(
+            actual = await sr.conn.fetchval(
                 """SELECT outcome FROM decision_outputs
                    WHERE application_id=$1 AND decision_id=$2 AND tenant_id=$3
                    ORDER BY version DESC LIMIT 1""",
@@ -196,8 +169,7 @@ async def main():
         print(f"\nResult: {passed}/{total} mapped scenarios match "
               f"({flagged} no-persona flagged)")
     finally:
-        await conn.close()
-        await runner.close()
+        await sr.close()
 
 
 asyncio.run(main())

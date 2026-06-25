@@ -17,6 +17,7 @@ from core.scenarios.meridian import (
     MERIDIAN_BY_ID,
     MERIDIAN_SCENARIOS,
 )
+from core.scenarios.runner import ScenarioRunner
 
 __all__ = [
     "Scenario",
@@ -28,4 +29,5 @@ __all__ = [
     "CREDIT_FLOOR",
     "DTI_MAX",
     "LTV_MAX",
+    "ScenarioRunner",
 ]
