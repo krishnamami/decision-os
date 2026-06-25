@@ -4,12 +4,13 @@ from typing import Optional
 
 from core.aus.du_parser import detect_aus_conflict
 from core.aus.reconciliation import AUSReconciliationEngine
+from core.exceptions.exception_engine import ExceptionEngine
 from core.context_store import ContextBundle
 from core.normalizer.models import DecisionOutcome
 from core.policy_engine import PolicyDecision
 from core.trace import SignalDirection
 
-from .base import LendingPersona, OfflineReasoning, first_object, make_signal, upstream_payload
+from .base import LendingPersona, OfflineReasoning, first_object, latest_object, make_signal, upstream_payload
 
 
 _TARGETS: dict[str, str] = {
@@ -190,6 +191,47 @@ class WorkflowRoutingAgent(LendingPersona):
                 notes=aus_reconciliation.get("message"),
             ))
 
+        # ── EX-A: exception eligibility (ADVISORY, output_payload only) ────
+        # For the blocking signals approval_routing can see (a declining/escalating
+        # UW outcome, AUS conflict, evidence conflict), surface whether an
+        # underwriting exception is even on the table + what it would take.
+        # approval_routing's bundle does NOT carry the upstream DTI/LTV actuals +
+        # overlay/agency thresholds, so eligibility runs with those absent
+        # (documented via RULE-11 missing_inputs); EX-B/C feed real values +
+        # compensating factors. proposed_outcome is UNCHANGED — Known Gap (f) holds.
+        exception_rules_obj = latest_object(bundle, "exception_rules") or {}
+        exception_engine = ExceptionEngine(rules=exception_rules_obj.get("values"))
+        blocking_signals = []
+        if outcome_label in ("decline", "escalate"):
+            blocking_signals.append(f"UW_OUTCOME_{outcome_label.upper()}")
+        if aus_conflict or aus_reconciliation.get("reconciliation_required"):
+            blocking_signals.append("AUS_CONFLICT")
+        if evidence_populated and evidence_any_conflicts:
+            blocking_signals.append("ROUTE_CONFLICT")
+        exceptions_available = []
+        for sig in blocking_signals:
+            elig = exception_engine.evaluate_exception_eligibility(
+                blocked_signal=sig, actual_value=None, overlay_threshold=None,
+                agency_floor=None, compensating_factors=[],
+            )
+            exceptions_available.append({
+                "blocked_signal": sig,
+                "exception_type": exception_engine.classify_exception_type(sig),
+                **elig,
+            })
+        exception_analysis = {
+            "exceptions_available": exceptions_available,
+            "any_eligible": any(e.get("eligible_for_exception")
+                                for e in exceptions_available),
+            "below_agency_floor": any(e.get("reason") == "below_agency_floor"
+                                      for e in exceptions_available),
+            "exception_rule_trace": exception_rules_obj.get("trace"),
+            "note": ("Advisory exception pathways for the blocking signals "
+                     "approval_routing sees; DTI/LTV actuals + overlay/agency "
+                     "thresholds + compensating factors are wired in EX-B/C. "
+                     "proposed_outcome unchanged (Gap f)."),
+        }
+
         return OfflineReasoning(
             output_payload={
                 "routing_target": target,
@@ -203,6 +245,8 @@ class WorkflowRoutingAgent(LendingPersona):
                 "aus_reconciliation": aus_reconciliation,
                 "aus_confidence": aus_reconciliation.get("confidence"),
                 "aus_reconciled_system": aus_system,
+                # EX-A — advisory exception eligibility (additive).
+                "exception_analysis": exception_analysis,
                 # RA-PERSONA-C: evidence provenance (advisory).
                 "evidence_populated": evidence_populated,
                 "route_evidence_confidence": (

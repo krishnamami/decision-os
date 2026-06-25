@@ -495,6 +495,9 @@ class PersonaRunner:
         elif decision_id == "dti_calculation":
             from core.obligations.obligation_resolver import load_obligation_rules
             key, loader = "obligation_rules", load_obligation_rules
+        elif decision_id == "approval_routing":
+            from core.exceptions.exception_engine import load_exception_rules
+            key, loader = "exception_rules", load_exception_rules
         else:
             return
 
@@ -542,7 +545,8 @@ class PersonaRunner:
         rules_snap = {
             k: objects.pop(k)
             for k in ("asset_rules", "credit_rules", "collateral_rules",
-                      "lien_rules", "income_rules", "obligation_rules")
+                      "lien_rules", "income_rules", "obligation_rules",
+                      "exception_rules")
             if k in objects
         }
         entity_snap = objects  # whatever remains = entity_states / view projection
