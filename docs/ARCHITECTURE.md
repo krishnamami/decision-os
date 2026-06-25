@@ -253,6 +253,8 @@ Exceptions:      core/exceptions/  exception_engine.py (ExceptionEngine — elig
                  (RBAC + status transitions); DB writers, NOT runner-wired (EX-C ✅)
 Intelligence:    core/intelligence/  change_impact_simulator.py (ChangeImpactSimulator —
                  read-only "what-if" over recorded decisions; no engine re-run) (CI-A ✅)
+                 + decision_replay.py (replay_decision / replay_all_decisions — replay a
+                 recorded decision against a different tenant_rules version) (CI-B ✅)
                  API: api/accord/intelligence.py (POST /simulate-impact + GET
                  /simulatable-rules)
 ```
@@ -468,12 +470,19 @@ moving proposed_outcome (Known Gap f stands).
 
 ---
 
-## Change Impact Simulation (CI-A)
+## Intelligence Subsystem — Change Impact + Replay (CI-A / CI-B)
 
-`core/intelligence/change_impact_simulator.py` answers "if we moved this overlay
-rule, what happens to the pipeline?" — **read-only**, never writing the catalogue
-or any decision (same posture as `core/audit/reports`). It does NOT re-run the
-engine; the full 14-persona dry-run re-evaluation is CI-B (future).
+`core/intelligence/` is the read-only analytics layer that reasons OVER recorded
+decisions without re-running the engine and without writing the catalogue or any
+decision (same posture as `core/audit/reports`). Two slices share its proven
+reduction primitives (`_reduce_outcome` / `_normalize_upstream`):
+`change_impact_simulator.py` (CI-A — hypothetical rule changes) and
+`decision_replay.py` (CI-B — replay against a different rule version).
+
+### CI-A — change impact simulator
+
+`change_impact_simulator.py` answers "if we moved this overlay rule, what happens
+to the pipeline?" It does NOT re-run the engine.
 
 **Approach (delta short-circuit + binding-constraint cross-check):** each
 simulatable overlay rule maps to one `entity_states` field + one upstream persona
@@ -512,9 +521,46 @@ everywhere). RULE 11 holds: a NULL field (e.g. SC03 `dti_back`) is reported in
 (true unblocks vs shadowed-by-other-constraint, dollars excluded, NULL skips,
 dataset size). Thresholds are always caller-supplied — nothing hardcoded.
 
-CI-B (future): inject an override rules dict into the runner and re-run all 14
-personas for full cascade fidelity (captures effects this single-gate model
-approximates).
+### CI-B — historical decision replay
+
+`decision_replay.py` answers "what would this loan have decided under a different
+rule version?" `replay_decision(conn, application_id, tenant_id, target_rule_version_id)`
+re-runs a recorded underwriting decision against ANY `tenant_rules` version using
+the EXISTING `ThresholdResolver(rule_version_id)` (already version-parametric —
+the cron path uses it to score rate-locked loans under their pinned version). It:
+
+1. reads the recorded outcome + its `rule_version_id` (`decision_outputs`),
+2. reads the FROZEN upstream persona outcomes (`persona_bundles.upstream_snapshot`)
+   and gate values (`entity_states`),
+3. re-resolves credit/dti/ltv thresholds at the original vs target version, and
+4. re-evaluates ONLY those gates, swaps the affected personas into the frozen
+   upstream set, and **re-reduces** to the underwriting outcome (CI-A's shadow-safe
+   method — a cleared gate never unblocks a loan blocked by another persona;
+   `reduce()` reproduces all 16 recorded outcomes, `fidelity_failures=0`).
+
+`replay_all_decisions()` rolls this up across the pipeline (changed count +
+`dollars_changed`). Read-only — nothing written; RULE 11 (`data_source` +
+`missing_inputs` + `honest_caveat`) on every result. SCOPE: credit/dti/ltv gates
+only; fraud/product/income held at their frozen outcomes; full 14-persona cascade
+re-run remains a future slice.
+
+**Cross-version requires ≥2 versions.** Meridian shipped with only v1, so
+`scripts/compliance/seed_ci_b_v2_rules.py` seeds a synthetic v2 in `tenant_rules`
+as **`status='draft'`** — the live path resolves only the *active* version (v1), so
+decisions + 16/16 are UNCHANGED, while replay targets v2 by id (`ThresholdResolver`
+reads any version by `rule_version_id` regardless of status). v2 deltas:
+`credit.min_score` 640→680, `dti.back_max` 43→40 (both stricter). Demo: 3 loans
+flip block under v2 ($1.15M) — cross-validating CI-A's tighten-DTI finding.
+
+### Eval timeout fix (gap g — actual fix)
+
+The 16/16 eval (`scripts/evaluate_meridian_scenarios.py`) was already concurrent
+(`--concurrency`, default 4) — gap g's "sequential ~165s" was stale. The real
+remaining issue was an UNBOUNDED await: a single stuck RDS call hung the whole
+`asyncio.gather`. CI-B wraps each `_process_one` in
+`asyncio.wait_for(timeout=SCENARIO_TIMEOUT)` (default 30s, env-tunable) so a stuck
+decision becomes a bounded `TIMEOUT` error and the run continues. Gap g is now
+addressed (concurrency + timeout); the remaining latency is network RTT to live RDS.
 
 ---
 
@@ -781,8 +827,12 @@ From RA-6A (all 8 checks PASS; these are documented, not blocking the demo):
     routing outcome. Conflicts SHOULD route to manual review (not auto-approve):
     that OUTCOME change is deliberate future work, out of the advisory-only scope.
 
-(g) Eval runs the 16 apps sequentially (~165s nominal). asyncio.gather +
-    semaphore(5) -> ~40s. RA-P0-B backlog.
+(g) CLOSED (CI-B). The eval was already concurrent (RA-P0-B/IN-B —
+    asyncio.gather + semaphore, --concurrency=N default 4). The residual hang
+    was an UNBOUNDED await on a degraded RDS link, now bounded by
+    asyncio.wait_for(timeout=SCENARIO_TIMEOUT, default 30s) around _process_one:
+    a stuck decision becomes a TIMEOUT error, the run continues. Remaining
+    latency is network RTT to live RDS, not a code structure issue.
 
 (h) ~1283 superseded decision_outputs versions carry NULL bundle_id (from
     network-degraded RA-PERSONA evals — RA-3F bundle write is best-effort by
