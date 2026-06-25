@@ -246,6 +246,9 @@ Income model:    core/income/  income_aggregator.py (get_qualifying_income /
 Obligations:     core/obligations/  obligation_resolver.py (ObligationResolver —
                  per-type monthly debt: student/alimony/installment/revolving/
                  heloc/business-debt/rental-offset; sync/DB-less)   (OB-A/B ✅)
+Exceptions:      core/exceptions/  exception_engine.py (ExceptionEngine — eligibility:
+                 agency-floor/overlay-breach/factors gates) + compensating_factors_engine.py
+                 (CompensatingFactorsEngine — detect 6 factors); sync/DB-less  (EX-A/B ✅)
 ```
 
 ---
@@ -276,6 +279,10 @@ income_sources            One row per income stream per borrower (INC-A) — typ
                           fact_node_ids. Additive to entity_states.qualifying_monthly
 employment_history        Per-job history (INC-A) — start/end, is_self_employed,
                           ownership_pct; FK income_source_id
+loan_exceptions           Structured exception request→review→grant lifecycle
+                          (EX-A) — FK decision_outputs + loan_actions; breach_pct,
+                          below_agency_floor, compensating_factors JSONB
+compensating_factors      Per-factor detail per exception (EX-A); FK loan_exceptions
 ```
 
 ---
@@ -403,6 +410,36 @@ ratio-wiring land together rather than churning the schema twice.
 
 ---
 
+## Exceptions (EX-A / EX-B)
+
+`core/exceptions/` is the underwriting-exception framework. It builds ON the
+existing override capture (loan_actions + decision_outputs.human_*) — it does NOT
+duplicate it — and is ADVISORY: wired into approval_routing as output only, never
+moving proposed_outcome (Known Gap f stands).
+
+- **EX-A — ExceptionEngine** (`exception_engine.py`, Fannie B3-2-02): three gates —
+  agency floor is ABSOLUTE (below it, never) → overlay-breach tolerance (catalogue
+  max %) → compensating-factors-required. `classify_exception_type` maps a blocked
+  signal to a type. 4 catalogue rules. New tables `loan_exceptions`
+  (request→review→grant lifecycle, FK decision_outputs + loan_actions) +
+  `compensating_factors` — EX-A does NOT write them (EX-C populates).
+- **EX-B — CompensatingFactorsEngine** (`compensating_factors_engine.py`): detects
+  6 factors from REAL entity_states data — substantial_reserves (liquid/piti),
+  low_ltv, excellent_credit (score−floor), long_employment (months from
+  period_start), limited_debt (oblig/income), large_down_payment (100−ltv); scores
+  strong/moderate/weak → exception_score → recommended approval level (senior /
+  manager / uw / insufficient). payment_shock + residual_income → not_applicable
+  (no input). 6 catalogue factor-bar thresholds. The enricher's
+  `_attach_compensating_factor_inputs` surfaces the inputs to the approval_routing
+  bundle as `cf_inputs`; detected factors feed the EX-A ExceptionEngine.
+- Both engines: sync + DB-less, catalogue-driven (SAFE_DEFAULTS fallback), RULE 11
+  (data_source + missing_inputs on every return). One shared `exception_rules`
+  bundle key (EXCEPTION_RULE_KEYS aggregates the 4 exception + 6 factor + baseline
+  reserves keys; the runner's approval_routing branch loads them all). Writing the
+  loan_exceptions / compensating_factors TABLES is EX-C.
+
+---
+
 ## Persona Status
 
 Legend: ✅ done · ❌ pending · the parenthetical names the prompt(s) that close it.
@@ -477,9 +514,9 @@ Notes:
 ## Catalogue State (verified 2026-06-24)
 
 ```
-agency_guidelines:   98 rows  (Fannie 75 / FHA 13 / VA 8 / Freddie 2)
-                     (Gap c +2; INC-B +1; INC-E +8; INC-F +3; OB-A +2
-                      revolving/heloc factors; OB-B +1 business_debt_exclusion;
+agency_guidelines:   108 rows  (Fannie 85 / FHA 13 / VA 8 / Freddie 2)
+                     (Gap c +2; INC-B +1; INC-E +8; INC-F +3; OB-A +2; OB-B +1;
+                      EX-A +4 exception framework; EX-B +6 compensating-factor bars;
                       OB-A also updated student_loan_deferred_rate 1.0->0.5, gap d)
 regulatory_rules:    23 rows
 overlay_rules:        6 rows  (Meridian 4 / Summit 2)
