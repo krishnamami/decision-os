@@ -60,35 +60,83 @@ def _agencies_for(programs: list[str]) -> set[str]:
     return out
 
 
-def validate_overlay(rules: dict, programs: list[str]) -> tuple[list[str], list[str]]:
+# PL-B — overlay guardrail bounds. The DEFAULTS reproduce the historical hardcoded
+# constants exactly; load_overlay_bounds() below resolves the same keys from the
+# catalogue (regulatory_rules + agency_guidelines) so the values become a single
+# catalogue-sourced truth, with these as the RULE 9 fallback. validate_overlay stays
+# PURE + sync (bounds injected) so it remains unit-testable without a DB.
+_DEFAULT_OVERLAY_BOUNDS = {
+    "credit_fha_standard_min": 580,
+    "credit_fha_absolute_min": 500,
+    "credit_agency_warn": 620,
+    "dti_hard_max": 57,
+    "dti_qm_warn": 43,
+    "ltv_hard_max": 97,
+}
+
+
+def validate_overlay(rules: dict, programs: list[str],
+                     bounds: Optional[dict] = None) -> tuple[list[str], list[str]]:
     """Return (hard_errors, soft_warnings) for a proposed overlay.
 
     Hard floors block the change; soft warnings just flag it for the approver.
+    `bounds` (catalogue-resolved via load_overlay_bounds) overrides the defaults;
+    when omitted the values are identical to the historical constants, so behavior
+    is unchanged whether the bounds come from the catalogue or this fallback.
     """
+    b = {**_DEFAULT_OVERLAY_BOUNDS, **(bounds or {})}
     errors: list[str] = []
     warnings: list[str] = []
 
     credit = (rules.get("credit") or {}).get("min_score")
     if isinstance(credit, (int, float)):
-        if "fha" in programs and credit < 580:
-            errors.append(f"Credit floor {credit} is below the FHA minimum of 580 for your FHA program")
-        elif credit < 500:
-            errors.append(f"Credit floor {credit} is below the FHA absolute minimum of 500")
-        if credit < 620:
-            warnings.append(f"Credit floor {credit} is below the Fannie guideline of 620")
+        if "fha" in programs and credit < b["credit_fha_standard_min"]:
+            errors.append(f"Credit floor {credit} is below the FHA minimum of "
+                          f"{b['credit_fha_standard_min']:g} for your FHA program")
+        elif credit < b["credit_fha_absolute_min"]:
+            errors.append(f"Credit floor {credit} is below the FHA absolute minimum of "
+                          f"{b['credit_fha_absolute_min']:g}")
+        if credit < b["credit_agency_warn"]:
+            warnings.append(f"Credit floor {credit} is below the Fannie guideline of "
+                            f"{b['credit_agency_warn']:g}")
 
     dti = (rules.get("dti") or {}).get("back_max")
     if isinstance(dti, (int, float)):
-        if dti > 57:
-            errors.append(f"DTI {dti}% exceeds the hard maximum of 57%")
-        elif dti > 43:
-            warnings.append(f"DTI {dti}% exceeds the QM safe-harbor limit of 43%")
+        if dti > b["dti_hard_max"]:
+            errors.append(f"DTI {dti}% exceeds the hard maximum of {b['dti_hard_max']:g}%")
+        elif dti > b["dti_qm_warn"]:
+            warnings.append(f"DTI {dti}% exceeds the QM safe-harbor limit of {b['dti_qm_warn']:g}%")
 
     ltv = (rules.get("ltv") or {}).get("max")
-    if isinstance(ltv, (int, float)) and ltv > 97:
-        errors.append(f"LTV {ltv}% exceeds the Fannie conventional maximum of 97%")
+    if isinstance(ltv, (int, float)) and ltv > b["ltv_hard_max"]:
+        errors.append(f"LTV {ltv}% exceeds the Fannie conventional maximum of {b['ltv_hard_max']:g}%")
 
     return errors, warnings
+
+
+async def load_overlay_bounds(conn, tenant_id: str) -> dict:
+    """Resolve the validate_overlay bounds from the catalogue (RULE 4/8): FHA credit
+    floors + DTI/LTV hard ceilings from regulatory_rules (seeded by
+    seed_pl_b_regulatory_floors.py), the Fannie credit guideline + QM DTI from their
+    existing rows. Each falls back to the constant if its row is absent (RULE 9)."""
+    from core.catalogue.rule_loader import get_rule
+
+    async def _v(name, *, agency="fannie", is_ceiling, fallback):
+        try:
+            r = await get_rule(conn, name, tenant_id, agency=agency, is_ceiling=is_ceiling)
+            v = r.get("applied")
+            return float(v) if v is not None else float(fallback)
+        except Exception:
+            return float(fallback)
+
+    return {
+        "credit_fha_standard_min": await _v("credit_floor_fha_standard_min", is_ceiling=False, fallback=580),
+        "credit_fha_absolute_min": await _v("credit_floor_fha_absolute_min", is_ceiling=False, fallback=500),
+        "credit_agency_warn": await _v("Minimum Credit Score", is_ceiling=False, fallback=620),
+        "dti_hard_max": await _v("dti_back_hard_max", is_ceiling=True, fallback=57),
+        "dti_qm_warn": await _v("QM Safe Harbor DTI Maximum", is_ceiling=True, fallback=43),
+        "ltv_hard_max": await _v("ltv_hard_max", is_ceiling=True, fallback=97),
+    }
 
 
 async def _active_version(conn, tenant_id: str):
@@ -155,8 +203,9 @@ async def get_rules(tenant_id: str = Depends(get_tenant_id)) -> dict:
             "SELECT * FROM tenant_rules WHERE tenant_id=$1 AND status='shadow' ORDER BY version DESC LIMIT 1", tenant_id)
         exam = await conn.fetchrow(
             "SELECT * FROM examination_periods WHERE tenant_id=$1 AND is_active=true ORDER BY started_at DESC LIMIT 1", tenant_id)
+        bounds = await load_overlay_bounds(conn, tenant_id)
 
-    errors, warnings = validate_overlay(_jsonb(active["rules"]), programs) if active else ([], [])
+    errors, warnings = validate_overlay(_jsonb(active["rules"]), programs, bounds) if active else ([], [])
     expiring = _expiring_waivers(_jsonb(active["rules"]) if active else {})
 
     return {
@@ -243,7 +292,8 @@ async def update_rules(
         await _check_not_frozen(conn, tenant_id)
         active = await _active_version(conn, tenant_id)
         programs = body.programs or (_jsonb(active["programs"]) if active else ["conventional", "fha"])
-        errors, warnings = validate_overlay(body.rules, programs)
+        bounds = await load_overlay_bounds(conn, tenant_id)
+        errors, warnings = validate_overlay(body.rules, programs, bounds)
         if errors:
             raise HTTPException(400, errors[0])
 
@@ -555,7 +605,8 @@ async def schedule(body: ScheduleBody, user: dict = Depends(get_current_user)) -
         await _check_not_frozen(conn, tid)
         active = await _active_version(conn, tid)
         programs = body.programs or (_jsonb(active["programs"]) if active else ["conventional", "fha"])
-        errs, _ = validate_overlay(body.rules, programs)
+        bounds = await load_overlay_bounds(conn, tid)
+        errs, _ = validate_overlay(body.rules, programs, bounds)
         if errs:
             raise HTTPException(400, errs[0])
         new_v = await _next_version(conn, tid)
@@ -1025,7 +1076,8 @@ async def update_overlay(body: OverlayUpdate, user: dict = Depends(get_current_u
         await _check_not_frozen(conn, tenant_id)
         active = await _active_version(conn, tenant_id)
         programs = body.programs or (_jsonb(active["programs"]) if active else ["conventional", "fha"])
-        errors, warnings = validate_overlay(body.rules, programs)
+        bounds = await load_overlay_bounds(conn, tenant_id)
+        errors, warnings = validate_overlay(body.rules, programs, bounds)
         if errors:
             raise HTTPException(status_code=422, detail=errors[0])
         if warnings and not body.force:
@@ -1120,6 +1172,131 @@ async def preview_impact(payload: dict = Body(...), tenant_id: str = Depends(get
     pool = await _get_pool()
     async with pool.acquire() as conn:
         return await _preview_impact(conn, tenant_id, rules)
+
+
+# ── PL-B — per-field guardrail display (three-layer, catalogue-driven) ──
+def assemble_guardrails(resolved: dict) -> list:
+    """PURE: build the per-field guardrail rows the slider UI needs from already-
+    resolved layer values (so this is unit-testable without a DB). `resolved` shape:
+      credit_floor:     {overlay, agency:(val,citation), fed_std, fed_abs}
+      dti_back_max:     {overlay, agency:(val,citation), qm, hard}
+      ltv_max_purchase: {overlay, agency:(val,citation), hard}
+    Each row carries data_source + missing_inputs (RULE 11)."""
+    def _ag(t):
+        return {"value": t[0], "citation": t[1]} if t and t[0] is not None else None
+
+    def _miss(field, overlay):
+        return [f"no active overlay_rules row for {field}"] if overlay is None else []
+
+    c = resolved.get("credit_floor") or {}
+    d = resolved.get("dti_back_max") or {}
+    l = resolved.get("ltv_max_purchase") or {}
+    c_agency = (c.get("agency") or (None, None))[0]
+    l_agency = (l.get("agency") or (None, None))[0]
+
+    return [
+        {"field": "credit_floor", "label": "Minimum Credit Score", "direction": "floor",
+         "current_overlay": c.get("overlay"), "agency": _ag(c.get("agency")),
+         "federal": {"value": c.get("fed_std"), "citation": "FHA HUD 4000.1"},
+         "hard_min": c.get("fed_abs"), "hard_max": 850, "soft_warn_at": c_agency,
+         "editable_range": [c.get("fed_std"), 850],
+         "note": (f"Below the FHA standard floor ({c.get('fed_std')}) is blocked for FHA "
+                  f"programs; below the FHA absolute minimum ({c.get('fed_abs')}) is always "
+                  f"blocked; below the Fannie guideline ({c_agency}) warns."),
+         "citation": "Fannie B3-5.1-01 + FHA HUD 4000.1",
+         "data_source": "regulatory_rules + agency_guidelines + overlay_rules",
+         "missing_inputs": _miss("credit_floor", c.get("overlay"))},
+        {"field": "dti_back_max", "label": "Maximum Back-End DTI", "direction": "ceiling",
+         "current_overlay": d.get("overlay"), "agency": _ag(d.get("agency")),
+         "federal": {"value": d.get("qm"), "citation": "12 CFR 1026.43 (QM Safe Harbor)"},
+         "hard_min": 20.0, "hard_max": d.get("hard"), "soft_warn_at": d.get("qm"),
+         "editable_range": [20.0, d.get("hard")],
+         "note": (f"Above the hard maximum ({d.get('hard')}%) is blocked; above the QM "
+                  f"safe-harbor ({d.get('qm')}%) warns."),
+         "citation": "Fannie B3-6-02 + 12 CFR 1026.43",
+         "data_source": "regulatory_rules + agency_guidelines + overlay_rules",
+         "missing_inputs": _miss("dti_back_max", d.get("overlay"))},
+        {"field": "ltv_max_purchase", "label": "Maximum LTV (Purchase)", "direction": "ceiling",
+         "current_overlay": l.get("overlay"), "agency": _ag(l.get("agency")),
+         "federal": None, "hard_min": 50.0, "hard_max": l.get("hard"),
+         "soft_warn_at": l_agency, "editable_range": [50.0, l.get("hard")],
+         "note": f"Above the agency maximum ({l.get('hard')}%) is blocked.",
+         "citation": "Fannie B2-1.2-01",
+         "data_source": "regulatory_rules + agency_guidelines + overlay_rules",
+         "missing_inputs": _miss("ltv_max_purchase", l.get("overlay"))},
+    ]
+
+
+async def _resolve_guardrail_layers(conn, tenant_id: str) -> dict:
+    """Read each layer from the catalogue (RULE 4): overlay from the typed
+    overlay_rules, agency from its human-named agency_guidelines row, federal from
+    the seeded regulatory_rules row. Citations come from get_rule's `layers`."""
+    from core.catalogue.rule_loader import get_rule
+
+    async def _overlay(rule_type):
+        r = await conn.fetchrow(
+            "SELECT overlay_value FROM overlay_rules WHERE tenant_id=$1 AND rule_type=$2 "
+            "AND is_active=true ORDER BY loan_type NULLS LAST LIMIT 1", tenant_id, rule_type)
+        return float(r["overlay_value"]) if r and r["overlay_value"] is not None else None
+
+    async def _agency(name):
+        try:
+            r = await get_rule(conn, name, tenant_id, agency="fannie", is_ceiling=True)
+            ag = (r.get("layers") or {}).get("agency")
+            if ag and ag.get("value") is not None:
+                return (float(ag["value"]), ag.get("citation"))
+        except Exception:
+            pass
+        return (None, None)
+
+    async def _federal(name, fallback):
+        try:
+            r = await get_rule(conn, name, tenant_id)
+            reg = (r.get("layers") or {}).get("regulatory")
+            if reg and reg.get("value") is not None:
+                return float(reg["value"])
+        except Exception:
+            pass
+        return float(fallback)
+
+    return {
+        "credit_floor": {"overlay": await _overlay("credit_floor"),
+                         "agency": await _agency("Minimum Credit Score"),
+                         "fed_std": await _federal("credit_floor_fha_standard_min", 580),
+                         "fed_abs": await _federal("credit_floor_fha_absolute_min", 500)},
+        "dti_back_max": {"overlay": await _overlay("dti_back_max"),
+                         "agency": await _agency("DU Maximum DTI"),
+                         "qm": await _federal("QM Safe Harbor DTI Maximum", 43),
+                         "hard": await _federal("dti_back_hard_max", 57)},
+        "ltv_max_purchase": {"overlay": await _overlay("ltv_max_purchase"),
+                             "agency": await _agency("Primary Residence 1-Unit Max LTV"),
+                             "hard": await _federal("ltv_hard_max", 97)},
+    }
+
+
+@router.get("/overlay/guardrails")
+async def overlay_guardrails(tenant_id: str = Depends(get_tenant_id)) -> dict:
+    """Per-field consolidated guardrail display for the overlay-config slider UI.
+    Read-only; fully catalogue-driven (three layers + the seeded hard bounds)."""
+    _require_db()
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        resolved = await _resolve_guardrail_layers(conn, tenant_id)
+    guardrails = assemble_guardrails(resolved)
+    return {
+        "tenant_id": tenant_id,
+        "guardrails": guardrails,
+        "editable_fields": [g["field"] for g in guardrails],
+        "simulatable_fields": ["credit_floor", "dti_back_max", "ltv_max_purchase"],
+        "impact_preview_endpoint": "POST /api/accord/intelligence/simulate-impact",
+        "change_history_endpoint": "GET /api/accord/rules/history",
+        "data_source": "regulatory_rules + agency_guidelines + overlay_rules",
+        "missing_inputs": sorted({m for g in guardrails for m in g["missing_inputs"]}),
+        "note": ("editable_range = slider bounds; hard_min/hard_max are absolute (saving "
+                 "outside returns 422); soft_warn_at warns but allows save with force=true; "
+                 "current_overlay is the live tenant setting. Live impact preview: POST the "
+                 "field + hypothetical value to /api/accord/intelligence/simulate-impact."),
+    }
 
 
 # ── Part 3. Rate sheet upload (CSV -> rate_sheet_entry) ──

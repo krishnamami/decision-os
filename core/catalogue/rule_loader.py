@@ -137,6 +137,14 @@ SAFE_DEFAULTS = {
     'va_residual_maintenance_per_sqft_monthly':      0.14,
     'va_residual_tax_estimate_pct':                  25,
     'va_residual_min_loan_amount':                   80000,
+    # PL-B — overlay guardrail hard bounds (seeded into regulatory_rules; these
+    # are the RULE 9 fallback when the catalogue row is absent). credit floors:
+    # FHA HUD 4000.1 (580 @ 3.5% down, 500 absolute @ 10% down); dti/ltv hard
+    # ceilings: Fannie B3-6-02 / B2-1.2-01.
+    'credit_floor_fha_standard_min':                 580,
+    'credit_floor_fha_absolute_min':                 500,
+    'dti_back_hard_max':                             57,
+    'ltv_hard_max':                                  97,
     # Property
     'ltv_purchase_max':                97,
     'ltv_cashout_max':                 80,
