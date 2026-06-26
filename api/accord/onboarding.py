@@ -6,7 +6,10 @@ non-template exports), download the template, and review import history.
 
 from __future__ import annotations
 
+import csv
+import io
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -17,6 +20,11 @@ from api.accord.pipeline import _get_pool, _require_db
 from core.onboarding.importer import LoanImporter, REQUIRED, TEMPLATE_COLUMNS, auto_map, evaluate_imported, parse_csv
 
 router = APIRouter(prefix="/api/accord/onboarding", tags=["accord-onboarding"])
+
+# PL-E — required columns for a product-matrix activation upload (products table).
+REQUIRED_PRODUCT_COLS = ("product_id", "product_name", "loan_type", "loan_purpose",
+                         "min_credit_score", "max_dti", "max_ltv", "max_loan_amount",
+                         "is_active")
 
 _TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "templates" / "accord_import_template.csv"
 
@@ -195,3 +203,123 @@ async def extract_rate_sheet(
     proposal = RateSheetExtractor().extract(file_bytes, file.filename or "rates.csv")
     proposal["tenant_id"] = tenant_id
     return proposal
+
+
+# ── PL-E — Platform Studio product-matrix CSV extractor (EXTRACT stage only) ──
+@router.post("/extract-product-matrix")
+async def extract_product_matrix(
+    file: UploadFile = File(...),
+    tenant_id: str = Depends(get_tenant_id),
+) -> dict:
+    """Extract a lender product-matrix CSV into a DRAFT proposal — `products`-shaped
+    rows with per-row confidence + warnings + source provenance (RULE 11). Writes
+    NOTHING — the admin reviews the proposal, then activates via /products/upload."""
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(400, "empty file")
+    from core.extraction.product_matrix_extractor import ProductMatrixExtractor
+    proposal = ProductMatrixExtractor().extract(
+        file_bytes, file.filename or "products.csv", tenant_id)
+    proposal["tenant_id"] = tenant_id
+    return proposal
+
+
+# ── PL-E — product-matrix ACTIVATE path (upsert into the products table) ──
+@router.post("/products/upload")
+async def upload_products(file: UploadFile = File(...),
+                          user: dict = Depends(get_current_user)) -> dict:
+    """Activate a reviewed product-matrix CSV into the tenant's products table.
+    Admin/manager only. This is the FIRST programmatic writer of the products
+    matrix table (outside the seed script). The products PK is product_id ALONE,
+    so the upsert is tenant-guarded: a product_id already owned by ANOTHER tenant
+    is rejected (surfaced in errors), never silently overwritten."""
+    if user.get("role") not in ("admin", "manager"):
+        raise HTTPException(403, "Admin or manager access required to upload products")
+    _require_db()
+    tenant_id = user["tenant_id"]
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(400, "empty file")
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1", errors="replace")
+    if not text.strip():
+        raise HTTPException(400, "Uploaded file is empty")
+
+    reader = csv.DictReader(io.StringIO(text))
+    cols = {(h or "").strip() for h in (reader.fieldnames or [])}
+    missing = [c for c in REQUIRED_PRODUCT_COLS if c not in cols]
+    if missing:
+        raise HTTPException(422, f"CSV missing required columns: {', '.join(missing)}")
+
+    errors: list = []
+    uploaded = 0
+    skipped_other_tenant = 0
+    rows_in_file = 0
+
+    def _int(v):
+        v = (v or "").strip()
+        return int(float(v)) if v else None
+
+    def _flt(v):
+        v = (v or "").strip()
+        return float(v) if v else None
+
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            for i, r in enumerate(reader, start=2):
+                rows_in_file += 1
+                try:
+                    pid = (r["product_id"] or "").strip()
+                    name = (r["product_name"] or "").strip()
+                    if not pid or not name:
+                        raise ValueError("product_id and product_name are required")
+                    is_active = str(r.get("is_active", "")).strip().lower() in (
+                        "yes", "y", "true", "1", "active", "offered", "approved")
+                    res = await conn.fetchrow(
+                        "INSERT INTO products "
+                        "(product_id, tenant_id, product_name, loan_type, loan_purpose, "
+                        " min_credit_score, max_dti, max_ltv, max_loan_amount, is_active) "
+                        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) "
+                        "ON CONFLICT (product_id) DO UPDATE SET "
+                        "  product_name=EXCLUDED.product_name, loan_type=EXCLUDED.loan_type, "
+                        "  loan_purpose=EXCLUDED.loan_purpose, min_credit_score=EXCLUDED.min_credit_score, "
+                        "  max_dti=EXCLUDED.max_dti, max_ltv=EXCLUDED.max_ltv, "
+                        "  max_loan_amount=EXCLUDED.max_loan_amount, is_active=EXCLUDED.is_active "
+                        "WHERE products.tenant_id = EXCLUDED.tenant_id "
+                        "RETURNING product_id",
+                        pid, tenant_id, name,
+                        (r.get("loan_type") or "").strip() or "conventional",
+                        (r.get("loan_purpose") or "").strip() or "purchase",
+                        _int(r.get("min_credit_score")), _flt(r.get("max_dti")),
+                        _flt(r.get("max_ltv")), _int(r.get("max_loan_amount")), is_active)
+                    if res is None:
+                        # conflict on product_id but owned by another tenant — never clobber
+                        skipped_other_tenant += 1
+                        errors.append({"row": i, "product_id": pid,
+                                       "error": "product_id already owned by another tenant — not overwritten"})
+                    else:
+                        uploaded += 1
+                except (ValueError, TypeError, KeyError) as e:
+                    errors.append({"row": i, "error": str(e)})
+                if len(errors) > 50:
+                    break
+            # Best-effort freshness log — never fail the upload over this.
+            try:
+                await conn.execute(
+                    "INSERT INTO data_source_status (source_id, source_name, last_download, last_success, record_count, status, updated_at) "
+                    "VALUES ('products','Product Matrix Upload',NOW(),NOW(),$1,'ok',NOW()) "
+                    "ON CONFLICT (source_id) DO UPDATE SET last_download=NOW(), last_success=NOW(), "
+                    "record_count=$1, status='ok', error_message=NULL, updated_at=NOW()",
+                    uploaded)
+            except Exception:
+                pass
+
+    if uploaded == 0 and rows_in_file > 0:
+        raise HTTPException(422, detail={"message": "No valid rows uploaded", "errors": errors[:10]})
+
+    return {"uploaded": uploaded, "rows_in_file": rows_in_file,
+            "skipped_other_tenant": skipped_other_tenant, "errors": errors[:10],
+            "tenant_id": tenant_id, "uploaded_at": datetime.utcnow().isoformat() + "Z"}
