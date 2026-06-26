@@ -9,7 +9,7 @@ Reuses the accord pool from ``api.accord.pipeline``.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from api.accord.auth import get_current_user, get_tenant_id, require_permission
@@ -317,6 +317,67 @@ async def hmda_incomplete(user: dict = Depends(get_current_user)) -> dict:
                  "and are not captured in these records."),
         "loans": loans,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# CF-A — HMDA LAR submission file + CFPB edit checks (read-only export)
+# ─────────────────────────────────────────────────────────────────────
+async def _fetch_hmda_records(tenant_id: str, year: Optional[int]) -> list:
+    _require_db()
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        if year:
+            rows = await conn.fetch(
+                "SELECT * FROM hmda_lar WHERE tenant_id=$1 AND hmda_reportable=true "
+                "AND EXTRACT(YEAR FROM action_taken_date)=$2 ORDER BY application_id",
+                tenant_id, year)
+        else:
+            rows = await conn.fetch(
+                "SELECT * FROM hmda_lar WHERE tenant_id=$1 AND hmda_reportable=true "
+                "ORDER BY application_id", tenant_id)
+    return [dict(r) for r in rows]
+
+
+def _institution_meta(user: dict) -> dict:
+    tid = user.get("tenant_id", "")
+    return {"tenant_id": tid, "lei": (user.get("lei") or "").strip(),
+            "institution_name": user.get("institution_name") or tid,
+            "contact_email": user.get("email", "")}
+
+
+@router.get("/hmda/lar-file")
+async def hmda_lar_file(year: Optional[int] = Query(None),
+                        user: dict = Depends(get_current_user)):
+    """Download the pipe-delimited HMDA LAR submission file (FFIEC FIG format) for
+    the tenant. Admin/compliance only. Read-only; CFPB upload is a manual step."""
+    if user.get("role") not in ("admin", "compliance", "super_admin"):
+        raise HTTPException(403, "Admin or compliance access required")
+    from fastapi import Response
+    from core.compliance.hmda_lar_file import generate_lar_file
+    records = await _fetch_hmda_records(user["tenant_id"], year)
+    cal_year = year or 2024
+    text, missing = generate_lar_file(records, _institution_meta(user), cal_year)
+    return Response(
+        content=text, media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="hmda_lar_{user["tenant_id"]}_{cal_year}.txt"',
+                 "X-HMDA-Records": str(len(records)),
+                 "X-HMDA-Records-With-Missing-Fields": str(len(missing))})
+
+
+@router.get("/hmda/edit-checks")
+async def hmda_edit_checks(year: Optional[int] = Query(None),
+                           user: dict = Depends(get_current_user)) -> dict:
+    """Run the CFPB edit checks (S/V/Q/M) over the tenant's LAR records and return a
+    structured report (submission_ready + errors/warnings/infos). Admin/compliance."""
+    if user.get("role") not in ("admin", "compliance", "super_admin"):
+        raise HTTPException(403, "Admin or compliance access required")
+    from core.compliance.hmda_lar_file import generate_lar_file, parse_lar_rows
+    from core.compliance.hmda_edit_checks import run_edit_checks
+    records = await _fetch_hmda_records(user["tenant_id"], year)
+    text, missing = generate_lar_file(records, _institution_meta(user), year or 2024)
+    report = run_edit_checks(records, parse_lar_rows(text))
+    report["missing_fields_report"] = missing
+    return report
 
 
 # ─────────────────────────────────────────────────────────────────────
