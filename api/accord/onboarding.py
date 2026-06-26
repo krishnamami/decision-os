@@ -323,3 +323,327 @@ async def upload_products(file: UploadFile = File(...),
     return {"uploaded": uploaded, "rows_in_file": rows_in_file,
             "skipped_other_tenant": skipped_other_tenant, "errors": errors[:10],
             "tenant_id": tenant_id, "uploaded_at": datetime.utcnow().isoformat() + "Z"}
+
+
+# ══════════════════════════════════════════════════════════════════════
+# PL-A — the 4 onboarding-step endpoints that close the 8-step API surface.
+#
+# All four are CONFIG layer: tenant-scoped, admin/manager-gated, and never
+# touch the decision path (no persona wiring, no decision_outputs / entity_states
+# writes). 16/16 holds by construction. The validation/normalization logic lives
+# in PURE module-level helpers (below) so it is unit-testable without a DB — the
+# endpoints are thin wrappers that add the I/O (same posture as the resolvers).
+# RULE 11: every response carries data_source + missing_inputs.
+# ══════════════════════════════════════════════════════════════════════
+
+_US_STATES = frozenset(
+    "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO "
+    "MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC".split())
+
+_COMPANY_TYPES = ("bank", "credit_union", "imc", "broker", "other")
+
+
+def _require_admin_manager(user: dict) -> None:
+    if user.get("role") not in ("admin", "manager"):
+        raise HTTPException(403, "Admin or manager access required")
+
+
+def build_company_update(payload: dict) -> tuple:
+    """Pure: (name, settings_patch, errors) for the company step. Required:
+    company_name + nmls_id. Optional: contact_email, primary_state, company_type."""
+    payload = payload or {}
+    errors: list = []
+    name = str(payload.get("company_name") or "").strip()
+    nmls = str(payload.get("nmls_id") or "").strip()
+    if not name:
+        errors.append("company_name is required")
+    if not nmls:
+        errors.append("nmls_id is required")
+
+    patch: dict = {}
+    if nmls:
+        patch["nmls_id"] = nmls
+    email = str(payload.get("contact_email") or "").strip()
+    if email:
+        if "@" not in email or "." not in email.split("@")[-1]:
+            errors.append("contact_email is not a valid email")
+        else:
+            patch["contact_email"] = email
+    state = str(payload.get("primary_state") or "").strip().upper()
+    if state:
+        if state not in _US_STATES:
+            errors.append(f"primary_state {state!r} is not a US state code")
+        else:
+            patch["primary_state"] = state
+    ctype = str(payload.get("company_type") or "").strip().lower()
+    if ctype:
+        patch["company_type"] = ctype if ctype in _COMPANY_TYPES else "other"
+    return name, patch, errors
+
+
+def validate_licenses(payload: dict) -> tuple:
+    """Pure: (licenses, errors, warnings). Each license needs state + license_number.
+    An unrecognized state is a WARNING, not a hard error (deduped by state, last wins)."""
+    payload = payload or {}
+    errors: list = []
+    warnings: list = []
+    raw = payload.get("licenses")
+    if not isinstance(raw, list) or not raw:
+        errors.append("licenses must be a non-empty list")
+        return [], errors, warnings
+
+    by_state: dict = {}
+    for i, lic in enumerate(raw):
+        if not isinstance(lic, dict):
+            errors.append(f"license[{i}] must be an object")
+            continue
+        st = str(lic.get("state") or "").strip().upper()
+        num = str(lic.get("license_number") or "").strip()
+        if not st or not num:
+            errors.append(f"license[{i}] requires state + license_number")
+            continue
+        if st not in _US_STATES:
+            warnings.append(f"{st} is not a recognized US state code")
+        by_state[st] = {
+            "state": st, "license_number": num,
+            "license_type": str(lic.get("license_type") or "").strip() or "lender",
+            "expiry_date": str(lic.get("expiry_date") or "").strip() or None,
+        }
+    return list(by_state.values()), errors, warnings
+
+
+def validate_exception_config(payload: dict) -> tuple:
+    """Pure: (config, errors). Bounds: max_exception_level 1-4; auto-escalate DTI
+    <= 60 (cannot exceed the agency ceiling); auto-escalate LTV <= 100;
+    required_compensating_factors 0-6 (the CompensatingFactorsEngine detects 6)."""
+    payload = payload or {}
+    errors: list = []
+    cfg: dict = {}
+
+    lvl = payload.get("max_exception_level")
+    if lvl is None:
+        errors.append("max_exception_level is required")
+    else:
+        try:
+            lvl = int(lvl)
+            if not 1 <= lvl <= 4:
+                errors.append("max_exception_level must be between 1 and 4")
+            else:
+                cfg["max_exception_level"] = lvl
+        except (TypeError, ValueError):
+            errors.append("max_exception_level must be an integer")
+
+    def _bounded(key, lo, hi, ceiling_msg):
+        v = payload.get(key)
+        if v is None:
+            return
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            errors.append(f"{key} must be numeric")
+            return
+        if v < lo or v > hi:
+            errors.append(ceiling_msg)
+        else:
+            cfg[key] = v
+
+    _bounded("auto_escalate_dti_threshold", 0.0, 60.0,
+             "auto_escalate_dti_threshold cannot exceed the agency ceiling of 60%")
+    _bounded("auto_escalate_ltv_threshold", 0.0, 100.0,
+             "auto_escalate_ltv_threshold cannot exceed 100%")
+
+    cf = payload.get("required_compensating_factors")
+    if cf is not None:
+        try:
+            cf = int(cf)
+            if not 0 <= cf <= 6:
+                errors.append("required_compensating_factors must be between 0 and 6")
+            else:
+                cfg["required_compensating_factors"] = cf
+        except (TypeError, ValueError):
+            errors.append("required_compensating_factors must be an integer")
+
+    roles = payload.get("exception_approval_roles")
+    if roles is not None:
+        if not isinstance(roles, list) or not all(isinstance(r, str) for r in roles):
+            errors.append("exception_approval_roles must be a list of role strings")
+        else:
+            cfg["exception_approval_roles"] = roles
+    return cfg, errors
+
+
+# Synthetic, well-formed borrower profiles for the test-loan probe (no PII, no DB).
+_TEST_PROFILES = {
+    "clean_approval": {"mid_credit_score": 760, "dti_back": 32.0, "ltv": 75.0,
+                       "loan_amount": 400000, "qualifying_monthly": 12000,
+                       "piti_monthly": 2200, "monthly_obligations": 600, "loan_type": "conventional"},
+    "borderline": {"mid_credit_score": 648, "dti_back": 46.0, "ltv": 96.0,
+                   "loan_amount": 520000, "qualifying_monthly": 8200,
+                   "piti_monthly": 2600, "monthly_obligations": 1200, "loan_type": "conventional"},
+    "fraud": {"mid_credit_score": 590, "dti_back": 58.0, "ltv": 99.0,
+              "loan_amount": 980000, "qualifying_monthly": 6000,
+              "piti_monthly": 3400, "monthly_obligations": 2100, "loan_type": "conventional"},
+}
+
+
+def synthetic_test_profile(scenario: str) -> dict:
+    return dict(_TEST_PROFILES.get(scenario or "clean_approval", _TEST_PROFILES["clean_approval"]))
+
+
+def advise_test_loan(profile: dict) -> dict:
+    """Pure, no-write advisory probe: runs the existing ProgramRecommender (EX2-B,
+    sync + DB-less) over the profile and maps its eligibility to an advisory
+    outcome. This is NOT the 14-persona engine (that path WRITES decision_outputs);
+    it is a config-coherence probe that proves the product/threshold config is wired,
+    without persisting anything. The honest engine label is reported in the result."""
+    from core.products.program_recommender import ProgramRecommender
+    rec = ProgramRecommender().recommend(profile or {})
+    if rec.get("eligible_count"):
+        outcome = "recommend"
+    elif rec.get("near_miss_count"):
+        outcome = "escalate"
+    else:
+        outcome = "block"
+    return {
+        "outcome": outcome,
+        "engine": "ProgramRecommender (advisory product-eligibility probe)",
+        "eligible_products": [p["product_id"] for p in rec.get("eligible_products", [])],
+        "top_recommendation": (rec.get("top_recommendation") or {}).get("product_id"),
+        "profile_summary": rec.get("profile_summary"),
+        "advisory": True,
+        "writes_decision_outputs": False,
+        "note": ("Advisory config probe only — does NOT run the 14-persona engine and "
+                 "writes nothing. The full evaluation (which persists decision_outputs) "
+                 "runs when a real loan is imported via POST /onboarding/import."),
+        "data_source": "synthetic profile + ProgramRecommender (in memory)",
+        "missing_inputs": rec.get("missing_inputs", []),
+    }
+
+
+# ── Step 1 — company identity + NMLS ──────────────────────────────────
+@router.post("/company")
+async def setup_company(payload: dict, user: dict = Depends(get_current_user)) -> dict:
+    """Register company identity + NMLS. Upserts the tenant name + merges the
+    company fields into tenants.settings (JSONB). Admin/manager only."""
+    _require_admin_manager(user)
+    _require_db()
+    name, patch, errors = build_company_update(payload)
+    if errors:
+        raise HTTPException(422, detail={"message": "Invalid company payload", "errors": errors})
+    tenant_id = user["tenant_id"]
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE tenants SET name=$2, "
+            "settings = COALESCE(settings,'{}'::jsonb) || $3::jsonb, updated_at=NOW() "
+            "WHERE tenant_id=$1",
+            tenant_id, name, json.dumps(patch))
+    return {"tenant_id": tenant_id, "company_name": name, "nmls_id": patch.get("nmls_id"),
+            "settings_saved": sorted(patch.keys()), "status": "company_registered",
+            "data_source": "tenants table", "missing_inputs": []}
+
+
+# ── Step 2 — state lending licenses ───────────────────────────────────
+@router.post("/licenses")
+async def setup_licenses(payload: dict, user: dict = Depends(get_current_user)) -> dict:
+    """Register state lending licenses into tenants.settings.licenses[] (deduped by
+    state). Unrecognized state codes are warnings, not errors. Admin/manager only."""
+    _require_admin_manager(user)
+    _require_db()
+    licenses, errors, warnings = validate_licenses(payload)
+    if errors:
+        raise HTTPException(422, detail={"message": "Invalid licenses payload", "errors": errors})
+    tenant_id = user["tenant_id"]
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE tenants SET settings = COALESCE(settings,'{}'::jsonb) || "
+            "jsonb_build_object('licenses', $2::jsonb), updated_at=NOW() WHERE tenant_id=$1",
+            tenant_id, json.dumps(licenses))
+    return {"tenant_id": tenant_id, "licenses_registered": len(licenses),
+            "states": [l["state"] for l in licenses], "warnings": warnings,
+            "status": "licenses_registered", "data_source": "tenants.settings.licenses",
+            "missing_inputs": []}
+
+
+# ── Step 5 — exception-framework configuration ────────────────────────
+@router.post("/exception-config")
+async def setup_exception_config(payload: dict, user: dict = Depends(get_current_user)) -> dict:
+    """Configure the exception framework. Validates bounds (level 1-4, DTI ≤ 60%,
+    LTV ≤ 100%, CFs 0-6 — never above agency ceilings). Stored additively under the
+    active tenant_rules.rules.exceptions (decision-path-inert — the live personas do
+    not read it); falls back to tenants.settings.exception_config if no active rules
+    version exists yet. Admin/manager only."""
+    _require_admin_manager(user)
+    _require_db()
+    cfg, errors = validate_exception_config(payload)
+    if errors:
+        raise HTTPException(422, detail={"message": "Invalid exception config", "errors": errors})
+    tenant_id = user["tenant_id"]
+    pool = await _get_pool()
+    stored_in = "tenants.settings.exception_config"
+    rule_version = None
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT rule_version_id, version, rules FROM tenant_rules "
+            "WHERE tenant_id=$1 AND status='active' ORDER BY version DESC LIMIT 1", tenant_id)
+        if row:
+            rules = row["rules"]
+            if isinstance(rules, str):
+                rules = json.loads(rules)
+            rules = rules or {}
+            rules["exceptions"] = cfg  # additive subkey, not read by the live engine
+            await conn.execute("UPDATE tenant_rules SET rules=$2::jsonb WHERE rule_version_id=$1",
+                               row["rule_version_id"], json.dumps(rules))
+            stored_in = "tenant_rules.rules.exceptions"
+            rule_version = row["version"]
+        else:
+            await conn.execute(
+                "UPDATE tenants SET settings = COALESCE(settings,'{}'::jsonb) || "
+                "jsonb_build_object('exception_config', $2::jsonb), updated_at=NOW() "
+                "WHERE tenant_id=$1", tenant_id, json.dumps(cfg))
+    return {"tenant_id": tenant_id, "exception_config": cfg, "rule_version": rule_version,
+            "stored_in": stored_in, "status": "exception_config_saved",
+            "data_source": stored_in, "missing_inputs": []}
+
+
+# ── Step 8 — advisory test loan (no decision_outputs write) ───────────
+@router.post("/test-loan")
+async def run_test_loan(payload: dict = None, user: dict = Depends(get_current_user)) -> dict:
+    """Run a synthetic test loan through an ADVISORY config probe (the pure
+    ProgramRecommender — never the writing 14-persona engine). Persists NOTHING.
+    Validates the tenant config is coherent end-to-end. Admin/manager only.
+    Payload: {scenario?: clean_approval|borderline|fraud, profile?: {...}}."""
+    _require_admin_manager(user)
+    payload = payload or {}
+    profile = payload.get("profile") if isinstance(payload.get("profile"), dict) else None
+    if not profile:
+        profile = synthetic_test_profile(payload.get("scenario", "clean_approval"))
+    result = advise_test_loan(profile)
+
+    # Best-effort config-readiness checks (degrade gracefully on a slow/absent DB).
+    checks = {"active_rules": None, "products": None, "users": None}
+    missing = list(result.get("missing_inputs") or [])
+    try:
+        _require_db()
+        tenant_id = user["tenant_id"]
+        pool = await _get_pool()
+        async with pool.acquire() as conn:
+            checks["active_rules"] = bool(await conn.fetchval(
+                "SELECT 1 FROM tenant_rules WHERE tenant_id=$1 AND status='active' LIMIT 1", tenant_id))
+            checks["products"] = int(await conn.fetchval(
+                "SELECT count(*) FROM products WHERE tenant_id=$1", tenant_id) or 0)
+            checks["users"] = int(await conn.fetchval(
+                "SELECT count(*) FROM users WHERE tenant_id=$1", tenant_id) or 0)
+    except Exception:
+        missing.append("config readiness checks unavailable (DB) — recommendation still computed")
+
+    config_valid = bool(checks.get("active_rules")) and bool(checks.get("products"))
+    result.update({
+        "tenant_id": user.get("tenant_id"),
+        "scenario": payload.get("scenario", "clean_approval"),
+        "config_checks": checks,
+        "config_valid": config_valid,
+        "missing_inputs": missing,
+    })
+    return result
