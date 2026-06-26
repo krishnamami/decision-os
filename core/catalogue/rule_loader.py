@@ -133,6 +133,10 @@ SAFE_DEFAULTS = {
     'non_medical_collection_loe_threshold':          250,
     'non_medical_collection_aggregate_payoff':       1000,
     'mortgage_late_30day_12mo_conventional_blocks':  True,
+    # FR-F — VA residual income estimate scalars (VA Pamphlet 26-7 Ch.4)
+    'va_residual_maintenance_per_sqft_monthly':      0.14,
+    'va_residual_tax_estimate_pct':                  25,
+    'va_residual_min_loan_amount':                   80000,
     # Property
     'ltv_purchase_max':                97,
     'ltv_cashout_max':                 80,
