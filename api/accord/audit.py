@@ -456,6 +456,65 @@ async def state_filing(year: Optional[int] = Query(None),
 
 
 # ─────────────────────────────────────────────────────────────────────
+# CM-F — overlay-attributable disparate impact + bundled HMDA filing package
+# ─────────────────────────────────────────────────────────────────────
+@router.get("/hmda/overlay-disparity")
+async def hmda_overlay_disparity(user: dict = Depends(get_current_user)) -> dict:
+    """Attribute demographic disparity to specific lender overlays (loans that pass
+    the agency floor but fail the stricter overlay). Admin/compliance; post-decision
+    read-only."""
+    if user.get("role") not in ("admin", "compliance", "super_admin"):
+        raise HTTPException(403, "Admin or compliance access required")
+    _require_db()
+    from core.compliance.hmda_disparate_impact import (
+        OverlayDisparityAnalyzer, fetch_overlay_disparity_data)
+    tenant_id = user["tenant_id"]
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        loans, overlays, floors = await fetch_overlay_disparity_data(conn, tenant_id)
+    return OverlayDisparityAnalyzer().analyze(loans, overlays, floors)
+
+
+@router.get("/hmda/filing-package")
+async def hmda_filing_package(year: Optional[int] = Query(None),
+                              user: dict = Depends(get_current_user)) -> dict:
+    """Bundle the full HMDA filing deliverable: CF-A LAR-file edit checks + CM-D
+    aggregate fair-lending monitor + CM-F overlay-attributable disparity. Composes
+    the existing engines (no re-implementation). Admin/compliance; read-only."""
+    if user.get("role") not in ("admin", "compliance", "super_admin"):
+        raise HTTPException(403, "Admin or compliance access required")
+    _require_db()
+    from core.compliance.hmda_lar_file import generate_lar_file, parse_lar_rows
+    from core.compliance.hmda_edit_checks import run_edit_checks
+    from core.compliance.fair_lending_monitor import FairLendingMonitor, fetch_fair_lending_data
+    from core.compliance.hmda_disparate_impact import (
+        OverlayDisparityAnalyzer, fetch_overlay_disparity_data)
+    tenant_id = user["tenant_id"]
+    records = await _fetch_hmda_records(tenant_id, year)
+    text, missing = generate_lar_file(records, _institution_meta(user), year or 2024)
+    edit_report = run_edit_checks(records, parse_lar_rows(text))
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        hmda_rows, exc_rows = await fetch_fair_lending_data(conn, tenant_id)
+        loans, overlays, floors = await fetch_overlay_disparity_data(conn, tenant_id)
+    fair_lending = FairLendingMonitor().run_full_monitor(hmda_rows, exc_rows)
+    overlay_disparity = OverlayDisparityAnalyzer().analyze(loans, overlays, floors)
+    return {
+        "tenant_id": tenant_id, "period": str(year) if year else "all",
+        "lar_records": len(records),
+        "edit_checks": {"submission_ready": edit_report["submission_ready"],
+                        "error_count": edit_report["error_count"],
+                        "warning_count": edit_report["warning_count"],
+                        "records_with_missing_fields": len(missing)},
+        "fair_lending_monitor": fair_lending,
+        "overlay_disparity": overlay_disparity,
+        "note": ("Submission to the CFPB HMDA Platform is a manual external step. Fair-"
+                 "lending / overlay-disparity signals are advisory and require counsel review."),
+        "data_source": "hmda_lar + overlay_rules + agency_guidelines + entity_states",
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Per-loan audit trail  (declared LAST so it doesn't shadow the literals)
 # ─────────────────────────────────────────────────────────────────────
 

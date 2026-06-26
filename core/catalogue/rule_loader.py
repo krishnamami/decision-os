@@ -125,6 +125,10 @@ SAFE_DEFAULTS = {
     # CM-D — fair-lending thresholds (EEOC 29 CFR 1607.4(D) / CFPB)
     'fair_lending_four_fifths_ratio':            0.80,
     'fair_lending_min_sample_size':              30,
+    # CM-F — overlay-attributable disparity screen (INTERNAL, not a federal
+    # standard): a >20 percentage-point gap in overlay-fail rate between a
+    # protected class and the reference flags the overlay for review.
+    'fair_lending_overlay_disparity_pct':        20,
     # MI-E — non-occupant co-borrower (Fannie B2-2-04)
     'non_occupant_co_borrower_max_ltv_pct':          95,
     'non_occupant_co_borrower_occupant_must_qualify': True,
