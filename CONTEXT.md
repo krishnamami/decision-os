@@ -3525,6 +3525,24 @@ the live ALB before moving on.
   Impact" button; `POST /rate-sheet/upload` (CSV → new `rate_sheet_entry` table,
   the existing `rate_schedule_period` is an incompatible ARM table) + Rate Sheet
   panel.
+- **Platform Studio EXTRACT front-ends (PL-C / PL-D).** Onboarding extractors that
+  turn a raw lender config doc into a STRUCTURED DRAFT proposal for admin review —
+  config-layer, write nothing, activation reuses the E-era plumbing above. EXTRACT
+  → REVIEW → ACTIVATE; RULE 11 (confidence + source provenance + `missing_inputs`;
+  `unmapped_items` never silently dropped); 16/16-safe by construction.
+  - **PL-C** (`core/extraction/policy_extractor.py:CreditPolicyExtractor`, commit
+    dabd903): credit-policy PDF → `tenant_rules.rules`-shaped overlay proposal + the
+    3 typed `overlay_rules` updates (hybrid pdfplumber regex + Claude Vision fallback,
+    graceful no-key degrade). `POST /api/accord/onboarding/extract-policy`. Activate
+    via the existing rules.py validate_overlay → create version → activate flow.
+  - **PL-D** (`core/extraction/rate_sheet_extractor.py:RateSheetExtractor`, commit
+    b515380): lender rate-sheet CSV → TWO shapes — `rate_sheet_entry_rows` (exact
+    `/rate-sheet/upload` columns) + `llpa_rows` (FICO×LTV matrix +
+    purpose/property/occupancy blocks → `llpa_adjustments`-shaped, feeds
+    `refresh_llpa_grid` stage→promote). Stdlib csv only — no openpyxl/pandas. `POST
+    /api/accord/onboarding/extract-rate-sheet`. 22 tests; full suite 883 passed (zero
+    new vs the 13 RDS-baseline failures). `rate_pricing` keeps its inline rate and
+    does not read these tables (de-hardcoding it is a separate future slice).
 
 **Architecture notes worth remembering:** the live 119k decisions are **seeded**,
 not produced by the PolicyEvaluator at runtime — the cron writer uses

@@ -631,6 +631,43 @@ full eval→library migration is a deferred cosmetic pass.
 
 ---
 
+## Platform Studio Extractors (PL-C / PL-D)
+
+`core/extraction/` also hosts the Platform Studio onboarding extractors — the
+EXTRACT stage that turns a lender's raw config document into a STRUCTURED DRAFT
+proposal for admin review. They are config-layer, NOT decision-path: each parses
+an upload into a proposal and **writes nothing**; activation reuses the EXISTING
+rules.py / refresh plumbing. Three-stage posture: **EXTRACT → REVIEW → ACTIVATE**.
+RULE 11 throughout (per-field/row confidence + source provenance + `missing_inputs`;
+unparseable items surface as `unmapped_items`, never silently dropped). Both are
+16/16-safe by construction (onboarding layer, no persona wiring, no DB writes).
+
+- **PL-C — credit-policy PDF extractor** (`policy_extractor.py:CreditPolicyExtractor`):
+  hybrid pdfplumber-text regex + a self-contained Claude Vision fallback (graceful
+  no-key degrade). Maps a policy PDF → a `tenant_rules.rules`-shaped overlay proposal
+  (credit/dti/ltv/programs/loan-limits) + the 3 typed `overlay_rules` updates.
+  Endpoint `POST /api/accord/onboarding/extract-policy`. Review/activate via the
+  existing `rules.py` flow (validate_overlay → create version → activate, with the
+  hard agency/regulatory-floor guardrails).
+
+- **PL-D — rate-sheet CSV extractor** (`rate_sheet_extractor.py:RateSheetExtractor`):
+  stdlib `csv` only — **no openpyxl/pandas/xlrd** (none installed; a lender exports
+  Excel as CSV — same data). Pure + sync + DB-less. Produces TWO output shapes:
+  - `rate_sheet_entry_rows` (tenant base rates: product/credit_band/ltv_max/base_rate/
+    llpa_adjustment/effective_date — the EXACT columns the existing
+    `POST /api/accord/rules/rate-sheet/upload` endpoint requires) and
+  - `llpa_rows` (the FICO×LTV matrix via `parse_fico_ltv_grid` + the
+    purpose/property/occupancy adjustment blocks → `llpa_adjustments`-shaped rows,
+    feeding the existing `scripts/refresh_llpa_grid.py` stage→promote path).
+
+  Endpoint `POST /api/accord/onboarding/extract-rate-sheet`. The extractor is the
+  parse-and-propose front-end ONLY; it does not duplicate the upload/promote writers.
+  NOTE: `rate_pricing` computes its own inline base+LLPA rate and does **not** read
+  `rate_sheet_entry`/`llpa_adjustments` — de-hardcoding the persona to consume these
+  tables is a separate future slice, out of PL-D's scope.
+
+---
+
 ## Persona Status
 
 Legend: ✅ done · ❌ pending · the parenthetical names the prompt(s) that close it.
