@@ -156,3 +156,22 @@ async def save_mapping(payload: dict, user: dict = Depends(get_current_user)) ->
             user["tenant_id"], payload.get("mapping_name", "Custom mapping"), payload.get("source_system", "custom"),
             json.dumps(payload.get("column_mapping") or {}), uid)
     return {"ok": True, "mapping_id": str(mid)}
+
+
+# ── PL-C — Platform Studio credit-policy PDF extractor (EXTRACT stage only) ──
+@router.post("/extract-policy")
+async def extract_policy(
+    file: UploadFile = File(...),
+    tenant_id: str = Depends(get_tenant_id),
+) -> dict:
+    """Extract a lender credit-policy PDF into a DRAFT overlay proposal (rules JSONB
+    + the 3 typed overlay_rules) with per-field confidence + source quotes. Writes
+    NOTHING — the admin reviews the proposal, then uses the existing rules.py flow
+    (validate_overlay -> create version -> activate) to stage + activate it."""
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(400, "empty file")
+    from core.extraction.policy_extractor import CreditPolicyExtractor
+    proposal = await CreditPolicyExtractor().extract(file_bytes, file.filename or "policy.pdf")
+    proposal["tenant_id"] = tenant_id
+    return proposal
