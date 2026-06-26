@@ -175,3 +175,23 @@ async def extract_policy(
     proposal = await CreditPolicyExtractor().extract(file_bytes, file.filename or "policy.pdf")
     proposal["tenant_id"] = tenant_id
     return proposal
+
+
+# ── PL-D — Platform Studio rate-sheet CSV extractor (EXTRACT stage only) ──
+@router.post("/extract-rate-sheet")
+async def extract_rate_sheet(
+    file: UploadFile = File(...),
+    tenant_id: str = Depends(get_tenant_id),
+) -> dict:
+    """Extract a lender rate-sheet CSV into a DRAFT proposal — rate_sheet_entry_rows
+    (tenant base rates) + llpa_rows (FICO×LTV + adjustment grid) with per-row
+    confidence + source provenance (RULE 11). Writes NOTHING — the admin reviews
+    the proposal, then activates via the existing rate_sheet_upload endpoint (base
+    rates) / refresh_llpa_grid promote path (LLPA grid). Stdlib csv only."""
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(400, "empty file")
+    from core.extraction.rate_sheet_extractor import RateSheetExtractor
+    proposal = RateSheetExtractor().extract(file_bytes, file.filename or "rates.csv")
+    proposal["tenant_id"] = tenant_id
+    return proposal
