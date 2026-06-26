@@ -1299,6 +1299,34 @@ async def overlay_guardrails(tenant_id: str = Depends(get_tenant_id)) -> dict:
     }
 
 
+# ── MI-F — DMN 1.3 rule export (MISMO BPM+ native) ──
+@router.get("/export/dmn")
+async def export_dmn(tenant_id: str = Depends(get_tenant_id),
+                     category: Optional[str] = None,
+                     user: dict = Depends(get_current_user)):
+    """Export the tenant's effective ruleset (federal + agency + overlay) as a
+    well-formed DMN 1.3 XML document — one decisionTable per category, PRIORITY hit
+    policy. Optional ?category= filter. Admin/compliance only. Read-only download."""
+    _require(user, "admin", "compliance", "super_admin")
+    _require_db()
+    from fastapi import Response
+    from core.audit.exports.dmn_exporter import (
+        fetch_dmn_rules, generate_dmn_export, validate_dmn_xml)
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        agency, regulatory, overlay = await fetch_dmn_rules(conn, tenant_id)
+    xml_str = generate_dmn_export(agency, regulatory, overlay, tenant_id,
+                                  category_filter=category)
+    is_valid, errors = validate_dmn_xml(xml_str)
+    headers = {
+        "Content-Disposition": f'attachment; filename="accord_rules_{tenant_id}.xml"',
+        "X-DMN-Valid": "true" if is_valid else "false",
+    }
+    if not is_valid:
+        headers["X-DMN-Validation-Errors"] = str(errors[:3])[:300]
+    return Response(content=xml_str, media_type="application/xml", headers=headers)
+
+
 # ── Part 3. Rate sheet upload (CSV -> rate_sheet_entry) ──
 _RATE_SHEET_COLS = ("product_id", "credit_band", "ltv_max", "base_rate", "llpa_adjustment", "effective_date")
 
