@@ -434,6 +434,28 @@ async def cra_assessment(year: Optional[int] = Query(None),
 
 
 # ─────────────────────────────────────────────────────────────────────
+# CF-D — state regulatory filing data (license-driven, read-only)
+# ─────────────────────────────────────────────────────────────────────
+@router.get("/state-filing")
+async def state_filing(year: Optional[int] = Query(None),
+                       user: dict = Depends(get_current_user)) -> dict:
+    """State regulatory filing DATA per licensed state (counts/volume/denial rate +
+    geographic breakdown). Admin/compliance only; post-decision read-only. Submission
+    to NMLS MCR / state portals is a manual external step."""
+    if user.get("role") not in ("admin", "compliance", "super_admin"):
+        raise HTTPException(403, "Admin or compliance access required")
+    _require_db()
+    from core.compliance.state_filing import StateFilingReport, fetch_filing_data
+    tenant_id = user["tenant_id"]
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        loans, licenses, name, nmls = await fetch_filing_data(conn, tenant_id, year)
+    return StateFilingReport().generate(
+        loans=loans, licenses=licenses, period=str(year) if year else "all",
+        tenant_id=tenant_id, institution_name=name, nmls_id=nmls)
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Per-loan audit trail  (declared LAST so it doesn't shadow the literals)
 # ─────────────────────────────────────────────────────────────────────
 
