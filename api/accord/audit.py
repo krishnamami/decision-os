@@ -381,6 +381,34 @@ async def hmda_edit_checks(year: Optional[int] = Query(None),
 
 
 # ─────────────────────────────────────────────────────────────────────
+# CF-B — ECOA 12 CFR 202.15 fair-lending self-testing program (privileged)
+# ─────────────────────────────────────────────────────────────────────
+@router.get("/fair-lending/self-test")
+async def fair_lending_self_test(year: Optional[int] = Query(None),
+                                 user: dict = Depends(get_current_user)) -> dict:
+    """Run the ECOA 12 CFR 202.15 fair-lending self-test (aggregate 4/5 + peer-group
+    matched analysis) and return the PRIVILEGED report. Admin/compliance only;
+    post-decision read-only. Do not disclose without legal review."""
+    if user.get("role") not in ("admin", "compliance", "super_admin"):
+        raise HTTPException(403, "Admin or compliance access required")
+    _require_db()
+    from core.compliance.fair_lending_self_test import (
+        FairLendingSelfTest, fetch_self_test_data)
+    tenant_id = user["tenant_id"]
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        hmda, joined = await fetch_self_test_data(conn, tenant_id, year)
+        exc = await conn.fetch(
+            "SELECT application_id, granted, status FROM loan_exceptions "
+            "WHERE tenant_id=$1 AND status IN ('granted','denied')", tenant_id)
+    report = FairLendingSelfTest().run(
+        hmda_rows=hmda, joined_rows=joined, exception_rows=[dict(r) for r in exc],
+        period_start=f"{year}-01-01" if year else "all", run_by=user.get("email", "system"),
+        period_end=f"{year}-12-31" if year else "all", tenant_id=tenant_id)
+    return report
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Per-loan audit trail  (declared LAST so it doesn't shadow the literals)
 # ─────────────────────────────────────────────────────────────────────
 
