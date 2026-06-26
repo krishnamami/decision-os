@@ -125,6 +125,9 @@ SAFE_DEFAULTS = {
     # CM-D — fair-lending thresholds (EEOC 29 CFR 1607.4(D) / CFPB)
     'fair_lending_four_fifths_ratio':            0.80,
     'fair_lending_min_sample_size':              30,
+    # MI-E — non-occupant co-borrower (Fannie B2-2-04)
+    'non_occupant_co_borrower_max_ltv_pct':          95,
+    'non_occupant_co_borrower_occupant_must_qualify': True,
     # Property
     'ltv_purchase_max':                97,
     'ltv_cashout_max':                 80,

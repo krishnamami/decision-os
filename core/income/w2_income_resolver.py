@@ -52,6 +52,7 @@ VARIABLE_INCOME_TODO = (
 # covers all income rules. Resolvers remain SEPARATE modules — only the key list
 # is unified here.
 from core.income.alimony_resolver import ALIMONY_RULE_KEYS
+from core.income.multi_borrower_resolver import MULTI_BORROWER_RULE_KEYS
 from core.income.multi_unit_income_resolver import MULTI_UNIT_RULE_KEYS
 from core.income.retirement_income_resolver import RETIREMENT_INCOME_RULE_KEYS
 
@@ -66,7 +67,8 @@ def _dedup(seq):
 
 INCOME_RULE_KEYS = _dedup([
     "employment_history_months_required",
-] + RETIREMENT_INCOME_RULE_KEYS + ALIMONY_RULE_KEYS + MULTI_UNIT_RULE_KEYS)
+] + RETIREMENT_INCOME_RULE_KEYS + ALIMONY_RULE_KEYS + MULTI_UNIT_RULE_KEYS
+  + MULTI_BORROWER_RULE_KEYS)
 
 
 async def load_income_rules(conn, tenant_id: str, agency: str = "fannie") -> dict:
