@@ -409,6 +409,31 @@ async def fair_lending_self_test(year: Optional[int] = Query(None),
 
 
 # ─────────────────────────────────────────────────────────────────────
+# CF-C — CRA community reinvestment assessment (banks/credit unions only)
+# ─────────────────────────────────────────────────────────────────────
+@router.get("/cra/assessment")
+async def cra_assessment(year: Optional[int] = Query(None),
+                         area_median_income: Optional[float] = Query(None),
+                         user: dict = Depends(get_current_user)) -> dict:
+    """CRA community-reinvestment assessment (12 CFR 25/228). Banks/credit unions
+    only; post-decision read-only. Returns insufficient_data until census tracts +
+    FFIEC tract-income + AMI are loaded. Admin/compliance only."""
+    if user.get("role") not in ("admin", "compliance", "super_admin"):
+        raise HTTPException(403, "Admin or compliance access required")
+    _require_db()
+    from core.compliance.cra_assessment import CRAAssessment, fetch_cra_data
+    tenant_id = user["tenant_id"]
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        loans, institution_type = await fetch_cra_data(conn, tenant_id, year)
+    return CRAAssessment().assess(
+        loans=loans, area_median_income=area_median_income,
+        tract_incomes=None,  # future: load from the FFIEC Census File
+        institution_type=institution_type, tenant_id=tenant_id,
+        period=str(year) if year else "all")
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Per-loan audit trail  (declared LAST so it doesn't shadow the literals)
 # ─────────────────────────────────────────────────────────────────────
 

@@ -145,6 +145,14 @@ SAFE_DEFAULTS = {
     'credit_floor_fha_absolute_min':                 500,
     'dti_back_hard_max':                             57,
     'ltv_hard_max':                                  97,
+    # CF-C — CRA tier cutoffs (federal, 12 CFR 25/228) + internal self-assessment
+    # benchmark thresholds (NOT regulatory; official CRA ratings are examiner-set).
+    'cra_lmi_low_max_pct':                           50,
+    'cra_moderate_max_pct':                          80,
+    'cra_middle_max_pct':                            120,
+    'cra_lmi_ratio_outstanding_pct':                 40,
+    'cra_lmi_ratio_satisfactory_pct':                25,
+    'cra_lmi_ratio_needs_improvement_pct':           10,
     # Property
     'ltv_purchase_max':                97,
     'ltv_cashout_max':                 80,
