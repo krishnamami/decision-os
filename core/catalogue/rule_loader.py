@@ -128,6 +128,11 @@ SAFE_DEFAULTS = {
     # MI-E — non-occupant co-borrower (Fannie B2-2-04)
     'non_occupant_co_borrower_max_ltv_pct':          95,
     'non_occupant_co_borrower_occupant_must_qualify': True,
+    # CR-F — collections + mortgage-late (Fannie B3-5.3-09 / B3-5.3-01)
+    'medical_collection_ignore_amt':                 2000,
+    'non_medical_collection_loe_threshold':          250,
+    'non_medical_collection_aggregate_payoff':       1000,
+    'mortgage_late_30day_12mo_conventional_blocks':  True,
     # Property
     'ltv_purchase_max':                97,
     'ltv_cashout_max':                 80,
