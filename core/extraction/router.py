@@ -64,6 +64,12 @@ async def route_extraction(
     doc_type: str,
     application_id: Optional[str] = None,
 ) -> ExtractionResult:
+    # URLA_1003 uses the MI-D hybrid extractor (pdfplumber text -> Vision fallback
+    # for scanned paper + checkboxes). It stays listed in TIER_1_TEXTRACT for tier
+    # routing/classification (text-first), but dispatches here.
+    if doc_type == "URLA_1003":
+        from core.extraction.urla_extractor import URLAExtractor
+        return await URLAExtractor().extract(file_bytes, doc_type, application_id)
     if doc_type in TIER_1_TEXTRACT:
         from core.extraction.textract_extractor import TextractExtractor
         return await TextractExtractor().extract(file_bytes, doc_type, application_id)
