@@ -3525,11 +3525,12 @@ the live ALB before moving on.
   Impact" button; `POST /rate-sheet/upload` (CSV → new `rate_sheet_entry` table,
   the existing `rate_schedule_period` is an incompatible ARM table) + Rate Sheet
   panel.
-- **Platform Studio EXTRACT front-ends (PL-C / PL-D).** Onboarding extractors that
-  turn a raw lender config doc into a STRUCTURED DRAFT proposal for admin review —
-  config-layer, write nothing, activation reuses the E-era plumbing above. EXTRACT
-  → REVIEW → ACTIVATE; RULE 11 (confidence + source provenance + `missing_inputs`;
-  `unmapped_items` never silently dropped); 16/16-safe by construction.
+- **Platform Studio onboarding (PL-A / PL-C / PL-D / PL-E).** Extractors (C/D/E) turn
+  a raw lender config doc into a STRUCTURED DRAFT proposal for admin review, and the
+  PL-A config endpoints round out the 8-step onboarding API. Config-layer — extractors
+  write nothing (activation reuses the E-era plumbing above); PL-A writes only tenant
+  config. EXTRACT → REVIEW → ACTIVATE; RULE 11 (confidence + source provenance +
+  `missing_inputs`; `unmapped_items` never silently dropped); 16/16-safe by construction.
   - **PL-C** (`core/extraction/policy_extractor.py:CreditPolicyExtractor`, commit
     dabd903): credit-policy PDF → `tenant_rules.rules`-shaped overlay proposal + the
     3 typed `overlay_rules` updates (hybrid pdfplumber regex + Claude Vision fallback,
@@ -3540,9 +3541,25 @@ the live ALB before moving on.
     `/rate-sheet/upload` columns) + `llpa_rows` (FICO×LTV matrix +
     purpose/property/occupancy blocks → `llpa_adjustments`-shaped, feeds
     `refresh_llpa_grid` stage→promote). Stdlib csv only — no openpyxl/pandas. `POST
-    /api/accord/onboarding/extract-rate-sheet`. 22 tests; full suite 883 passed (zero
-    new vs the 13 RDS-baseline failures). `rate_pricing` keeps its inline rate and
+    /api/accord/onboarding/extract-rate-sheet`. `rate_pricing` keeps its inline rate and
     does not read these tables (de-hardcoding it is a separate future slice).
+  - **PL-E** (`core/extraction/product_matrix_extractor.py:ProductMatrixExtractor`,
+    commit b3eb07e): product-matrix CSV → `products`-table rows (messy-header synonyms,
+    `$`/`%` coercion, derived product_id, per-row confidence + warnings). `POST
+    /extract-product-matrix` (draft) + `POST /products/upload` (ACTIVATE — first
+    programmatic writer of the `products` table; tenant-guarded upsert on the
+    product_id-only PK so a cross-tenant id is rejected, never clobbered). Decision-path
+    safe: `product_eligibility` uses inline `_PRODUCTS`, not the `products` table.
+  - **PL-A** (`api/accord/onboarding.py`, commit cd966ae): the 4 config-step endpoints —
+    `POST /company` (→ `tenants.settings`), `/licenses` (→ `tenants.settings.licenses[]`),
+    `/exception-config` (bounds-checked → additive `tenant_rules.rules.exceptions`, a
+    subkey the live personas don't read), `/test-loan` (advisory probe). test-loan
+    CORRECTION: the real 14-persona engine WRITES decision_outputs, conflicting with the
+    advisory/no-write ask — so it runs the pure ProgramRecommender (no writes) and maps
+    eligibility → recommend/escalate/block, pointing to `/import` for the full eval.
+    Validation lives in pure helpers (DB-free tests). PL-A-UI (React wizard) deferred.
+  - Cumulative: full suite **933 passed** (zero new vs the 13 RDS-baseline failures);
+    all 8 onboarding steps now API-backed.
 
 **Architecture notes worth remembering:** the live 119k decisions are **seeded**,
 not produced by the PolicyEvaluator at runtime — the cron writer uses

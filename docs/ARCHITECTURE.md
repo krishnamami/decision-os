@@ -631,16 +631,20 @@ full eval→library migration is a deferred cosmetic pass.
 
 ---
 
-## Platform Studio Extractors (PL-C / PL-D)
+## Platform Studio Onboarding (PL-A / PL-C / PL-D / PL-E)
 
-`core/extraction/` also hosts the Platform Studio onboarding extractors — the
-EXTRACT stage that turns a lender's raw config document into a STRUCTURED DRAFT
-proposal for admin review. They are config-layer, NOT decision-path: each parses
-an upload into a proposal and **writes nothing**; activation reuses the EXISTING
-rules.py / refresh plumbing. Three-stage posture: **EXTRACT → REVIEW → ACTIVATE**.
-RULE 11 throughout (per-field/row confidence + source provenance + `missing_inputs`;
-unparseable items surface as `unmapped_items`, never silently dropped). Both are
-16/16-safe by construction (onboarding layer, no persona wiring, no DB writes).
+`core/extraction/` hosts the Platform Studio onboarding **extractors** (PL-C/D/E) —
+the EXTRACT stage that turns a lender's raw config document into a STRUCTURED DRAFT
+proposal for admin review — and `api/accord/onboarding.py` hosts the **config-step
+endpoints** (PL-A) that round out the 8-step onboarding API surface. Everything here
+is config-layer, NOT decision-path: extractors parse an upload into a proposal and
+**write nothing** (activation reuses the EXISTING rules.py / refresh / upload
+plumbing); the PL-A config endpoints write only tenant config (`tenants` /
+additive `tenant_rules.rules` subkeys), never `decision_outputs`/`entity_states`.
+Extractor posture: **EXTRACT → REVIEW → ACTIVATE**. RULE 11 throughout (per-field/row
+confidence + source provenance + `missing_inputs`; unparseable items surface as
+`unmapped_items`, never silently dropped). All are 16/16-safe by construction
+(onboarding layer, no persona wiring, no decision-path writes).
 
 - **PL-C — credit-policy PDF extractor** (`policy_extractor.py:CreditPolicyExtractor`):
   hybrid pdfplumber-text regex + a self-contained Claude Vision fallback (graceful
@@ -665,6 +669,39 @@ unparseable items surface as `unmapped_items`, never silently dropped). Both are
   NOTE: `rate_pricing` computes its own inline base+LLPA rate and does **not** read
   `rate_sheet_entry`/`llpa_adjustments` — de-hardcoding the persona to consume these
   tables is a separate future slice, out of PL-D's scope.
+
+- **PL-E — product-matrix CSV extractor + activate** (`product_matrix_extractor.py:
+  ProductMatrixExtractor`): stdlib `csv` only, pure + sync + DB-less. Parses a lender
+  product matrix → `products`-table-shaped rows (product_name/loan_type/loan_purpose/
+  min_credit_score/max_dti/max_ltv/max_loan_amount/is_active) with messy-header
+  normalization (synonyms), `$`/`%` coercion, derived product_id, per-row confidence +
+  warnings; unrecognized columns + empty-name rows → `unmapped_items`. Endpoints
+  `POST /extract-product-matrix` (draft) + `POST /products/upload` (ACTIVATE — the
+  **first programmatic writer** of the `products` matrix table outside seeding).
+  The `products` PK is `product_id` ALONE, so the upsert is **tenant-guarded**
+  (`ON CONFLICT (product_id) DO UPDATE … WHERE products.tenant_id = EXCLUDED.tenant_id
+  RETURNING`) — a product_id owned by another tenant is rejected, never clobbered.
+  Decision-path-safe: `product_eligibility` uses its inline `_PRODUCTS` matrix, not the
+  `products` table (and `GET /products` reads the separate `product` catalog).
+
+- **PL-A — the 4 config-step endpoints** (`api/accord/onboarding.py`, validation in
+  PURE module-level helpers so it is unit-testable without a DB; endpoints are thin DB
+  wrappers): `POST /company` (tenant name + NMLS/company fields → `tenants.settings`),
+  `POST /licenses` (state licenses → `tenants.settings.licenses[]`, deduped by state),
+  `POST /exception-config` (bounds-checked level 1-4 / DTI ≤ 60% / LTV ≤ 100% / CFs 0-6,
+  stored additively under `tenant_rules.rules.exceptions` — a subkey the live personas
+  do NOT read), and `POST /test-loan` (advisory probe). **test-loan correction:** the
+  real 14-persona engine (`PersonaRunner._process_one`) WRITES `decision_outputs`, which
+  conflicts with the advisory/no-write requirement — so test-loan runs the pure
+  `ProgramRecommender` (EX2-B, no writes) and maps eligibility → advisory
+  recommend/escalate/block; it does NOT claim 14 personas ran, and points to `/import`
+  for the full persisting evaluation.
+
+**8-step onboarding API surface (complete):** 1 `/company` · 2 `/licenses` ·
+3 `/products/upload` (PL-E) · 4 `/extract-policy` (PL-C) + `GET /api/accord/rules` ·
+5 `/exception-config` · 6 `/extract-rate-sheet` (PL-D) · 7 `/import` · 8 `/test-loan`.
+The React 8-step wizard (PL-A-UI, `frontend/`) is a deferred follow-up — not covered
+by the pytest / 16/16 gate.
 
 ---
 
