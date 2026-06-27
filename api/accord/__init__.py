@@ -21,9 +21,10 @@ from api.accord.conditions import router as conditions_router
 from api.accord.trace import router as trace_router
 from api.accord.intelligence import router as intelligence_router
 from api.accord.qa import router as qa_router
+from api.accord.infra import router as infra_router
 
 # Every Accord router — api.main includes them all.
 # auth_router is public for /login + /signup; all other routers enforce a JWT.
-routers = [auth_router, router, mirofish_router, analytics_router, audit_router, rules_router, documents_router, validation_router, comparison_router, onboarding_router, examiner_router, health_router, workbench_router, conditions_router, trace_router, intelligence_router, qa_router]
+routers = [auth_router, router, mirofish_router, analytics_router, audit_router, rules_router, documents_router, validation_router, comparison_router, onboarding_router, examiner_router, health_router, workbench_router, conditions_router, trace_router, intelligence_router, qa_router, infra_router]
 
-__all__ = ["router", "mirofish_router", "analytics_router", "audit_router", "auth_router", "rules_router", "documents_router", "validation_router", "comparison_router", "onboarding_router", "examiner_router", "health_router", "workbench_router", "conditions_router", "trace_router", "intelligence_router", "qa_router", "routers"]
+__all__ = ["router", "mirofish_router", "analytics_router", "audit_router", "auth_router", "rules_router", "documents_router", "validation_router", "comparison_router", "onboarding_router", "examiner_router", "health_router", "workbench_router", "conditions_router", "trace_router", "intelligence_router", "qa_router", "infra_router", "routers"]
