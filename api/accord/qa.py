@@ -47,4 +47,19 @@ async def model_backtest(year: Optional[int] = Query(None),
         period=str(year) if year else "all")
 
 
+@router.get("/security-audit")
+async def security_audit(user: dict = Depends(get_current_user)) -> dict:
+    """Platform security posture report (SOC 2 + OWASP + RLS/tenant isolation).
+    Verifiable controls computed live; process controls flagged manual_review.
+    Admin/super_admin only; read-only."""
+    if user.get("role") not in ("admin", "super_admin"):
+        raise HTTPException(403, "Admin access required")
+    _require_db()
+    from core.qa.security_audit import SecurityAuditor, fetch_security_audit_data
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        facts = await fetch_security_audit_data(conn)
+    return SecurityAuditor().assess(facts)
+
+
 __all__ = ["router"]
