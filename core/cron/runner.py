@@ -340,8 +340,8 @@ class PersonaRunner:
         # EV-F (RA-3B): enrich the context with evidence facts from
         # fact_nodes BEFORE any persona reads the bundle. Non-destructive
         # (adds an "evidence" object alongside the entity_states-derived
-        # objects), best-effort (never breaks a decision). No persona/policy
-        # logic reads these yet — that's RA-3D.
+        # objects), best-effort (never breaks a decision). All 14 personas read
+        # evidence advisorily (RA-PERSONA-A/B/C) — outcome-neutral.
         try:
             from core.evidence.context_enricher import ContextEnricher
             pool = await self.decision_store._get_pool()
