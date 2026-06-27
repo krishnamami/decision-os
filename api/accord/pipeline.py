@@ -127,6 +127,24 @@ def _require_db() -> None:
         raise HTTPException(503, "DATABASE_URL not configured")
 
 
+@router.post("/pipeline/license-check")
+async def license_check(payload: dict, tenant_id: str = Depends(get_tenant_id)) -> dict:
+    """State licensing compliance check (P0-I, SAFE Act 12 U.S.C. §5101). Single loan
+    {property_state} or bulk {loans:[{application_id, property_state}]}. ADVISORY — a
+    standalone gate, NOT blocking middleware and NOT wired into the compliance_check
+    persona (deferred). not_applicable when property_state unknown or no licenses set."""
+    _require_db()
+    from core.compliance.license_checker import LicenseComplianceChecker, fetch_license_data
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        licenses = await fetch_license_data(conn, tenant_id)
+    checker = LicenseComplianceChecker()
+    loans = payload.get("loans") if isinstance(payload, dict) else None
+    if loans:
+        return checker.check_bulk(loans, licenses, tenant_id)
+    return checker.check((payload or {}).get("property_state"), licenses, tenant_id=tenant_id)
+
+
 @router.get("/products")
 async def list_products(tenant_id: str = Depends(get_tenant_id)) -> dict:
     """Read-only catalog of the tenant's loan products with their governing
