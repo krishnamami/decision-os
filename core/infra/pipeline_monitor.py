@@ -139,6 +139,37 @@ class CloudWatchMetricSink:
             return {"emitted": False, "count": 0, "error": str(e)}
 
 
+def emit_decision_metrics(outcome: str, latency_ms: float, persona_count: int,
+                          tenant_id: str, *, sink: Optional["CloudWatchMetricSink"] = None,
+                          persona_failures: int = 0,
+                          connection_pool_size: Optional[int] = None) -> dict:
+    """HA-E — emit per-decision observability metrics to CloudWatch.
+
+    Namespace ``Accord/Decisions`` (+ ``Accord/DB`` for pool size). Best-effort: no-op
+    without AWS (the IN-C/CloudWatchMetricSink pattern), so this is safe to call from the
+    decision path without ever blocking or raising. Returns the emission result +
+    the namespace + dimensions for RULE-11-style provenance.
+    """
+    sink = sink or CloudWatchMetricSink(namespace="Accord/Decisions")
+    dims = {"tenant_id": tenant_id, "outcome": str(outcome)}
+    decision_result = sink.emit(
+        {"DecisionLatencyMs": latency_ms, "PersonaFailures": persona_failures},
+        dimensions=dims)
+    db_result = None
+    if connection_pool_size is not None:
+        db_result = CloudWatchMetricSink(namespace="Accord/DB").emit(
+            {"ConnectionPoolSize": connection_pool_size},
+            dimensions={"tenant_id": tenant_id})
+    return {
+        "metrics_emitted": decision_result.get("emitted", False),
+        "db_metric_emitted": (db_result or {}).get("emitted", False) if db_result else None,
+        "namespace": ["Accord/Decisions"] + (["Accord/DB"] if db_result else []),
+        "dimensions": dims,
+        "metrics": {"DecisionLatencyMs": latency_ms, "PersonaFailures": persona_failures,
+                    "ConnectionPoolSize": connection_pool_size},
+    }
+
+
 async def fetch_pipeline_watermark(conn, tenant_id: str):
     """Last time the pipeline produced a decision for this tenant (the watermark)."""
     return await conn.fetchval(
@@ -159,5 +190,5 @@ def fetch_dlq_depth(sqs_client, dlq_url: str) -> Optional[int]:
 
 
 __all__ = ["evaluate_watermark", "assess_pipeline_health", "CloudWatchMetricSink",
-           "fetch_pipeline_watermark", "fetch_dlq_depth",
+           "emit_decision_metrics", "fetch_pipeline_watermark", "fetch_dlq_depth",
            "DEFAULT_STALE_SEC", "DEFAULT_STALLED_SEC"]
