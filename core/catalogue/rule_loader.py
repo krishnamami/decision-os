@@ -129,6 +129,14 @@ SAFE_DEFAULTS = {
     # standard): a >20 percentage-point gap in overlay-fail rate between a
     # protected class and the reference flags the overlay for review.
     'fair_lending_overlay_disparity_pct':        20,
+    # CM-G — proxy-discrimination risk heuristics (INTERNAL, informed by CFPB
+    # supervisory research; NOT regulatory determinations). Per-criterion proxy
+    # correlation weights + the elevated/high composite-score bands.
+    'credit_floor_proxy_risk_weight':            0.70,
+    'dti_proxy_risk_weight':                     0.45,
+    'ltv_proxy_risk_weight':                     0.35,
+    'overlay_bias_elevated_threshold':           0.55,
+    'overlay_bias_high_threshold':               0.75,
     # MI-E — non-occupant co-borrower (Fannie B2-2-04)
     'non_occupant_co_borrower_max_ltv_pct':          95,
     'non_occupant_co_borrower_occupant_must_qualify': True,

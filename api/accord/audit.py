@@ -515,6 +515,30 @@ async def hmda_filing_package(year: Optional[int] = Query(None),
 
 
 # ─────────────────────────────────────────────────────────────────────
+# CM-G — proactive overlay proxy-discrimination risk detector (structural)
+# ─────────────────────────────────────────────────────────────────────
+@router.get("/overlay-bias")
+async def overlay_bias(user: dict = Depends(get_current_user)) -> dict:
+    """Proactive, demographics-free proxy-discrimination risk screen over the
+    overlay RULES themselves (criterion weight + severity vs agency floor +
+    population exclusion). Admin/compliance; read-only. Elevated/high -> run CM-F."""
+    if user.get("role") not in ("admin", "compliance", "super_admin"):
+        raise HTTPException(403, "Admin or compliance access required")
+    _require_db()
+    from core.compliance.overlay_bias_detector import (
+        OverlayBiasDetector, OVERLAY_GATE_MAP, fetch_bias_detection_data)
+    from core.compliance.hmda_disparate_impact import load_agency_floors
+    tenant_id = user["tenant_id"]
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        overlays, population = await fetch_bias_detection_data(conn, tenant_id)
+        floor_values = await load_agency_floors(conn, tenant_id)  # catalogue-resolved (RULE 4)
+    floors = {rt: {"agency_value": v, "direction": OVERLAY_GATE_MAP[rt]["direction"]}
+              for rt, v in floor_values.items() if rt in OVERLAY_GATE_MAP}
+    return OverlayBiasDetector().run(overlays, population, agency_floors=floors)
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Per-loan audit trail  (declared LAST so it doesn't shadow the literals)
 # ─────────────────────────────────────────────────────────────────────
 
