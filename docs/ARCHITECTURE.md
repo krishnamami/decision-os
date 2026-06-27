@@ -334,6 +334,66 @@ succeeds, stores the raw file (AES256) + processed JSON and stamps
 
 ---
 
+## High Availability + Performance (HA-A→F · PERF-A→C)
+
+`core/infra/` + `scripts/ops/` + `scripts/perf/` + the `docs/ha/` and `docs/perf/` doc
+trees hold the operational/HA/perf layer. Everything here is **decision-path-inert**
+(read-only, standalone, or additive — no persona reads it) so it is 16/16-safe by
+construction, and follows the same **graceful-no-AWS** posture as S3/SQS/CloudWatch:
+the AWS infra pieces are config-to-apply (specs + Terraform), the code half ships now
+and runs in the degraded-no-AWS mode.
+
+```
+core/infra/circuit_breaker.py   CircuitBreaker — pure Python, no deps. CLOSED -> OPEN
+                                (5 failures/60s) -> HALF_OPEN (30s cooldown) -> CLOSED.
+                                Injectable clock (now_fn) for deterministic tests;
+                                get_breaker(name) singleton; snapshot() = RULE 11
+                                provenance. Degradation contract per dependency:
+                                claude_api->regex (RA-EX-F), s3_upload->no-op (RA-P0-A),
+                                sqs_send->synchronous inline (IN-A). Built + unit-ready;
+                                wrapping the live call sites is a follow-up.   (HA-C)
+core/infra/cache.py             EvidenceCache — in-memory TTL cache (300s, no Redis)
+                                keyed (tenant_id, application_id, document_index_
+                                updated_at). Doc-timestamp is the primary invalidation;
+                                TTL the safety net. STANDALONE — evidence_facts() is on
+                                the runner path (runner.py:340-362) so NOT wired; wiring
+                                snippet + Redis upgrade path documented. RULE 11.  (PERF-C)
+core/infra/pipeline_monitor.py  + emit_decision_metrics() — DecisionLatencyMs +
+                                PersonaFailures (Accord/Decisions) + ConnectionPoolSize
+                                (Accord/DB) on the IN-C CloudWatchMetricSink. No-op
+                                without AWS.                                       (HA-E)
+api/accord/health.py            + GET /api/accord/health/deep (JWT) — db_latency_ms +
+                                sqs_configured + s3_configured + test_count +
+                                last_decision_timestamp; never raises. The cheap public
+                                /api/accord/health ({status:ok}) stays the ALB liveness
+                                probe (a 30s check must not hit the DB).           (HA-B)
+scripts/ops/verify_backup.py    Backup verifier: RDS snapshot <24h + S3 versioning +
+                                tenant_rules export. Returns 'unknown' (never a false
+                                'healthy') when AWS unconfigured.                  (HA-D)
+scripts/perf/load_test.py       LoadTestRunner — async load tester (no locust/k6),
+                                pure-Python percentile(); DB-direct + httpx modes;
+                                single/10/100-concurrent/burst scenarios.          (PERF-A)
+scripts/perf/index_audit.py     IndexAuditor — existing-index coverage detection +
+                                EXPLAIN ANALYZE + CREATE INDEX CONCURRENTLY DDL +
+                                partition strategy.                                (PERF-B)
+docs/ha/HA-A..F                 Multi-AZ RDS · ECS autoscaling · circuit breaker ·
+                                backup/PITR · observability · incident runbook.
+docs/perf/PERF-A..C             Load-test baseline · DB optimization · caching.
+```
+
+**Key operational facts (measured/verified 2026-06-27):**
+- **Latency is network RTT, not query plans.** Hot context views EXPLAIN at **2.5-3.2 ms**
+  and all use index scans; the 140-560 ms wall-clock (PERF-A: 100-concurrent p95 6140 ms)
+  is internet RTT from outside the VPC. In-VPC co-location (Multi-AZ RDS, HA-A) is the
+  real win — indexes are already comprehensive (42 across the 5 hot tables).
+- **In-flight decisions survive an RDS failover** via the existing runner one-shot
+  pool-reset + retry (`runner.py:258-290`) + SQS redelivery; decisions are idempotent
+  per (application_id, decision_id). RTO 30 min (Multi-AZ) / 2 h (PITR); RPO 5 min / 1 h.
+- **Spec corrections worth keeping:** `decision_outputs` has **no `persona_id`** (the
+  persona key is `decision_id`); `fact_nodes (application_id, tenant_id)` already exists.
+
+---
+
 ## Income Model (INC-A / INC-B — UW OS)
 
 `entity_states.qualifying_monthly` is a single scalar; it cannot represent
