@@ -52,7 +52,7 @@ function ProductMockup() {
         <span className="h-3 w-3 rounded-full" style={{ backgroundColor: '#FF5F57' }} />
         <span className="h-3 w-3 rounded-full" style={{ backgroundColor: '#FEBC2E' }} />
         <span className="h-3 w-3 rounded-full" style={{ backgroundColor: '#28C840' }} />
-        <span className="ml-3 text-xs font-semibold text-slate-600">Matthew Johnson · $505K · Fraud review</span>
+        <span className="ml-3 text-xs font-semibold text-slate-600">Daniel Reyes · $418K · Fraud review</span>
       </div>
 
       {/* body — keyed so the staggered animation restarts each cycle */}
@@ -62,7 +62,7 @@ function ProductMockup() {
           <div className="hero-rise rounded-xl border border-slate-200 p-3" style={{ animationDelay: '0.1s' }}>
             <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Briefing</div>
             <p className="mt-1 text-[12px] leading-snug text-slate-700">
-              Self-employed, $505K conforming. Credit and collateral clean. Identity fraud score 0.82 — needs attention.
+              W2 salaried, $418K conforming purchase. Credit clean, collateral clear. Identity fraud score 0.79 — BSA referral mandatory above 0.75.
             </p>
           </div>
           <div className="hero-rise rounded-xl border border-slate-200 p-3" style={{ animationDelay: '0.3s' }}>
