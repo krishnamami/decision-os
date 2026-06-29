@@ -113,10 +113,18 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
   useEffect(() => {
     let alive = true
     setLoading(true); setError(null)
+    // Only fetchLoan can fail the page. Conditions / summary / similar-cases /
+    // actions each degrade to an empty result so a loan with no conditions yet
+    // (the common case — most loans have none) renders a clean empty state
+    // instead of an error.
+    const EMPTY_SUMMARY = {
+      total_conditions: 0, open_conditions: 0, blocking_conditions: 0,
+      cleared_conditions: 0, overdue_conditions: 0,
+    }
     Promise.all([
       fetchLoan(applicationId),
-      fetchConditions(applicationId),
-      fetchConditionsSummary(applicationId),
+      fetchConditions(applicationId).catch(() => [] as Cond[]),
+      fetchConditionsSummary(applicationId).catch(() => EMPTY_SUMMARY),
       fetchSimilarCases(applicationId).catch(() => ({ cases: [] as SimilarCase[] })),
       fetchLoanActions(applicationId).catch(() => ({ actions: [] as LoanAction[] })),
     ])
@@ -291,7 +299,12 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
               </div>
             </div>
 
-            {filtered.length === 0 ? (
+            {conditions.length === 0 ? (
+              <div className="px-4 py-12 text-center">
+                <div className="text-sm font-medium text-slate-500">No conditions found for this loan</div>
+                <div className="mt-1 text-xs text-slate-400">Conditions will appear here as the loan is processed by the decision engine.</div>
+              </div>
+            ) : filtered.length === 0 ? (
               <div className="px-4 py-10 text-center text-sm text-slate-400">No conditions in this view.</div>
             ) : (
               <table className="w-full text-left">
