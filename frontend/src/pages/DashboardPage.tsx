@@ -168,6 +168,9 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        {activeNav !== 'Team Overview' ? (
+          <ComingSoon section={activeNav} />
+        ) : (<>
         {/* KPI bar */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           {KPIS.map((k) => (
@@ -329,6 +332,7 @@ export default function DashboardPage() {
         </Card>
 
         <p className="mt-3 text-[9px] text-slate-300">Figures are illustrative pending live-aggregate wiring (endpoints exist: /api/accord/dashboard/*).</p>
+        </>)}
       </main>
 
       {/* ── RIGHT PANEL (280px) ── */}
@@ -380,6 +384,14 @@ function Num({ n, d, danger }: { n: number; d: Delta; danger?: boolean }) {
       <span className={danger && n > 0 ? 'font-semibold text-red-600' : 'text-slate-700'}>{n}</span>
       {d && <span className={`ml-1 text-[9px] ${d.good ? 'text-green-600' : 'text-red-600'}`}>{d.v.startsWith('-') ? '↓' : '↑'}{d.v.replace(/^[-+]/, '')}</span>}
     </span>
+  )
+}
+function ComingSoon({ section }: { section: string }) {
+  return (
+    <div className="flex min-h-[50vh] flex-col items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white text-center">
+      <div className="text-sm font-semibold text-slate-700">{section}</div>
+      <div className="mt-1 text-xs text-slate-400">This section is coming soon.</div>
+    </div>
   )
 }
 function FilterStub({ label }: { label: string }) {
