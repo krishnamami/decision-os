@@ -786,7 +786,7 @@ function SimilarFiles({ similar }: { similar: { cases: SimilarCase[] } | null })
                 </div>
                 <div className="mt-0.5 flex items-center justify-between">
                   <span className="text-[10px] text-slate-400">
-                    {cse.fraud_score != null && <>Fraud {cse.fraud_score} · </>}{pretty(cse.loan_type)}
+                    {cse.fraud_score != null && <>Fraud {cse.fraud_score.toFixed(2)} · </>}{pretty(cse.loan_type)}
                   </span>
                   <Pill cls={tag.cls}>{tag.label}</Pill>
                 </div>
