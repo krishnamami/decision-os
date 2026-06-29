@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import LoanSummaryWorkbench from '../components/workbench/LoanSummaryWorkbench'
 import {
   fetchLoan, fetchDocuments, fetchLoanActions, fetchSimilarCases,
   type DocItem, type LoanAction, type SimilarCase,
@@ -27,7 +28,19 @@ const TABS = [
 ] as const
 type Tab = (typeof TABS)[number]['key']
 
+// The default view an underwriter sees is the data-driven LoanSummaryWorkbench.
+// The full decision journey (below) is reachable via the workbench's
+// "View full decision →" button, which navigates to ?view=full.
 export default function LoanDetail() {
+  const { appId = '' } = useParams()
+  const [params] = useSearchParams()
+  if (params.get('view') !== 'full') {
+    return <LoanSummaryWorkbench applicationId={appId} />
+  }
+  return <LoanJourneyView />
+}
+
+function LoanJourneyView() {
   const { appId = '' } = useParams()
   const { effectiveUser } = useAuth()
   const role = effectiveUser?.role ?? 'viewer'
@@ -97,7 +110,10 @@ export default function LoanDetail() {
     <div className="mx-auto max-w-7xl px-6 py-6 pb-20">
       {/* Top bar */}
       <div className="flex items-center justify-between">
-        <Link to="/pipeline" className="text-sm font-medium text-brand hover:underline">← Back to queue</Link>
+        <div className="flex items-center gap-4">
+          <Link to="/pipeline" className="text-sm font-medium text-brand hover:underline">← Back to queue</Link>
+          <Link to={`/loans/${appId}`} className="text-sm font-medium text-slate-500 hover:underline">← Loan summary</Link>
+        </div>
         {canExaminer && (
           <button
             onClick={() => window.open(`/loans/${loan.application_id}/examiner-report`, '_blank')}
