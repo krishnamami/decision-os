@@ -247,9 +247,11 @@ export default function HeroSection() {
             Request a demo
           </button>
           <button
-            className="rounded-lg border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 bg-white"
+            className="rounded-lg border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 bg-white flex items-center gap-2"
+            onClick={() => document.getElementById('video')?.scrollIntoView({ behavior: 'smooth' })}
           >
-            Try with Summit loans →
+            <span style={{ width: 0, height: 0, borderTop: '5px solid transparent', borderBottom: '5px solid transparent', borderLeft: '8px solid currentColor', display: 'inline-block' }} />
+            See it in action
           </button>
         </div>
 
