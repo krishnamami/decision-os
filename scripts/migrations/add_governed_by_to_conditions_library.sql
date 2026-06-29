@@ -23,3 +23,8 @@ WHERE agency_citation IS NULL
    OR TRIM(agency_citation) = '';
 
 -- Everything else stays 'agency' (FNMA, FHA, VA, HUD, Fannie, Freddie)
+
+-- Fraud conditions are federally governed: every fraud finding triggers a
+-- mandatory BSA/AML referral (refer_bsa) under BSA/AML 31 CFR §1010
+-- regardless of which Fannie Mae guideline detected the pattern.
+UPDATE conditions_library SET governed_by = 'federal' WHERE category = 'fraud';
