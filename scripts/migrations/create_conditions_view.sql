@@ -39,7 +39,13 @@ SELECT
         SELECT COUNT(*)
         FROM condition_documents cd
         WHERE cd.condition_id = lci.id
-    ), 0) AS documents_submitted
+    ), 0) AS documents_submitted,
+
+    -- Data-driven workbench fields (appended last so CREATE OR REPLACE VIEW
+    -- can add them without reordering existing columns)
+    cl.governed_by,
+    cl.recommended_action,
+    cl.review_area
 
 FROM loan_condition_instances lci
 LEFT JOIN conditions_library cl
