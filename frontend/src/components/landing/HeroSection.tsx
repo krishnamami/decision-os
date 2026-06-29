@@ -167,6 +167,7 @@ const LAYER_STYLES: Record<string, string> = {
 export default function HeroSection() {
   const [activeLoan, setActiveLoan] = useState(0)
   const [activeTab,  setActiveTab]  = useState(0)
+  const [seeActive,  setSeeActive]  = useState(false)
   const tabTimer  = useRef<ReturnType<typeof setInterval> | null>(null)
   const loanTimer = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -247,10 +248,19 @@ export default function HeroSection() {
             Request a demo
           </button>
           <button
-            className="rounded-lg border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 bg-white flex items-center gap-2"
-            onClick={() => document.getElementById('video')?.scrollIntoView({ behavior: 'smooth' })}
+            className="rounded-lg border px-5 py-2.5 text-sm font-semibold flex items-center gap-2 transition-colors duration-150"
+            style={{
+              borderColor: seeActive ? BRAND.dark : '#e2e8f0',
+              backgroundColor: seeActive ? BRAND.dark : 'white',
+              color: seeActive ? 'white' : '#334155',
+            }}
+            onClick={() => {
+              setSeeActive(true)
+              document.getElementById('video')?.scrollIntoView({ behavior: 'smooth' })
+              setTimeout(() => setSeeActive(false), 1500)
+            }}
           >
-            <span style={{ width: 0, height: 0, borderTop: '5px solid transparent', borderBottom: '5px solid transparent', borderLeft: '8px solid currentColor', display: 'inline-block' }} />
+            <span style={{ width: 0, height: 0, borderTop: '5px solid transparent', borderBottom: '5px solid transparent', borderLeft: `8px solid ${seeActive ? 'white' : 'currentColor'}`, display: 'inline-block' }} />
             See it in action
           </button>
         </div>
