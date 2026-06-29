@@ -111,6 +111,12 @@ export default function DashboardPage() {
   const [activeNav, setActiveNav] = useState('Team Overview')
   const [officer, setOfficer] = useState('All')
   const [product, setProduct] = useState('All')
+  const [toast, setToast] = useState<string | null>(null)
+  const notify = (msg: string) => { setToast(msg); window.setTimeout(() => setToast(null), 2200) }
+  // The Loan Officer filter actually narrows the attention table (LO or assignee
+  // match) so the dropdown has a visible effect. Product has no field in the demo
+  // rows yet — it updates state but doesn't filter (v2: add product to rows).
+  const shownAttention = ATTENTION.filter((f) => officer === 'All' || f.lo === officer || f.assigned === officer)
 
   const today = useMemo(
     () => new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
@@ -164,7 +170,7 @@ export default function DashboardPage() {
           </div>
           <div className="flex items-center gap-2">
             <span className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-500">📅 {today}</span>
-            <button className="rounded-lg bg-[#14532d] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#0f3d22]">Export</button>
+            <button onClick={() => notify('Export started — pipeline report (demo)')} className="rounded-lg bg-[#14532d] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#0f3d22]">Export</button>
           </div>
         </div>
 
@@ -286,7 +292,7 @@ export default function DashboardPage() {
                         <span className="text-[9px]" style={{ color: capColor(m.capacity) }}>{m.capacity}%</span>
                       </div>
                     </td>
-                    <td className="px-2 py-2"><button onClick={() => navigate('/pipeline')} className="rounded border border-slate-200 px-2 py-1 text-[10px] font-medium text-slate-600 hover:bg-slate-50">View Queue</button></td>
+                    <td className="px-2 py-2"><button onClick={() => notify(`Opening ${m.name}'s queue (demo)`)} className="rounded border border-slate-200 px-2 py-1 text-[10px] font-medium text-slate-600 hover:bg-slate-50">View Queue</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -312,7 +318,10 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {ATTENTION.map((f) => (
+                {shownAttention.length === 0 && (
+                  <tr><td colSpan={9} className="px-2 py-6 text-center text-[11px] text-slate-400">No files for this filter.</td></tr>
+                )}
+                {shownAttention.map((f) => (
                   <tr key={f.borrower} className="border-b border-slate-50">
                     <td className="px-2 py-2 font-semibold text-slate-800">{f.borrower}</td>
                     <td className="px-2 py-2">{f.amount}</td>
@@ -322,13 +331,13 @@ export default function DashboardPage() {
                     <td className="px-2 py-2"><span className={`rounded-full px-2 py-0.5 text-[9px] font-semibold ${SLA_BADGE[f.sla]}`}>{f.sla} · {f.slaDays}</span></td>
                     <td className="px-2 py-2">{f.queue}</td>
                     <td className="px-2 py-2"><span className="flex items-center gap-1"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-[8px] font-bold text-slate-600">{initials(f.assigned)}</span><span className="text-[10px] text-slate-500">{f.assigned.split(' ')[0]}</span></span></td>
-                    <td className="px-2 py-2"><button onClick={() => f.appId && navigate(`/pipeline/${encodeURIComponent(f.appId)}`)} className="rounded bg-[#14532d] px-2 py-1 text-[10px] font-semibold text-white">Open</button></td>
+                    <td className="px-2 py-2"><button onClick={() => f.appId ? navigate(`/pipeline/${encodeURIComponent(f.appId)}`) : notify(`${f.borrower} — no linked loan record (demo)`)} className="rounded bg-[#14532d] px-2 py-1 text-[10px] font-semibold text-white">Open</button></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <button className="mt-2 text-[11px] font-medium text-blue-600 hover:underline">View all 12 files →</button>
+          <button onClick={() => setActiveNav('All Applications')} className="mt-2 text-[11px] font-medium text-blue-600 hover:underline">View all 12 files →</button>
         </Card>
 
         <p className="mt-3 text-[9px] text-slate-300">Figures are illustrative pending live-aggregate wiring (endpoints exist: /api/accord/dashboard/*).</p>
@@ -337,7 +346,7 @@ export default function DashboardPage() {
 
       {/* ── RIGHT PANEL (280px) ── */}
       <aside className="hidden w-[280px] shrink-0 space-y-5 border-l border-slate-200 bg-white p-4 xl:block">
-        <Panel title="Alerts & Notifications" link>
+        <Panel title="Alerts & Notifications" onView={() => setActiveNav('Escalations')}>
           {ALERTS.map((a, i) => (
             <div key={i} className="mb-2.5 flex items-start gap-2">
               <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${a.dot}`} />
@@ -350,21 +359,33 @@ export default function DashboardPage() {
           ))}
         </Panel>
 
-        <Panel title="AI Insights" link flag="demo">
+        <Panel title="AI Insights" flag="demo" onView={() => notify('All AI insights (demo)')}>
           {AI_INSIGHTS.map((a, i) => (
             <div key={i} className="mb-2">
               <div className="text-[11px] font-medium leading-snug text-slate-700">{a.t}</div>
-              <div className={`text-[10px] ${a.s.includes('→') ? 'cursor-pointer text-blue-600' : 'text-slate-400'}`}>{a.s}</div>
+              <div
+                onClick={a.s.includes('→') ? () => notify('Workload recommendations (demo)') : undefined}
+                className={`text-[10px] ${a.s.includes('→') ? 'cursor-pointer text-blue-600 hover:underline' : 'text-slate-400'}`}
+              >{a.s}</div>
             </div>
           ))}
         </Panel>
 
         <Panel title="Quick Actions">
-          {['Reassign Workload', 'Create Team Message', 'Export Pipeline Report', 'View SLA Dashboard'].map((a) => (
-            <button key={a} className="mb-1.5 w-full rounded-lg border border-slate-200 px-3 py-1.5 text-left text-[11px] font-medium text-slate-600 hover:bg-slate-50">{a}</button>
+          {([
+            ['Reassign Workload', () => setActiveNav('Workload')],
+            ['Create Team Message', () => notify('Team message composer (demo)')],
+            ['Export Pipeline Report', () => notify('Export started — pipeline report (demo)')],
+            ['View SLA Dashboard', () => setActiveNav('SLA Dashboard')],
+          ] as Array<[string, () => void]>).map(([label, fn]) => (
+            <button key={label} onClick={fn} className="mb-1.5 w-full rounded-lg border border-slate-200 px-3 py-1.5 text-left text-[11px] font-medium text-slate-600 hover:bg-slate-50">{label}</button>
           ))}
         </Panel>
       </aside>
+
+      {toast && (
+        <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>
+      )}
     </div>
   )
 }
@@ -412,12 +433,12 @@ function Dropdown({ label, value, onChange, options }: { label: string; value: s
     </div>
   )
 }
-function Panel({ title, link, flag, children }: { title: string; link?: boolean; flag?: string; children: ReactNode }) {
+function Panel({ title, onView, flag, children }: { title: string; onView?: () => void; flag?: string; children: ReactNode }) {
   return (
     <div>
       <div className="mb-2 flex items-center justify-between">
         <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">{title}{flag && <span className="rounded bg-amber-50 px-1 text-[8px] text-amber-600">{flag}</span>}</span>
-        {link && <button className="text-[10px] font-medium text-blue-600 hover:underline">View all</button>}
+        {onView && <button onClick={onView} className="text-[10px] font-medium text-blue-600 hover:underline">View all</button>}
       </div>
       {children}
     </div>
