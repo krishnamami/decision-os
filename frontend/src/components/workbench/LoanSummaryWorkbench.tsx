@@ -87,6 +87,12 @@ function isCleared(c: Cond): boolean {
   return ['approved', 'waived'].includes(c.status)
 }
 
+// 0 is a "not computed" sentinel for DTI / FICO (no real loan has a 0% DTI or a
+// 0 credit score), so treat it as missing rather than displaying "0%".
+function nonZero(n: number | null | undefined): number | null {
+  return n == null || n === 0 ? null : n
+}
+
 // Fallback: pull a number out of a persona decision's signals when the flat
 // metric is null (e.g. metrics.dti missing -> read the DTI signal value).
 function signalNumber(loan: any, decisionId: string, keywords: string[]): number | null {
@@ -292,8 +298,8 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
           <Field label="Loan Purpose" value={pretty((loan as any).loan_purpose ?? (loan as any).metrics?.loan_purpose)} />
           <Field label="Loan Amount" value={money(loan.metrics?.loan_amount)} />
           <Field label="LTV / CLTV" value={pct(loan.metrics?.ltv)} className={loan.metrics?.ltv != null && loan.metrics.ltv > 80 ? 'text-amber-600' : ''} />
-          <Field label="DTI" value={pct(loan.metrics?.dti ?? signalNumber(loan, 'dti_calculation', ['dti']))} />
-          <Field label="FICO" value={loan.metrics?.credit_score ?? signalNumber(loan, 'credit_assessment', ['credit', 'fico', 'score']) ?? DASH} />
+          <Field label="DTI" value={pct(nonZero(loan.metrics?.dti) ?? signalNumber(loan, 'dti_calculation', ['dti']))} />
+          <Field label="FICO" value={nonZero(loan.metrics?.credit_score) ?? signalNumber(loan, 'credit_assessment', ['credit', 'fico', 'score']) ?? DASH} />
           <Field label="Loan Program" value={loanProgram(loanType, loan.metrics?.loan_amount)} />
           <Field label="AUS Result" value={(loan as any).aus_result ?? (loan as any).metrics?.aus_result ?? DASH} />
           <Field
