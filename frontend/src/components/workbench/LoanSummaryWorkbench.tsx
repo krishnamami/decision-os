@@ -217,7 +217,7 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
           <NavBtn onClick={() => setModalAction('request_documents')}>Request docs</NavBtn>
           <NavBtn onClick={() => setModalAction('escalate')}>Escalate</NavBtn>
           <button
-            onClick={() => navigate(`/loans/${encodeURIComponent(applicationId)}?view=full`)}
+            onClick={() => navigate(`/pipeline/${encodeURIComponent(applicationId)}?view=full`)}
             className="rounded-md bg-white/15 px-3 py-1 text-xs font-semibold hover:bg-white/25"
           >View full decision →</button>
         </div>

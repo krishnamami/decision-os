@@ -112,7 +112,7 @@ function LoanJourneyView() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Link to="/pipeline" className="text-sm font-medium text-brand hover:underline">← Back to queue</Link>
-          <Link to={`/loans/${appId}`} className="text-sm font-medium text-slate-500 hover:underline">← Loan summary</Link>
+          <Link to={`/pipeline/${appId}`} className="text-sm font-medium text-slate-500 hover:underline">← Loan summary</Link>
         </div>
         {canExaminer && (
           <button
