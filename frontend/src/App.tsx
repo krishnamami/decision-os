@@ -2,6 +2,7 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import Header from './components/Header'
 import Pipeline from './pages/Pipeline'
 import LoanDetail from './pages/LoanDetail'
+import DashboardPage from './pages/DashboardPage'
 import Analytics from './pages/Analytics'
 import Audit from './pages/Audit'
 import Simulation from './pages/Simulation'
@@ -83,9 +84,11 @@ function AppShell() {
   // A product the user can't reach (role or plan) redirects to Pipeline.
   const guard = (product: string, el: JSX.Element) => (allowed(product) ? el : <Navigate to="/pipeline" replace />)
 
-  // Compliance lands on Audit; everyone else on Pipeline (which itself picks
-  // My Queue / Team Overview / All Applications by role).
-  const defaultPath = role === 'compliance' ? '/audit' : '/pipeline'
+  // Compliance lands on Audit; admin/manager land on the pipeline Dashboard;
+  // everyone else on Pipeline (which itself picks My Queue / Team Overview /
+  // All Applications by role).
+  const isManager = role === 'admin' || role === 'manager' || role === 'super_admin'
+  const defaultPath = role === 'compliance' ? '/audit' : isManager ? '/dashboard' : '/pipeline'
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -100,6 +103,7 @@ function AppShell() {
       <main>
         <Routes>
           <Route path="/" element={<Navigate to={defaultPath} replace />} />
+          <Route path="/dashboard" element={isManager ? <DashboardPage /> : <Navigate to="/pipeline" replace />} />
           <Route path="/pipeline" element={<Pipeline />} />
           <Route path="/pipeline/:appId" element={<LoanDetail />} />
           <Route path="/analytics" element={guard('analytics', <Analytics />)} />

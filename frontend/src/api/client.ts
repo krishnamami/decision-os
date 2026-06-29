@@ -342,6 +342,17 @@ export function satisfyCondition(
   )
 }
 
+// ── Admin/Manager dashboard ──
+export function fetchDashboardSummary() {
+  return getJSON<any>('/api/accord/dashboard/summary')
+}
+export function fetchDashboardTeam() {
+  return getJSON<any>('/api/accord/dashboard/team-performance')
+}
+export function fetchDashboardAttention(limit = 12) {
+  return getJSON<any>(`/api/accord/dashboard/attention?limit=${limit}`)
+}
+
 export interface RuleVersionApplied {
   version: number
   effective_from: string | null
