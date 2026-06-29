@@ -87,8 +87,14 @@ function AppShell() {
   // Compliance lands on Audit; admin/manager land on the pipeline Dashboard;
   // everyone else on Pipeline (which itself picks My Queue / Team Overview /
   // All Applications by role).
-  const isManager = role === 'admin' || role === 'manager' || role === 'super_admin'
-  const defaultPath = role === 'compliance' ? '/audit' : isManager ? '/dashboard' : '/pipeline'
+  const MANAGER_ROLES = ['admin', 'manager', 'super_admin']
+  const isManager = MANAGER_ROLES.includes(role)
+  // Dashboard ACCESS keys off the real account role too, not just the effective
+  // (impersonated) role — so a real admin/manager who is "viewing as" someone, or
+  // who hard-refreshes /dashboard, is never bounced to /pipeline. This is the
+  // stateless guard that makes /dashboard persist on refresh + direct URL + back.
+  const canSeeDashboard = isManager || MANAGER_ROLES.includes(user?.role ?? '')
+  const defaultPath = role === 'compliance' ? '/audit' : canSeeDashboard ? '/dashboard' : '/pipeline'
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -103,7 +109,7 @@ function AppShell() {
       <main>
         <Routes>
           <Route path="/" element={<Navigate to={defaultPath} replace />} />
-          <Route path="/dashboard" element={isManager ? <DashboardPage /> : <Navigate to="/pipeline" replace />} />
+          <Route path="/dashboard" element={canSeeDashboard ? <DashboardPage /> : <Navigate to="/pipeline" replace />} />
           <Route path="/pipeline" element={<Pipeline />} />
           <Route path="/pipeline/:appId" element={<LoanDetail />} />
           <Route path="/analytics" element={guard('analytics', <Analytics />)} />
