@@ -87,6 +87,50 @@ function isCleared(c: Cond): boolean {
   return ['approved', 'waived'].includes(c.status)
 }
 
+// Fallback: pull a number out of a persona decision's signals when the flat
+// metric is null (e.g. metrics.dti missing -> read the DTI signal value).
+function signalNumber(loan: any, decisionId: string, keywords: string[]): number | null {
+  const d = (loan?.decisions ?? []).find((x: any) => x.decision_id === decisionId)
+  for (const s of d?.signals ?? []) {
+    const key = String(s?.key ?? '').toLowerCase()
+    if (keywords.some((k) => key.includes(k))) {
+      const m = String(s?.value ?? '').match(/-?\d+(\.\d+)?/)
+      if (m) return parseFloat(m[0])
+    }
+  }
+  return null
+}
+
+// FHFA 2026 baseline conforming limit — display heuristic only (real limits are
+// county/year-specific; ideally catalogue-driven). Used to label 'other' loans.
+const CONFORMING_LIMIT = 766550
+const LOAN_TYPE_MAP: Record<string, string> = {
+  non_qm: 'Non-QM', nonqm: 'Non-QM', 'non qm': 'Non-QM',
+  conforming: 'Conforming', jumbo: 'Jumbo', fha: 'FHA', va: 'VA',
+  usda: 'USDA', conventional: 'Conventional',
+}
+function loanProgram(raw: string | null | undefined, amount: number | null | undefined): string {
+  const v = String(raw ?? '').trim().toLowerCase()
+  if (!v || v === 'other' || v === 'unknown') {
+    if (amount != null) return amount <= CONFORMING_LIMIT ? 'Conforming' : 'Jumbo'
+    return DASH
+  }
+  return LOAN_TYPE_MAP[v] ?? pretty(v)
+}
+
+// When a loan is blocked but no formal condition exists yet, derive the
+// recommended action from the blocking persona (real decision outcome).
+const PERSONA_ACTION: Record<string, string> = {
+  fraud_screening: 'refer_bsa',
+  compliance_check: 'escalate',
+  product_eligibility: 'escalate',
+}
+function blockingActionType(loan: any): string | null {
+  const bp = loan?.blocking_persona
+  if (!bp) return null
+  return PERSONA_ACTION[bp] ?? 'senior_review'
+}
+
 function Pill({ cls, children }: { cls: string; children: ReactNode }) {
   return <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${cls}`}>{children}</span>
 }
@@ -163,7 +207,17 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
   const loanType = similar?.based_on?.loan_type ?? null
   const lockDays = loan?.metrics?.lock_days_remaining ?? null
   const docCount = loan?.documents?.length ?? null
-  const aiDecision = useMemo(() => (loan?.decisions ?? []).find((d) => d.explanation), [loan])
+  // Prefer the decision that actually drove the outcome — fraud first — so a
+  // fraud-blocked loan shows the fraud rationale, not e.g. compliance_check.
+  const aiDecision = useMemo(() => {
+    const withText = (loan?.decisions ?? []).filter((d) => d.explanation)
+    const PRIORITY = ['fraud_screening', 'underwriting_decision', 'closing_readiness']
+    for (const id of PRIORITY) {
+      const hit = withText.find((d) => d.decision_id === id && (d.outcome === 'block' || d.outcome === 'escalate'))
+      if (hit) return hit
+    }
+    return withText.find((d) => d.outcome === 'block') ?? withText[0]
+  }, [loan])
   const ruleVersion = useMemo(() => {
     for (const d of loan?.decisions ?? []) if (d.rule_version_number != null) return d.rule_version_number
     return null
@@ -206,7 +260,9 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
           <span>{loan.borrower?.name ?? DASH}</span>
           <span className="text-white/30">·</span>
           <span>{money(loan.metrics?.loan_amount)}</span>
-          {loanType && <><span className="text-white/30">·</span><span>{pretty(loanType)}</span></>}
+          {loanProgram(loanType, loan.metrics?.loan_amount) !== DASH && (
+            <><span className="text-white/30">·</span><span>{loanProgram(loanType, loan.metrics?.loan_amount)}</span></>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <div className="mr-1 flex items-center gap-2 text-xs text-white/70">
@@ -233,26 +289,30 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
           </div>
         </div>
         <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-5">
-          <Field label="Loan Purpose" value={DASH} />
+          <Field label="Loan Purpose" value={pretty((loan as any).loan_purpose ?? (loan as any).metrics?.loan_purpose)} />
           <Field label="Loan Amount" value={money(loan.metrics?.loan_amount)} />
           <Field label="LTV / CLTV" value={pct(loan.metrics?.ltv)} className={loan.metrics?.ltv != null && loan.metrics.ltv > 80 ? 'text-amber-600' : ''} />
-          <Field label="DTI" value={pct(loan.metrics?.dti)} />
-          <Field label="FICO" value={loan.metrics?.credit_score ?? DASH} />
-          <Field label="Loan Program" value={loanType ? pretty(loanType) : DASH} />
-          <Field label="AUS Result" value={DASH} />
+          <Field label="DTI" value={pct(loan.metrics?.dti ?? signalNumber(loan, 'dti_calculation', ['dti']))} />
+          <Field label="FICO" value={loan.metrics?.credit_score ?? signalNumber(loan, 'credit_assessment', ['credit', 'fico', 'score']) ?? DASH} />
+          <Field label="Loan Program" value={loanProgram(loanType, loan.metrics?.loan_amount)} />
+          <Field label="AUS Result" value={(loan as any).aus_result ?? (loan as any).metrics?.aus_result ?? DASH} />
           <Field
             label="Rate Lock Expires"
             value={lockDays == null ? DASH : `${lockDays} days`}
             className={lockDays != null && lockDays < 3 ? 'text-red-600' : lockDays != null && lockDays < 7 ? 'text-amber-600' : ''}
           />
-          <Field label="Assigned To" value={DASH} />
+          <Field label="Assigned To" value={(loan as any).assigned_to ?? (loan as any).assigned_to_name ?? DASH} />
         </div>
       </div>
 
       {/* ── SECTION 3 — STATUS ROW ──────────────────────────────────────── */}
       <div className="grid grid-cols-1 divide-y divide-slate-200 border-b border-slate-200 bg-white md:grid-cols-4 md:divide-x md:divide-y-0">
         <StatusCell status={loan.status} blockingPersona={loan.blocking_persona} />
-        <RecommendedCell cond={firstBlocking} />
+        <RecommendedCell
+          cond={firstBlocking}
+          fallbackAction={firstBlocking ? null : blockingActionType(loan)}
+          blockingPersona={loan.blocking_persona}
+        />
         <ReadinessCell summary={summary} />
         <AtAGlanceCell summary={summary} conditions={conditions} lockDays={lockDays} />
       </div>
@@ -341,6 +401,8 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
           <div className="space-y-4 lg:sticky lg:top-4">
             <ActionPanel
               cond={firstBlocking}
+              fallbackAction={firstBlocking ? null : blockingActionType(loan)}
+              blockingPersona={loan.blocking_persona}
               blockingCount={summary?.blocking_conditions ?? 0}
               role={role}
               onAction={(t) => setModalAction(t)}
@@ -409,7 +471,9 @@ function StatusCell({ status, blockingPersona }: { status?: string | null; block
   )
 }
 
-function RecommendedCell({ cond }: { cond: Cond | null }) {
+function RecommendedCell({ cond, fallbackAction, blockingPersona }: {
+  cond: Cond | null; fallbackAction: string | null; blockingPersona?: string | null
+}) {
   return (
     <div className="px-4 py-3">
       <div className="text-[10px] uppercase tracking-wide text-slate-400">Recommended Action</div>
@@ -417,6 +481,16 @@ function RecommendedCell({ cond }: { cond: Cond | null }) {
         <>
           <div className="mt-1 text-sm font-bold text-slate-900">{ACTION_LABEL[cond.recommended_action] ?? pretty(cond.recommended_action)}</div>
           <div className="mt-0.5 line-clamp-2 text-[11px] text-slate-500">{cond.condition_text}</div>
+        </>
+      ) : fallbackAction ? (
+        // No formal condition yet, but the engine blocked the loan — show the
+        // action implied by the blocking decision (keeps this consistent with
+        // the "Blocked on …" UW status instead of contradicting it).
+        <>
+          <div className="mt-1 text-sm font-bold text-slate-900">{ACTION_LABEL[fallbackAction] ?? pretty(fallbackAction)}</div>
+          <div className="mt-0.5 line-clamp-2 text-[11px] text-slate-500">
+            Blocked on {pretty(blockingPersona)} — no formal condition recorded yet.
+          </div>
         </>
       ) : (
         <div className="mt-1 text-sm font-bold text-green-700">No blocking issues</div>
@@ -632,10 +706,11 @@ function RuleCard({ badge, title, citation }: { badge: { label: string; cls: str
   )
 }
 
-function ActionPanel({ cond, blockingCount, role, onAction }: {
-  cond: Cond | null; blockingCount: number; role: string; onAction: (t: string) => void
+function ActionPanel({ cond, fallbackAction, blockingPersona, blockingCount, role, onAction }: {
+  cond: Cond | null; fallbackAction?: string | null; blockingPersona?: string | null
+  blockingCount: number; role: string; onAction: (t: string) => void
 }) {
-  const rec = cond?.recommended_action
+  const rec = cond?.recommended_action ?? fallbackAction ?? null
   const primary = rec ? ACTION_PRIMARY[rec] : null
   const SECONDARY: Array<[string, string]> = [
     ['request_documents', '📄 Request documents'],
@@ -653,12 +728,17 @@ function ActionPanel({ cond, blockingCount, role, onAction }: {
           <div className="mt-0.5 text-sm font-bold text-slate-900">{ACTION_LABEL[rec!] ?? pretty(rec)}</div>
           <div className="mt-0.5 line-clamp-2 text-[11px] text-slate-500">{cond.condition_text}</div>
         </>
+      ) : rec ? (
+        <>
+          <div className="mt-0.5 text-sm font-bold text-slate-900">{ACTION_LABEL[rec] ?? pretty(rec)}</div>
+          <div className="mt-0.5 line-clamp-2 text-[11px] text-slate-500">Blocked on {pretty(blockingPersona)} — no formal condition recorded yet.</div>
+        </>
       ) : (
         <div className="mt-0.5 text-sm font-bold text-green-700">No blocking issues</div>
       )}
 
-      {primary && (
-        <button onClick={() => onAction(rec!)} className={`mt-3 w-full rounded-lg px-3 py-2 text-xs font-semibold ${primary.cls}`}>{primary.label}</button>
+      {primary && rec && (
+        <button onClick={() => onAction(rec)} className={`mt-3 w-full rounded-lg px-3 py-2 text-xs font-semibold ${primary.cls}`}>{primary.label}</button>
       )}
 
       <div className="mt-2 space-y-1.5">
