@@ -20,6 +20,6 @@ WHERE agency_citation ILIKE '%CFR%'
 
 UPDATE conditions_library SET governed_by = 'tenant'
 WHERE agency_citation IS NULL
-   OR agency_citation = '';
+   OR TRIM(agency_citation) = '';
 
 -- Everything else stays 'agency' (FNMA, FHA, VA, HUD, Fannie, Freddie)

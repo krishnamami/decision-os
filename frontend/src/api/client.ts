@@ -60,6 +60,17 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>
 }
 
+async function patchJSON<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'PATCH',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  })
+  if (res.status === 401) handle401(path)
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText} — ${path}`)
+  return res.json() as Promise<T>
+}
+
 // Like postJSON but for PUT, and it surfaces the FastAPI `detail` message
 // (e.g. a rule-validation rejection) instead of a generic status string.
 async function putJSON<T>(path: string, body: unknown): Promise<T> {
@@ -307,6 +318,28 @@ function withPeriod(path: string, period?: string): string {
 
 export function fetchLoan(appId: string): Promise<LoanDetail> {
   return getJSON<LoanDetail>(`/api/accord/loans/${encodeURIComponent(appId)}`)
+}
+
+export function fetchConditions(appId: string) {
+  return getJSON<any[]>(
+    `/api/accord/conditions/${encodeURIComponent(appId)}`
+  )
+}
+
+export function fetchConditionsSummary(appId: string) {
+  return getJSON<any>(
+    `/api/accord/conditions/${encodeURIComponent(appId)}/summary`
+  )
+}
+
+export function satisfyCondition(
+  conditionId: string,
+  body: { document_id: string; reviewed_by: string; review_notes?: string }
+) {
+  return patchJSON(
+    `/api/accord/conditions/${encodeURIComponent(conditionId)}/satisfy`,
+    body
+  )
 }
 
 export interface RuleVersionApplied {
