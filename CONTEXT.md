@@ -4358,3 +4358,93 @@ Doc update batched across EX-A + EX-B (per user). Both ADVISORY foundation passe
 - **VideoSection.tsx.** The new two-column design (left = video/placeholder, right = animated `FraudCard` — "Daniel Reyes · $418K · Fraud review", Briefing / What-needs-attention / Your-call columns, IntersectionObserver scroll-triggered CSS animation + Replay button, BSA/AML 31 CFR §1010 rule citation, similar-files, audit-ready footer) had been left as a STRAY untracked file at `frontend/landing/VideoSection.tsx` while the real build path `frontend/src/components/landing/VideoSection.tsx` still held the old single-column placeholder. Caught the inversion (a literal `rm` of the stray would have destroyed the new design + committed the unchanged old one) → moved stray → real path instead. Commit **77527fe** (+229/-40). The placeholder's HEAD content-type video-presence gate is preserved.
 - **Deploy.** `./deploy.sh frontend` (repo-root script): ECR login → docker build (multi-stage node:20-slim → nginx:alpine) → push to ECR (digest `sha256:03b89cd8…`) → `aws ecs update-service --force-new-deployment` on cluster `accord` / service `accord-frontend` → `services-stable` ✓. Live: http://accord-alb-588286075.us-east-1.elb.amazonaws.com. Two earlier attempts failed because the Docker Desktop daemon was not running (`dockerDesktopLinuxEngine` pipe error); the `docker info && ./deploy.sh` guard correctly no-op'd (no half-built state) until the daemon was up (Server 28.3.2).
 - **Caveats.** (1) Demo video NOT bundled — `accord_demo.mp4` (untracked, repo root) was not copied into `frontend/public/`, so the live section renders the PLACEHOLDER card, not a playing video (the HEAD check finds no video). (2) The build logged `COPY . .` + `npm run build` as CACHED; if the new card isn't visible after a hard refresh, rebuild with `docker build --no-cache`.
+
+
+## Conditions data layer + LoanSummaryWorkbench + workbench fidelity fixes — 2026-06-28/29
+
+Frontend/product + DB-seeding arc (no decision-engine change). Made the underwriter
+workbench fully data-driven over the conditions subsystem, surfaced a stale-API bug, and
+hardened display fidelity. The accord-api ECS service was redeployed once (the rest were
+frontend deploys). `entity_states`/`decision_outputs` and the 16/16 path untouched.
+
+**Landing follow-ups (context — preceded this arc):** Hero two-panel animated workbench
++ Tailwind v4 fade-in keyframes in `index.css` (`b3105c2`), "See it in action" CTA scroll
++ green-active state (`6b82b76`, `0d6a49e`), VideoSection reverted to minimal video-only
+(`8650597`). All deployed to the `accord-frontend` ECS service via `./deploy.sh frontend`.
+
+**conditions_library data-driven columns (`3a202b4`).** Added `governed_by`
+(federal/agency/tenant, CHECK), `recommended_action` (refer_bsa/request_documents/escalate/
+senior_review/add_note/view_details, CHECK), `review_area` to `conditions_library` via 3
+migration files + citation/category backfills; exposed all three through
+`vw_loan_condition_summary` (appended LAST in the SELECT — `CREATE OR REPLACE VIEW` can only
+add columns at the end, not reorder, else "cannot change name of view column"). Applied to
+RDS via asyncpg (psql not installed). **Fraud→federal override (`7e2a2b2`):** all `fraud`
+conditions set `governed_by='federal'` (BSA/AML 31 CFR §1010 mandate overrides the Fannie
+citation) — appended to the migration so it's reproducible; 5 of 6 fraud rows had cited
+Fannie (agency) by text. Final tally 38 agency / 6 federal / 0 tenant.
+
+**Seeded all 10 condition categories (`f432df0`).** Only asset/credit/fraud/title were
+populated (44 rows, 4 categories); seeded income/employment/compliance/closing/property/
+product (6 new `seed_*_conditions.sql`, idempotent `ON CONFLICT (code) DO NOTHING`, all
+rows carry the 3 data-driven columns inline — no backfill). 44 → 91 rows, all 10 categories
+live.
+
+**client.ts (`c825854`).** Added `patchJSON` + `fetchConditions` / `fetchConditionsSummary`
+/ `satisfyCondition` — validated against real `conditions.py` routes (GET `/{id}`,
+GET `/{id}/summary`, PATCH `/{condition_id}/satisfy`). `getJSON` is NOT exported, so the
+workbench uses the exported fns.
+
+**LoanSummaryWorkbench.tsx (`4128864`) — the data-driven UW summary view.** 8 sections
+(top nav, loan header, 4-cell status row w/ SVG donut — no chart lib, dynamic review-area
+strip, AI banner, conditions table + expandable rule/trace panel, sticky action panel +
+similar files, footer). Wired into `LoanDetail.tsx` as the DEFAULT view; the existing
+decision journey moved behind `?view=full`. Reused existing `ActionModal`. KEY: the real
+`loan_detail` API is NESTED (`metrics.{loan_amount,credit_score,ltv,dti,lock_days_remaining}`,
+`borrower.name`, `status`, `decisions[].explanation`) — many spec'd flat fields
+(`dti_limit`, `loan_purpose`, `aus_result`, `assigned_to`, `model_version`, per-condition
+`decision_id`/`assigned_to_name`) DON'T EXIST, so they degrade to "—"/hidden. Empty-state
+fix (`56e78ac`): only `fetchLoan` can fail the page; conditions/summary/similar/actions each
+`.catch` to empty so a loan with no conditions (the common case) renders clean.
+
+**Demo seed `scripts/demo/seed_summit_conditions.py` (`51e620b`).** 27 `loan_condition_
+instances` for 7 summit loans, grounded in REAL decision outcomes (every condition matches a
+block the engine produced). Income fidelity: only the 3 loans with `block:income_verification`
+(Evelyn/Priya/Carlos) get a blocking `INCOME_DISCREPANCY_EXPLANATION`; the 3 income-allowed/
+escalated loans get a non-blocking `EMPLOYMENT_GAP_LOE` (corrective DELETE for a prior
+over-seed; idempotent). Schema-verified before insert (`assigned_to_name`/`auto_satisfy`
+exist; `UNIQUE(application_id,tenant_id,condition_code)` backs ON CONFLICT; conditions_library
+has NO `blocks_closing` column — instance-only).
+
+**ROOT-CAUSE bug — conditions never loaded for any summit loan.** DB + tenant + view all
+correct (4 rows for Carlos under summit; underwriter tenant=summit; view returns 4). The
+`conditions` endpoints returned **404 on the live API** (vs 401 for `/loans/`) — the
+**accord-api ECS image was stale** and never had the conditions router mounted; I'd only ever
+run `./deploy.sh frontend` all session. Fixed by **`./deploy.sh api`** (rebuilt accord-api
+from current main; `api/main.py` mounts the `routers` list incl. `conditions_router`).
+404→401 confirmed post-deploy. (The frontend's graceful `.catch(()=>[])` had silently
+masked the 404 as an empty table.)
+
+**Route fix (`51e620b`).** "View full decision →" + "← Loan summary" navigated to
+`/loans/{id}` but the real route is **`/pipeline/:appId`** (App.tsx:104) → corrected to
+`/pipeline/`. Verified in the live minified bundle. (Examiner link stays `/loans/:id/
+examiner-report` — that route exists.)
+
+**Workbench fidelity fixes (`d8a8d0a`, `b7e2fbe`, `3ce7f46`).**
+- AI summary: prefer the `fraud_screening` (then underwriting/closing) blocking/escalated
+  explanation over first-with-text, so fraud loans show fraud rationale not compliance/HMDA.
+- Loan program: `loanProgram()` normalizes casing (`non_qm`→"Non-QM") + infers `other` from
+  amount (≤ $766,550 conforming else jumbo — hardcoded display heuristic, flagged).
+- Recommended action: when no formal condition but the loan is blocked, derive from
+  `blocking_persona` (fraud→refer_bsa, compliance/product→escalate, else senior_review) —
+  fixes the "No blocking issues" vs "Blocked on LTV" contradiction (Yuki).
+- DTI/FICO: `metrics` → persona-signal fallback; `nonZero()` treats `0` as a "not computed"
+  sentinel → "—" not "0%"/"0" (Yuki has dti_back=0.0 / mid_credit_score=0).
+- Similar-files fraud_score: `toFixed(2)` for consistent `0.xx` (0.074 is a REAL low score on
+  the 0-1 scale, min 0.01 / max 0.82 — NOT 10x-off; did not multiply, which would corrupt the
+  scale and overstate clean loans).
+
+**Honest gaps (flagged, scoped out — frontend-only).** `loan_purpose`/`aus_result`/
+`assigned_to` are absent from `loan_detail` → permanently "—" until a backend change surfaces
+them. The `0`-sentinel for DTI/FICO is a data-quality smell in `entity_states` (the durable
+fix is upstream, not the frontend coercion). Yuki Sato's real loan is `APP-SC13-005` (tenant
+summit; the `APP-SC13-085` in the report was the applicant id `APL-SC13-005` conflated).
