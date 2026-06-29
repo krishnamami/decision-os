@@ -146,6 +146,15 @@ export default function Pipeline() {
   const role = effectiveUser?.role ?? 'viewer'
   const isManager = role === 'admin' || role === 'manager'
   const isOps = OPS_ROLES.includes(role)
+  const navigate = useNavigate()
+
+  // Admin/manager home is the Dashboard — never the old /pipeline TeamOverview.
+  // Keyed off the EFFECTIVE role so an admin impersonating a non-manager still
+  // sees the pipeline. Stateless guard: catches direct URL, bookmark, and the
+  // top-nav Pipeline link for managers.
+  useEffect(() => {
+    if (isManager) navigate('/dashboard', { replace: true })
+  }, [isManager, navigate])
 
   const tabs = isManager
     ? [{ key: 'team', label: 'Team Overview' }, { key: 'all', label: 'All Applications' }]

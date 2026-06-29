@@ -82,6 +82,9 @@ export default function Header() {
   const role = user?.role ?? 'viewer' // identity (avatar/menu) = real user
   const effRole = effectiveUser?.role ?? 'viewer' // tabs follow the impersonated role
   const roleAllows = (label: string) => (ROLE_NAV[effRole] ?? ['Pipeline']).includes(label)
+  // Admin/manager use the Dashboard as their Pipeline landing (effective role,
+  // so impersonating a non-manager keeps the real /pipeline link).
+  const isMgr = ['admin', 'manager', 'super_admin'].includes(effRole)
   const planAllows = (product: string) => product === 'pipeline' || product === 'data_health' || hasProduct(product)
   const initials = (user?.name || '?').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()
   const canCompare = role === 'admin' || role === 'manager'
@@ -201,11 +204,12 @@ export default function Header() {
                 </span>
               )
             }
-            const active = isActiveProduct(t.to)
+            const to = t.label === 'Pipeline' && isMgr ? '/dashboard' : t.to
+            const active = isActiveProduct(to)
             return (
               <NavLink
                 key={t.to}
-                to={t.to}
+                to={to}
                 className={`-mb-px border-b-2 py-3 text-sm font-medium transition ${
                   active ? 'border-[#34D399] text-white' : 'border-transparent text-white/60 hover:text-white'
                 }`}
