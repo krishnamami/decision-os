@@ -229,8 +229,10 @@ async def create_action(application_id: str, body: LoanActionCreate, user: dict 
             application_id, user["tenant_id"], body.action_type, body.reason_category,
             body.reason_text.strip(), user.get("email") or user.get("user_id"),
             body.related_decision_id, visible)
-        # Senior-review hands the loan off to the tenant's senior UW + notifies them.
-        if body.action_type == "senior_review":
+        # Senior-review AND escalate both hand the loan off to the tenant's senior
+        # UW (dynamic lookup by role) + notify them. Escalate previously only
+        # recorded a note, so the loan never reached the senior_uw queue.
+        if body.action_type in ("senior_review", "escalate"):
             await _route_senior_review(conn, application_id, user)
         # Stamp the audit trail + capture an AgentLearning when this overrides Accord.
         await _capture_override(conn, pool, application_id, body, user)
