@@ -845,21 +845,42 @@ async def reassign(body: ReassignBody, user: dict = Depends(get_current_user)) -
 
 class DecideBody(BaseModel):
     application_id: str
-    action: str  # approve | deny | escalate
+    action: str  # approve | deny | escalate | override
     note: Optional[str] = None
+    decision_id: Optional[str] = None      # override: which decision to override
+    reasoning: Optional[str] = None        # override/approve/deny rationale
+    conditions: Optional[str] = None       # approve: optional conditions
+    denial_code: Optional[str] = None      # deny: credit|income|collateral|fraud|other
+    denial_reason: Optional[str] = None    # deny: detailed reason
 
 
 @router.post("/pipeline/decide")
 async def decide(body: DecideBody, user: dict = Depends(get_current_user)) -> dict:
-    """Finalize a loan: approve/deny move it to the decided/denied lifecycle;
-    escalate hands it to a Senior UW. Read-only roles can't decide."""
+    """Finalize a loan. approve/deny/override require the override_decision
+    permission (read from role_permissions, never hardcoded); escalate hands the
+    loan to the tenant's senior UW. TENANT ISOLATION: the loan must belong to the
+    caller's tenant (from the JWT) or the call 403s — the body never carries a
+    tenant_id. Read-only roles can't decide."""
     if user.get("role") in ("viewer", "compliance"):
         raise HTTPException(403, "Read-only role cannot decide")
     _require_db()
     tid, uid = user["tenant_id"], UUID(str(user["user_id"]))
     app = body.application_id
+    perms = user.get("permissions", {}) or {}
+    # approve/deny/override are decision authority — gate on the role's
+    # override_decision permission (dynamic, from role_permissions).
+    if body.action in ("approve", "deny", "override") and not perms.get("override_decision"):
+        raise HTTPException(403, "Your role cannot approve, deny, or override decisions")
     pool = await _get_pool()
     async with pool.acquire() as conn:
+        # TENANT ISOLATION: the loan must exist under the caller's tenant. A
+        # cross-tenant application_id (or unknown loan) is a hard 403 — never a
+        # silent no-op. tenant_id always comes from the JWT, never the request.
+        owns = await conn.fetchval(
+            "SELECT 1 FROM entity_states WHERE application_id=$1 AND tenant_id=$2", app, tid)
+        if not owns:
+            raise HTTPException(403, "Loan is not in your tenant")
+
         if body.action == "approve":
             await conn.execute("UPDATE loan_assignments SET status='decided', completed_at=NOW() WHERE application_id=$1 AND tenant_id=$2 AND assigned_to=$3", app, tid, uid)
             await conn.execute("UPDATE entity_states SET loan_status='decided' WHERE application_id=$1 AND tenant_id=$2", app, tid)
@@ -868,25 +889,53 @@ async def decide(body: DecideBody, user: dict = Depends(get_current_user)) -> di
             await conn.execute("UPDATE loan_assignments SET status='denied', completed_at=NOW() WHERE application_id=$1 AND tenant_id=$2 AND assigned_to=$3", app, tid, uid)
             await conn.execute("UPDATE entity_states SET loan_status='denied' WHERE application_id=$1 AND tenant_id=$2", app, tid)
             title = "Loan denied — adverse-action notice queued"
+        elif body.action == "override":
+            if not body.decision_id:
+                raise HTTPException(422, "decision_id is required to override")
+            if len((body.reasoning or "").strip()) < 25:
+                raise HTTPException(422, "reasoning is required (min 25 characters)")
+            await conn.execute(
+                "UPDATE decision_outputs SET human_action='overridden', human_reviewer=$1, "
+                "human_override_reason=$2, acted_at=NOW() "
+                "WHERE application_id=$3 AND tenant_id=$4 AND decision_id=$5 AND superseded_by IS NULL",
+                user.get("name") or user.get("email") or str(uid), body.reasoning.strip(), app, tid, body.decision_id)
+            title = f"Decision overridden: {body.decision_id}"
         elif body.action == "escalate":
             senior = await conn.fetchval(
                 "SELECT user_id FROM users WHERE tenant_id=$1 AND role='senior_uw' AND is_active=true ORDER BY name LIMIT 1", tid,
             )
             if senior:
-                await conn.execute("UPDATE loan_assignments SET previous_assignee=assigned_to, assigned_to=$1, status='active', stage='decide', assigned_at=NOW() WHERE application_id=$2 AND tenant_id=$3", senior, app, tid)
+                # Record assigned_by = the escalating UW, so a later senior decision
+                # can notify them back.
+                await conn.execute("UPDATE loan_assignments SET previous_assignee=assigned_to, assigned_to=$1, assigned_by=$2, status='active', stage='decide', assigned_at=NOW() WHERE application_id=$3 AND tenant_id=$4", senior, uid, app, tid)
                 await conn.execute("UPDATE entity_states SET assigned_to=$1, current_stage='decide' WHERE application_id=$2 AND tenant_id=$3", senior, app, tid)
                 await conn.execute("INSERT INTO notifications (tenant_id,user_id,type,title,application_id) VALUES ($1,$2,'escalation',$3,$4)", tid, senior, "Loan escalated to you for senior review", app)
             title = "Escalated to Senior UW"
         else:
             raise HTTPException(400, f"Unknown action: {body.action}")
+
+        # Audit trail (best-effort) — actor name + action + full reason context.
         try:
+            detail = {"note": body.note or "", "reasoning": body.reasoning or "",
+                      "decision_id": body.decision_id or "", "denial_code": body.denial_code or "",
+                      "denial_reason": body.denial_reason or "", "conditions": body.conditions or ""}
             await conn.execute(
                 "INSERT INTO activity_log (tenant_id, application_id, actor, action, target, detail) VALUES ($1,$2,$3,$4,$5,$6::jsonb)",
-                tid, app, user.get("email", "user"), body.action, app, json.dumps({"note": body.note or ""}),
+                tid, app, user.get("name") or user.get("email", "user"), body.action, app, json.dumps(detail),
             )
         except Exception:  # noqa: BLE001 — best-effort
             pass
+
+        # Notify the actor; and on a senior decision, notify the UW who escalated.
         await conn.execute("INSERT INTO notifications (tenant_id,user_id,type,title,application_id) VALUES ($1,$2,'decision_made',$3,$4)", tid, uid, title, app)
+        if body.action in ("approve", "deny", "override"):
+            escalator = await conn.fetchval(
+                "SELECT assigned_by FROM loan_assignments WHERE application_id=$1 AND tenant_id=$2 "
+                "AND assigned_by IS NOT NULL ORDER BY assigned_at DESC LIMIT 1", app, tid)
+            if escalator and str(escalator) != str(uid):
+                await conn.execute(
+                    "INSERT INTO notifications (tenant_id,user_id,type,title,application_id) VALUES ($1,$2,'decision_made',$3,$4)",
+                    tid, escalator, f"Senior UW decision on your escalation: {title}", app)
     return {"ok": True, "title": title}
 
 
@@ -1482,6 +1531,31 @@ async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_i
             """,
             application_id, tenant_id,
         )
+        # Current assignment + escalation context (pure DB joins — no hardcoded
+        # names/ids). assigned_by is the UW who escalated (set by the escalate /
+        # senior_review handlers); the reason/category come from the loan_actions row.
+        assign_row = await conn.fetchrow(
+            """
+            SELECT la.assigned_to, la.assigned_by, la.assigned_at, la.status AS assign_status,
+                   ut.name AS assigned_to_name, ub.name AS escalated_by_name
+            FROM loan_assignments la
+            LEFT JOIN users ut ON ut.user_id = la.assigned_to
+            LEFT JOIN users ub ON ub.user_id = la.assigned_by
+            WHERE la.application_id = $1 AND la.tenant_id = $2
+            ORDER BY la.assigned_at DESC NULLS LAST LIMIT 1
+            """,
+            application_id, tenant_id,
+        )
+        esc_action = await conn.fetchrow(
+            """
+            SELECT reason_text, reason_category, performed_at
+            FROM loan_actions
+            WHERE application_id = $1 AND tenant_id = $2
+              AND action_type IN ('escalate', 'senior_review')
+            ORDER BY performed_at DESC LIMIT 1
+            """,
+            application_id, tenant_id,
+        )
         doc_rows = await conn.fetch(
             """
             SELECT document_type, document_category, status, confidence_score,
@@ -1597,6 +1671,22 @@ async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_i
     urgency = _derive_urgency(flags, lock_days)
     blocking = _blocking_persona({d: {"outcome": o} for d, o in decision_outcomes.items()})
 
+    # Assignment + escalation context (data-driven; keys always present, null when
+    # not assigned/escalated). Escalated == there's a real escalate/senior_review
+    # action AND the active assignment records who handed it off (assigned_by).
+    _asg = dict(assign_row) if assign_row else {}
+    _esc = dict(esc_action) if esc_action else {}
+    _escalated = bool(_asg.get("assigned_by")) and bool(_esc)
+    escalation_ctx = {
+        "assigned_to": str(_asg["assigned_to"]) if _asg.get("assigned_to") else None,
+        "assigned_to_name": _asg.get("assigned_to_name"),
+        "escalated_by": str(_asg["assigned_by"]) if (_escalated and _asg.get("assigned_by")) else None,
+        "escalated_by_name": _asg.get("escalated_by_name") if _escalated else None,
+        "escalated_at": (_asg["assigned_at"].isoformat() if (_escalated and _asg.get("assigned_at")) else None),
+        "escalation_reason": _esc.get("reason_text") if _escalated else None,
+        "escalation_category": _esc.get("reason_category") if _escalated else None,
+    }
+
     metrics_out = {
         "loan_amount": _f(e.get("loan_amount")),
         "credit_score": int(e["mid_credit_score"]) if e.get("mid_credit_score") else None,
@@ -1615,6 +1705,7 @@ async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_i
         "borrower_email": ap.get("email"),
         "loan_number": ap.get("loan_number"),
         "metrics": metrics_out,
+        **escalation_ctx,
         "qm": _qm_status(e, loan_terms),
         "examiner_readiness": compute_examiner_readiness(decisions, action_rows),
         "rain_check": rain_check,
