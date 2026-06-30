@@ -8,7 +8,7 @@ import {
 } from '../../api/client'
 
 // Role identifiers — never hardcode role strings inline.
-const ROLES = { SENIOR_UW: 'senior_uw', ADMIN: 'admin', MANAGER: 'manager', UNDERWRITER: 'underwriter', VIEWER: 'viewer' } as const
+const ROLES = { SENIOR_UW: 'senior_uw', ADMIN: 'admin', UW: 'underwriter', PROCESSOR: 'processor', COMPLIANCE: 'compliance' } as const
 const DENIAL_CODES = ['credit', 'income', 'collateral', 'fraud', 'other']
 import type { LoanDetail } from '../../types/accord'
 import ActionModal from './ActionModal'
@@ -148,9 +148,15 @@ function Pill({ cls, children }: { cls: string; children: ReactNode }) {
 export default function LoanSummaryWorkbench({ applicationId }: { applicationId: string }) {
   const navigate = useNavigate()
   const { effectiveUser, permissions } = useAuth()
-  const role = effectiveUser?.role ?? ROLES.VIEWER
+  const role = effectiveUser?.role ?? ''
   const isSeniorUW = role === ROLES.SENIOR_UW
-  const canOverride = permissions?.override_decision === true
+  // Decision authority needs BOTH the role's override_decision permission AND an
+  // effective role that actually decides (senior_uw / admin). This keeps an
+  // impersonated underwriter from ever seeing Approve/Deny/Override even when the
+  // real session carries the permission.
+  const canOverride = permissions?.override_decision === true && (role === ROLES.SENIOR_UW || role === ROLES.ADMIN)
+  // senior_uw / admin ARE the escalation target — they can't escalate further.
+  const canEscalate = role !== ROLES.SENIOR_UW && role !== ROLES.ADMIN
   const [decideModal, setDecideModal] = useState<null | 'approve' | 'deny' | 'override'>(null)
 
   const [loan, setLoan] = useState<LoanDetail | null>(null)
@@ -294,7 +300,7 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
           </div>
           <NavBtn onClick={() => setModalAction('add_note')}>Add note</NavBtn>
           <NavBtn onClick={() => setShowRequestDocsModal(true)}>Request docs</NavBtn>
-          {!isSeniorUW && <NavBtn onClick={() => setModalAction('escalate')}>Escalate</NavBtn>}
+          {canEscalate && <NavBtn onClick={() => setModalAction('escalate')}>Escalate</NavBtn>}
           {canOverride && (
             <>
               <button onClick={() => setDecideModal('override')} className="rounded-md bg-white/15 px-3 py-1 text-xs font-semibold hover:bg-white/25">Override</button>
@@ -459,6 +465,7 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
               fallbackAction={firstBlocking ? null : blockingActionType(loan)}
               blockingPersona={loan.blocking_persona}
               canOverride={canOverride}
+              canEscalate={canEscalate}
               onAction={openAction}
               onDecide={(m) => setDecideModal(m)}
             />
@@ -1167,27 +1174,24 @@ function RuleCard({ badge, title, citation }: { badge: { label: string; cls: str
   )
 }
 
-function ActionPanel({ cond, fallbackAction, blockingPersona, canOverride, onAction, onDecide }: {
+function ActionPanel({ cond, fallbackAction, blockingPersona, canOverride, canEscalate, onAction, onDecide }: {
   cond: Cond | null; fallbackAction?: string | null; blockingPersona?: string | null
-  canOverride: boolean; onAction: (t: string) => void; onDecide: (mode: 'approve' | 'deny' | 'override') => void
+  canOverride: boolean; canEscalate: boolean; onAction: (t: string) => void; onDecide: (mode: 'approve' | 'deny' | 'override') => void
 }) {
   const rec = cond?.recommended_action ?? fallbackAction ?? null
   const primary = rec ? ACTION_PRIMARY[rec] : null
-  // The secondary list is keyed off decision authority (permissions, never a
-  // hardcoded role): underwriters route work upward (escalate / senior review);
-  // senior underwriters act on it directly (override / approve / deny rendered
-  // separately below). Each role sees only the buttons it can actually use.
-  const SECONDARY: Array<[string, string]> = canOverride
-    ? [
-        ['request_documents', '📄 Request documents'],
-        ['add_note', '📝 Add a note'],
-      ]
-    : [
-        ['request_documents', '📄 Request documents'],
-        ['escalate', '↑ Escalate'],
-        ['senior_review', '👤 Senior review'],
-        ['add_note', '📝 Add a note'],
-      ]
+  // Secondary actions are role-driven. Routing work upward (escalate / senior
+  // review) is shown only to roles that can escalate — never to senior_uw / admin,
+  // who ARE the escalation target. Override / approve / deny render separately
+  // below, gated on canOverride. Request-docs + add-a-note are always available.
+  const escalation: Array<[string, string]> = canEscalate
+    ? [['escalate', '↑ Escalate'], ['senior_review', '👤 Senior review']]
+    : []
+  const SECONDARY: Array<[string, string]> = [
+    ['request_documents', '📄 Request documents'],
+    ...escalation,
+    ['add_note', '📝 Add a note'],
+  ]
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-3">
       <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Recommended</div>
