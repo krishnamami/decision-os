@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import {
   fetchLoan, fetchConditions, fetchConditionsSummary,
-  fetchSimilarCases, fetchLoanActions, decideLoan,
+  fetchSimilarCases, fetchLoanActions, decideLoan, requestInfo,
   type LoanAction, type SimilarCase,
 } from '../../api/client'
 
@@ -165,6 +165,10 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
   const [filter, setFilter] = useState<'all' | 'blocking' | 'review' | 'cleared'>('all')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [modalAction, setModalAction] = useState<string | null>(null)
+  // Request-docs gets its OWN modal — it is a document request to the borrower
+  // (POST /communications), NOT an escalation/note recorded via ActionModal.
+  // The two never share a modal component.
+  const [showRequestDocsModal, setShowRequestDocsModal] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
 
   useEffect(() => {
@@ -206,6 +210,12 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
     refetchActions()
     setToast('Recorded — added to the file.')
     setTimeout(() => setToast(null), 2500)
+  }
+  // Route every "Request documents" trigger (top nav, action panel, condition
+  // rows) to the dedicated doc-request modal; everything else uses ActionModal.
+  function openAction(t: string) {
+    if (t === 'request_documents') { setShowRequestDocsModal(true); return }
+    setModalAction(t)
   }
   function toggle(id: string) {
     setExpanded((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
@@ -283,7 +293,7 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
             <span>{effectiveUser?.name ?? 'You'}</span>
           </div>
           <NavBtn onClick={() => setModalAction('add_note')}>Add note</NavBtn>
-          <NavBtn onClick={() => setModalAction('request_documents')}>Request docs</NavBtn>
+          <NavBtn onClick={() => setShowRequestDocsModal(true)}>Request docs</NavBtn>
           {!isSeniorUW && <NavBtn onClick={() => setModalAction('escalate')}>Escalate</NavBtn>}
           {canOverride && (
             <>
@@ -432,7 +442,7 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
                       actions={actions}
                       expanded={expanded.has(c.id)}
                       onToggle={() => toggle(c.id)}
-                      onAction={(t) => setModalAction(t)}
+                      onAction={openAction}
                     />
                   ))}
                 </tbody>
@@ -448,9 +458,9 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
               cond={firstBlocking}
               fallbackAction={firstBlocking ? null : blockingActionType(loan)}
               blockingPersona={loan.blocking_persona}
-              blockingCount={summary?.blocking_conditions ?? 0}
-              role={role}
-              onAction={(t) => setModalAction(t)}
+              canOverride={canOverride}
+              onAction={openAction}
+              onDecide={(m) => setDecideModal(m)}
             />
             <SimilarFiles similar={similar} />
           </div>
@@ -484,6 +494,18 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
           onClose={() => setDecideModal(null)}
           onDone={(msg) => {
             setDecideModal(null)
+            setToast(msg)
+            setTimeout(() => setToast(null), 2500)
+            setReload((r) => r + 1)
+          }}
+        />
+      )}
+      {showRequestDocsModal && (
+        <RequestDocsModal
+          loan={loan}
+          onClose={() => setShowRequestDocsModal(false)}
+          onDone={(msg) => {
+            setShowRequestDocsModal(false)
             setToast(msg)
             setTimeout(() => setToast(null), 2500)
             setReload((r) => r + 1)
@@ -585,6 +607,169 @@ function DecideModal({ mode, loan, onClose, onDone }: {
           <button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
           <button onClick={submit} disabled={!ready || busy} className={`rounded-lg px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-40 ${mode === 'deny' ? 'bg-red-600' : mode === 'approve' ? 'bg-green-600' : 'bg-[#14532d]'}`}>
             {busy ? 'Working…' : title}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Request-documents modal ──────────────────────────────────────────────────
+// Distinct from ActionModal/DecideModal: this sends a document request to the
+// borrower via POST /communications (request_info) — it does NOT escalate or
+// record an audit note. The catalogue of askable documents is presentation
+// data; the backend stores whatever labels we submit as items_requested.
+const DOC_TYPES = [
+  'W-2s (last 2 years)',
+  'Pay stubs (last 30 days)',
+  'Bank statements (last 2 months)',
+  'Tax returns (last 2 years)',
+  'Employment verification letter',
+  'Government-issued photo ID',
+  'Proof of insurance',
+]
+
+function addBusinessDays(start: Date, n: number): Date {
+  const d = new Date(start)
+  let added = 0
+  while (added < n) {
+    d.setDate(d.getDate() + 1)
+    const wd = d.getDay()
+    if (wd !== 0 && wd !== 6) added += 1
+  }
+  return d
+}
+// Local-date ISO (yyyy-mm-dd) without UTC drift — drives the <input type=date>.
+function isoDate(d: Date): string {
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+}
+
+function RequestDocsModal({ loan, onClose, onDone }: {
+  loan: LoanDetail; onClose: () => void; onDone: (msg: string) => void
+}) {
+  const borrowerEmail = loan.borrower_email ?? null
+  const coBorrowerEmail = (loan as any).co_borrower_email ?? null
+  const [docs, setDocs] = useState<Set<string>>(new Set())
+  const [otherChecked, setOtherChecked] = useState(false)
+  const [otherText, setOtherText] = useState('')
+  const [sendBorrower, setSendBorrower] = useState(true)
+  const [sendCo, setSendCo] = useState(false)
+  const [sendLO, setSendLO] = useState(false)
+  const [message, setMessage] = useState('')
+  const [dueDate, setDueDate] = useState(() => isoDate(addBusinessDays(new Date(), 5)))
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  function toggleDoc(d: string) {
+    setDocs((prev) => { const n = new Set(prev); n.has(d) ? n.delete(d) : n.add(d); return n })
+  }
+
+  const items = [...docs, ...(otherChecked && otherText.trim() ? [otherText.trim()] : [])]
+  const ready = items.length > 0 && (!otherChecked || otherText.trim().length > 0) && !busy
+
+  async function submit() {
+    if (!ready) return
+    setBusy(true); setErr(null)
+    // request_info takes a single recipient_email; preserve the full send-to
+    // selection in the note so nothing the underwriter chose is lost.
+    const recipients: string[] = []
+    if (sendBorrower) recipients.push('Borrower')
+    if (sendCo && coBorrowerEmail) recipients.push('Co-borrower')
+    if (sendLO) recipients.push('Loan officer')
+    const note = [
+      message.trim() || undefined,
+      recipients.length ? `Send to: ${recipients.join(', ')}` : undefined,
+    ].filter(Boolean).join('\n\n') || undefined
+    try {
+      await requestInfo({
+        application_id: loan.application_id,
+        recipient_email: sendBorrower && borrowerEmail ? borrowerEmail : undefined,
+        items,
+        note,
+        due_date: dueDate || undefined,
+      })
+      onDone('Document request sent — borrower notified.')
+    } catch {
+      setErr('Could not send the request — please try again.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="text-base font-bold text-slate-900">Request documents</div>
+        <div className="mt-1 text-[12px] text-slate-500">
+          Ask {loan.borrower?.name ?? 'the borrower'} to upload the documents you need to clear conditions.
+        </div>
+
+        <div className="mt-4">
+          <div className="mb-1.5 text-xs font-semibold text-slate-600">Document types</div>
+          <div className="space-y-1.5">
+            {DOC_TYPES.map((d) => (
+              <label key={d} className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" checked={docs.has(d)} onChange={() => toggleDoc(d)} className="accent-[#14532d]" />
+                {d}
+              </label>
+            ))}
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" checked={otherChecked} onChange={() => setOtherChecked((v) => !v)} className="accent-[#14532d]" />
+              Other
+            </label>
+            {otherChecked && (
+              <input
+                value={otherText}
+                onChange={(e) => setOtherText(e.target.value)}
+                placeholder="Describe the document…"
+                className="ml-6 w-[calc(100%-1.5rem)] rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm outline-none focus:border-[#14532d]"
+              />
+            )}
+          </div>
+        </div>
+
+        <div className="mt-4">
+          <div className="mb-1.5 text-xs font-semibold text-slate-600">Send to</div>
+          <div className="space-y-1.5">
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" checked={sendBorrower} onChange={() => setSendBorrower((v) => !v)} className="accent-[#14532d]" />
+              Borrower{borrowerEmail ? ` (${borrowerEmail})` : ''}
+            </label>
+            {coBorrowerEmail && (
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" checked={sendCo} onChange={() => setSendCo((v) => !v)} className="accent-[#14532d]" />
+                Co-borrower ({coBorrowerEmail})
+              </label>
+            )}
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" checked={sendLO} onChange={() => setSendLO((v) => !v)} className="accent-[#14532d]" />
+              Loan officer
+            </label>
+          </div>
+        </div>
+
+        <div className="mt-4">
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-slate-600">Message to borrower (optional)</span>
+            <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={3} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#14532d]" />
+          </label>
+        </div>
+
+        <div className="mt-4">
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-slate-600">Due date</span>
+            <span className="flex items-center gap-2">
+              <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-[#14532d]" />
+              <span className="text-[11px] text-slate-400">Default: 5 business days</span>
+            </span>
+          </label>
+        </div>
+
+        {err && <p className="mt-3 text-sm font-medium text-red-600">{err}</p>}
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+          <button onClick={submit} disabled={!ready} title={items.length === 0 ? 'Select at least one document' : undefined} className="rounded-lg bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-40">
+            {busy ? 'Sending…' : 'Send request'}
           </button>
         </div>
       </div>
@@ -872,20 +1057,27 @@ function RuleCard({ badge, title, citation }: { badge: { label: string; cls: str
   )
 }
 
-function ActionPanel({ cond, fallbackAction, blockingPersona, blockingCount, role, onAction }: {
+function ActionPanel({ cond, fallbackAction, blockingPersona, canOverride, onAction, onDecide }: {
   cond: Cond | null; fallbackAction?: string | null; blockingPersona?: string | null
-  blockingCount: number; role: string; onAction: (t: string) => void
+  canOverride: boolean; onAction: (t: string) => void; onDecide: (mode: 'approve' | 'deny' | 'override') => void
 }) {
   const rec = cond?.recommended_action ?? fallbackAction ?? null
   const primary = rec ? ACTION_PRIMARY[rec] : null
-  const SECONDARY: Array<[string, string]> = [
-    ['request_documents', '📄 Request documents'],
-    ['escalate', '↑ Escalate'],
-    ['senior_review', '👤 Senior review'],
-    ['add_note', '📝 Add a note'],
-  ]
-  const approveDisabled = blockingCount > 0
-  const denyDisabled = ([ROLES.UNDERWRITER, ROLES.VIEWER] as string[]).includes(role)
+  // The secondary list is keyed off decision authority (permissions, never a
+  // hardcoded role): underwriters route work upward (escalate / senior review);
+  // senior underwriters act on it directly (override / approve / deny rendered
+  // separately below). Each role sees only the buttons it can actually use.
+  const SECONDARY: Array<[string, string]> = canOverride
+    ? [
+        ['request_documents', '📄 Request documents'],
+        ['add_note', '📝 Add a note'],
+      ]
+    : [
+        ['request_documents', '📄 Request documents'],
+        ['escalate', '↑ Escalate'],
+        ['senior_review', '👤 Senior review'],
+        ['add_note', '📝 Add a note'],
+      ]
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-3">
       <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Recommended</div>
@@ -907,21 +1099,20 @@ function ActionPanel({ cond, fallbackAction, blockingPersona, blockingCount, rol
         <button onClick={() => onAction(rec)} className={`mt-3 w-full rounded-lg px-3 py-2 text-xs font-semibold ${primary.cls}`}>{primary.label}</button>
       )}
 
+      {/* Decision authority — only rendered for roles with override_decision.
+          Roles that can't decide never see Approve/Deny at all (not grayed). */}
+      {canOverride && (
+        <div className="mt-3 space-y-1.5">
+          <button onClick={() => onDecide('override')} className="w-full rounded-lg bg-[#14532d] px-3 py-1.5 text-left text-xs font-semibold text-white hover:bg-[#0f3d22]">⤺ Override</button>
+          <button onClick={() => onDecide('approve')} className="w-full rounded-lg bg-green-600 px-3 py-1.5 text-left text-xs font-semibold text-white hover:bg-green-500">✓ Approve</button>
+          <button onClick={() => onDecide('deny')} className="w-full rounded-lg bg-red-600 px-3 py-1.5 text-left text-xs font-semibold text-white hover:bg-red-500">✕ Deny</button>
+        </div>
+      )}
+
       <div className="mt-2 space-y-1.5">
         {SECONDARY.map(([t, label]) => (
           <button key={t} onClick={() => onAction(t)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-left text-xs font-medium text-slate-700 hover:bg-slate-50">{label}</button>
         ))}
-      </div>
-
-      <div className="mt-2 space-y-1.5">
-        <button disabled={approveDisabled} title={approveDisabled ? 'Resolve blocking conditions first' : undefined}
-          className="w-full cursor-not-allowed rounded-lg border border-slate-100 bg-white px-3 py-1.5 text-left text-xs font-medium text-slate-300">
-          Approve{approveDisabled ? ' — resolve block first' : ''}
-        </button>
-        <button disabled={denyDisabled} title={denyDisabled ? 'Requires senior underwriter' : undefined}
-          className="w-full cursor-not-allowed rounded-lg border border-slate-100 bg-white px-3 py-1.5 text-left text-xs font-medium text-slate-300">
-          Deny — requires senior underwriter
-        </button>
       </div>
     </div>
   )
