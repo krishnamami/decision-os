@@ -125,8 +125,22 @@ export async function signupRequest(
 ): Promise<AuthSession> {
   return postJSON<AuthSession>('/api/accord/auth/signup', { tenant_name, email, password, name })
 }
-export async function fetchMe(): Promise<{ user: AuthUser; tenant: AuthTenant; permissions: string[] }> {
+export type ActionPermissions = Record<string, boolean>
+export async function fetchMe(): Promise<{ user: AuthUser; tenant: AuthTenant; permissions: string[]; action_permissions?: ActionPermissions }> {
   return getJSON('/api/accord/auth/me')
+}
+
+export interface DecideInput {
+  action: 'approve' | 'deny' | 'override' | 'escalate'
+  decision_id?: string
+  reasoning?: string
+  conditions?: string
+  denial_code?: string
+  denial_reason?: string
+  note?: string
+}
+export function decideLoan(appId: string, body: DecideInput): Promise<{ ok: boolean; title: string }> {
+  return postJSON('/api/accord/pipeline/decide', { application_id: appId, ...body })
 }
 
 // ── My Queue / Team (role-based landing) ─────────────────────────────
@@ -208,9 +222,6 @@ export function fetchTeam(): Promise<TeamResponse> {
 }
 export function reassignLoans(application_ids: string[], to_user_id: string): Promise<{ transferred: number; to_name: string }> {
   return postJSON('/api/accord/pipeline/reassign', { application_ids, to_user_id })
-}
-export function decideLoan(application_id: string, action: 'approve' | 'deny' | 'escalate', note?: string): Promise<{ ok: boolean; title: string }> {
-  return postJSON('/api/accord/pipeline/decide', { application_id, action, note })
 }
 export function fetchTeamPerformance(): Promise<TeamPerformanceResponse> {
   return getJSON('/api/accord/analytics/team-performance')

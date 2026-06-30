@@ -23,6 +23,8 @@ interface AuthState {
   login: (email: string, password: string) => Promise<void>
   logout: () => void
   hasProduct: (product: string) => boolean
+  // Action-level RBAC flags from role_permissions (override_decision, etc.).
+  permissions: Record<string, boolean>
   // Impersonation (super-admin): `effectiveUser` is who the app behaves as.
   effectiveUser: AuthUser | null
   viewAs: ImpersonatedUser | null
@@ -42,6 +44,7 @@ export function useAuth(): AuthState {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [tenant, setTenant] = useState<AuthTenant | null>(null)
+  const [permissions, setPermissions] = useState<Record<string, boolean>>({})
   const [loading, setLoading] = useState(true)
   const [viewAs, setViewAs] = useState<ImpersonatedUser | null>(() => {
     try {
@@ -63,6 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (alive) {
           setUser(d.user)
           setTenant(d.tenant)
+          setPermissions(d.action_permissions || {})
         }
       })
       .catch(() => {
@@ -92,6 +96,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(s.access_token)
     setUser(s.user)
     setTenant(s.tenant)
+    // loginRequest doesn't return action_permissions — fetch them so RBAC flags
+    // (override_decision, etc.) are available immediately after login.
+    try { const me = await fetchMe(); setPermissions(me.action_permissions || {}) } catch { /* non-fatal */ }
   }
 
   function clearViewAs() {
@@ -103,6 +110,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearViewAs()
     setUser(null)
     setTenant(null)
+    setPermissions({})
   }
   function impersonate(u: ImpersonatedUser) {
     setViewAs(u)
@@ -125,6 +133,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         login,
         logout,
         hasProduct,
+        permissions,
         effectiveUser,
         viewAs,
         impersonate,

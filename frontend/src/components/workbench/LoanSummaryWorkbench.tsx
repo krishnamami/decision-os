@@ -3,9 +3,13 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import {
   fetchLoan, fetchConditions, fetchConditionsSummary,
-  fetchSimilarCases, fetchLoanActions,
+  fetchSimilarCases, fetchLoanActions, decideLoan,
   type LoanAction, type SimilarCase,
 } from '../../api/client'
+
+// Role identifiers — never hardcode role strings inline.
+const ROLES = { SENIOR_UW: 'senior_uw', ADMIN: 'admin', MANAGER: 'manager', UNDERWRITER: 'underwriter', VIEWER: 'viewer' } as const
+const DENIAL_CODES = ['credit', 'income', 'collateral', 'fraud', 'other']
 import type { LoanDetail } from '../../types/accord'
 import ActionModal from './ActionModal'
 
@@ -143,8 +147,11 @@ function Pill({ cls, children }: { cls: string; children: ReactNode }) {
 
 export default function LoanSummaryWorkbench({ applicationId }: { applicationId: string }) {
   const navigate = useNavigate()
-  const { effectiveUser } = useAuth()
-  const role = effectiveUser?.role ?? 'viewer'
+  const { effectiveUser, permissions } = useAuth()
+  const role = effectiveUser?.role ?? ROLES.VIEWER
+  const isSeniorUW = role === ROLES.SENIOR_UW
+  const canOverride = permissions?.override_decision === true
+  const [decideModal, setDecideModal] = useState<null | 'approve' | 'deny' | 'override'>(null)
 
   const [loan, setLoan] = useState<LoanDetail | null>(null)
   const [conditions, setConditions] = useState<Cond[]>([])
@@ -277,7 +284,14 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
           </div>
           <NavBtn onClick={() => setModalAction('add_note')}>Add note</NavBtn>
           <NavBtn onClick={() => setModalAction('request_documents')}>Request docs</NavBtn>
-          <NavBtn onClick={() => setModalAction('escalate')}>Escalate</NavBtn>
+          {!isSeniorUW && <NavBtn onClick={() => setModalAction('escalate')}>Escalate</NavBtn>}
+          {canOverride && (
+            <>
+              <button onClick={() => setDecideModal('override')} className="rounded-md bg-white/15 px-3 py-1 text-xs font-semibold hover:bg-white/25">Override</button>
+              <button onClick={() => setDecideModal('approve')} className="rounded-md bg-green-600 px-3 py-1 text-xs font-semibold text-white hover:bg-green-500">Approve</button>
+              <button onClick={() => setDecideModal('deny')} className="rounded-md bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-500">Deny</button>
+            </>
+          )}
           <button
             onClick={() => navigate(`/pipeline/${encodeURIComponent(applicationId)}?view=full`)}
             className="rounded-md bg-white/15 px-3 py-1 text-xs font-semibold hover:bg-white/25"
@@ -307,13 +321,25 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
             value={lockDays == null ? DASH : `${lockDays} days`}
             className={lockDays != null && lockDays < 3 ? 'text-red-600' : lockDays != null && lockDays < 7 ? 'text-amber-600' : ''}
           />
-          <Field label="Assigned To" value={(loan as any).assigned_to ?? (loan as any).assigned_to_name ?? DASH} />
+          <Field
+            label="Assigned To"
+            value={loan.assigned_to
+              ? (loan.assigned_to === effectiveUser?.user_id
+                  ? `${loan.assigned_to_name ?? effectiveUser?.name ?? ''} (You)`
+                  : (loan.assigned_to_name ?? DASH))
+              : DASH}
+          />
         </div>
       </div>
 
       {/* ── SECTION 3 — STATUS ROW ──────────────────────────────────────── */}
       <div className="grid grid-cols-1 divide-y divide-slate-200 border-b border-slate-200 bg-white md:grid-cols-4 md:divide-x md:divide-y-0">
-        <StatusCell status={loan.status} blockingPersona={loan.blocking_persona} />
+        <StatusCell
+          status={loan.status}
+          blockingPersona={loan.blocking_persona}
+          escalatedByName={loan.escalated_by ? loan.escalated_by_name : null}
+          escalatedAt={loan.escalated_by ? loan.escalated_at : null}
+        />
         <RecommendedCell
           cond={firstBlocking}
           fallbackAction={firstBlocking ? null : blockingActionType(loan)}
@@ -325,6 +351,19 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
 
       {/* ── SECTION 4 — REVIEW AREA STRIP ───────────────────────────────── */}
       <ReviewStrip conditions={conditions} />
+
+      {/* ── ESCALATION BANNER (senior UW, escalated to me) ──────────────── */}
+      {isSeniorUW && loan.escalated_by && loan.assigned_to === effectiveUser?.user_id && (
+        <div className="mx-5 mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4">
+          <div className="text-sm font-bold text-amber-800">⚠ Escalated to you by {loan.escalated_by_name ?? DASH}</div>
+          <div className="mt-1 grid gap-0.5 text-[12px] text-amber-900">
+            {loan.escalation_category && <div><span className="font-semibold">Category:</span> {pretty(loan.escalation_category)}</div>}
+            {loan.escalation_reason && <div><span className="font-semibold">Reason:</span> {loan.escalation_reason}</div>}
+            {loan.escalated_at && <div><span className="font-semibold">Escalated:</span> {new Date(loan.escalated_at).toLocaleString()}</div>}
+          </div>
+          <div className="mt-1.5 text-[11px] text-amber-700">{loan.escalated_by_name ?? 'The underwriter'} is waiting for your review.</div>
+        </div>
+      )}
 
       {/* ── SECTION 5 — AI SUMMARY BANNER ───────────────────────────────── */}
       {aiDecision && (
@@ -438,6 +477,19 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
           onDone={onActionDone}
         />
       )}
+      {decideModal && (
+        <DecideModal
+          mode={decideModal}
+          loan={loan}
+          onClose={() => setDecideModal(null)}
+          onDone={(msg) => {
+            setDecideModal(null)
+            setToast(msg)
+            setTimeout(() => setToast(null), 2500)
+            setReload((r) => r + 1)
+          }}
+        />
+      )}
       {toast && (
         <div className="fixed bottom-16 left-1/2 z-40 -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>
       )}
@@ -450,6 +502,96 @@ function NavBtn({ onClick, children }: { onClick: () => void; children: ReactNod
   return <button onClick={onClick} className="rounded-md border border-white/20 px-2.5 py-1 text-xs font-medium text-white/90 hover:bg-white/10">{children}</button>
 }
 
+function DecideModal({ mode, loan, onClose, onDone }: {
+  mode: 'approve' | 'deny' | 'override'; loan: LoanDetail; onClose: () => void; onDone: (msg: string) => void
+}) {
+  const [reasoning, setReasoning] = useState('')
+  const [conditions, setConditions] = useState('')
+  const [denialReason, setDenialReason] = useState('')
+  const [denialCode, setDenialCode] = useState(DENIAL_CODES[0])
+  const [decisionId, setDecisionId] = useState((loan.decisions?.[0] as any)?.decision_id ?? '')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  const title = mode === 'approve' ? 'Approve Loan' : mode === 'deny' ? 'Deny Loan' : 'Override Decision'
+  const amount = money(loan.metrics?.loan_amount)
+  const name = loan.borrower?.name ?? 'this borrower'
+  const ready = mode === 'deny' ? denialReason.trim().length >= 50
+    : mode === 'override' ? (!!decisionId && reasoning.trim().length >= 25)
+    : reasoning.trim().length >= 25
+
+  async function submit() {
+    if (!ready || busy) return
+    setBusy(true); setErr(null)
+    try {
+      const body = mode === 'approve' ? { action: 'approve' as const, reasoning: reasoning.trim(), conditions: conditions.trim() || undefined }
+        : mode === 'deny' ? { action: 'deny' as const, denial_reason: denialReason.trim(), denial_code: denialCode }
+        : { action: 'override' as const, decision_id: decisionId, reasoning: reasoning.trim() }
+      const res = await decideLoan(loan.application_id, body)
+      onDone(res?.title || 'Done')
+    } catch {
+      setErr('Could not complete the action — please try again.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="text-base font-bold text-slate-900">{title}</div>
+        {(mode === 'approve' || mode === 'deny') && (
+          <div className={`mt-2 rounded-lg p-2.5 text-[12px] ${mode === 'approve' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+            This will {mode} {name}'s application for {amount}.
+          </div>
+        )}
+        <div className="mt-3 space-y-3 text-sm">
+          {mode === 'override' && (
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-slate-600">Decision to override</span>
+              <select value={decisionId} onChange={(e) => setDecisionId(e.target.value)} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm">
+                {(loan.decisions ?? []).map((d: any) => <option key={d.decision_id} value={d.decision_id}>{(d.persona_name ?? d.decision_id)} — {d.outcome}</option>)}
+              </select>
+            </label>
+          )}
+          {mode === 'approve' && (
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-slate-600">Conditions (optional)</span>
+              <textarea value={conditions} onChange={(e) => setConditions(e.target.value)} rows={2} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#14532d]" />
+            </label>
+          )}
+          {mode === 'deny' && (
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-slate-600">Denial code</span>
+              <select value={denialCode} onChange={(e) => setDenialCode(e.target.value)} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm">
+                {DENIAL_CODES.map((c) => <option key={c} value={c}>{pretty(c)}</option>)}
+              </select>
+            </label>
+          )}
+          <label className="block">
+            <span className="mb-1 flex items-center justify-between text-xs font-medium text-slate-600">
+              <span>{mode === 'deny' ? 'Denial reason' : 'Reasoning'} <span className="text-red-500">*</span></span>
+              <span className="text-slate-400">{(mode === 'deny' ? denialReason : reasoning).trim().length}/{mode === 'deny' ? 50 : 25} min</span>
+            </span>
+            <textarea
+              value={mode === 'deny' ? denialReason : reasoning}
+              onChange={(e) => (mode === 'deny' ? setDenialReason(e.target.value) : setReasoning(e.target.value))}
+              rows={4}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#14532d]"
+            />
+          </label>
+          {err && <p className="text-sm font-medium text-red-600">{err}</p>}
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+          <button onClick={submit} disabled={!ready || busy} className={`rounded-lg px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-40 ${mode === 'deny' ? 'bg-red-600' : mode === 'approve' ? 'bg-green-600' : 'bg-[#14532d]'}`}>
+            {busy ? 'Working…' : title}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function Field({ label, value, className = '' }: { label: string; value: ReactNode; className?: string }) {
   return (
     <div>
@@ -459,7 +601,25 @@ function Field({ label, value, className = '' }: { label: string; value: ReactNo
   )
 }
 
-function StatusCell({ status, blockingPersona }: { status?: string | null; blockingPersona?: string | null }) {
+function StatusCell({ status, blockingPersona, escalatedByName, escalatedAt }: {
+  status?: string | null; blockingPersona?: string | null
+  escalatedByName?: string | null; escalatedAt?: string | null
+}) {
+  // When the loan is escalated, the UW status reflects the pending senior review.
+  if (escalatedByName != null || escalatedAt != null) {
+    return (
+      <div className="px-4 py-3">
+        <div className="text-[10px] uppercase tracking-wide text-slate-400">Current UW Status</div>
+        <div className="mt-1 flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-full bg-amber-500" />
+          <span className="text-sm font-bold text-amber-700">Escalated — Awaiting Senior Review</span>
+        </div>
+        <div className="mt-1 text-[11px] text-slate-400">
+          {escalatedByName ? `Escalated by ${escalatedByName}` : 'Escalated'}{escalatedAt ? ` · ${new Date(escalatedAt).toLocaleDateString()}` : ''}
+        </div>
+      </div>
+    )
+  }
   const s = (status ?? '').toLowerCase()
   let dot = 'bg-blue-500', text = 'text-blue-700'
   if (/suspend|block/.test(s)) { dot = 'bg-red-500'; text = 'text-red-700' }
@@ -725,7 +885,7 @@ function ActionPanel({ cond, fallbackAction, blockingPersona, blockingCount, rol
     ['add_note', '📝 Add a note'],
   ]
   const approveDisabled = blockingCount > 0
-  const denyDisabled = role === 'underwriter' || role === 'viewer'
+  const denyDisabled = ([ROLES.UNDERWRITER, ROLES.VIEWER] as string[]).includes(role)
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-3">
       <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Recommended</div>

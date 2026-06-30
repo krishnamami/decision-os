@@ -149,6 +149,14 @@ export interface LoanDetail {
   status: LoanStatus
   urgency: Urgency
   blocking_persona: string | null
+  // Assignment + escalation context (from loan_detail JOINs; null when not escalated).
+  assigned_to?: string | null
+  assigned_to_name?: string | null
+  escalated_by?: string | null
+  escalated_by_name?: string | null
+  escalated_at?: string | null
+  escalation_reason?: string | null
+  escalation_category?: string | null
   decisions: DecisionDetail[]
   documents: Array<Record<string, unknown>>
   graph_edges: Array<Record<string, unknown>>
