@@ -28,11 +28,12 @@ smallest blast radius). None block the QA-C fix.
     `set_tenant('accord_admin')` sentinel.
   - Requires an isolation test + staged deploy (like QA-C Steps 4–5).
 
-- [ ] **`*_write` INSERT policies use `WITH CHECK (true)`.** Inserts are not
-  tenant-constrained at the DB layer — the app supplies `tenant_id` from the JWT,
-  but a compromised/buggy caller could insert rows for another tenant. Defense-in-
-  depth: tighten the `*_write` INSERT policies to
-  `WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true))`.
+- [x] **`*_write` INSERT policies use `WITH CHECK (true)`.** — DONE 2026-07-01
+  (`tighten_insert_with_check.sql`). The 16 tenant-scoped `*_write` INSERT policies
+  now enforce `(tenant_id)::text = current_setting('app.tenant_id', true) OR
+  = 'accord_admin'`; verified own-tenant insert succeeds and cross-tenant insert is
+  rejected by RLS. `catalogue_staging_insert` intentionally left `WITH CHECK (true)`
+  (shared, no `tenant_id`).
 
 - [ ] **Migrate secrets to AWS Secrets Manager.** `DATABASE_URL`,
   `ACCORD_DATABASE_URL`, and `JWT_SECRET` are plaintext environment variables in
