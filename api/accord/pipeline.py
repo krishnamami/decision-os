@@ -1499,6 +1499,15 @@ async def resolve_applicable_rules(conn, tenant_id: str, application_id: str, at
     return {"rule_version_id": None, "version": None, "rules": {}, "source": "none", "reason": "No rules configured"}
 
 
+# AUS recommendation (loan_terms.aus_findings.recommendation) -> display label.
+_AUS_RESULT_LABELS = {
+    "approve_eligible":   "Approve/Eligible",
+    "refer_with_caution": "Refer with Caution",
+    "out_of_scope":       "Out of Scope",
+    "approve_ineligible": "Approve/Ineligible",
+}
+
+
 @router.get("/loans/{application_id}")
 async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_id)) -> dict:
     _require_db()
@@ -1706,11 +1715,22 @@ async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_i
     }
     full_name = ap.get("full_name") or e.get("application_id") or "The borrower"
 
+    # Surface fields the frontend reads at top level but the payload omitted.
+    # loan_purpose lives in loan_terms.urla (applications.loan_purpose is often
+    # NULL); the AUS recommendation lives in loan_terms.aus_findings.
+    loan_purpose = (loan_terms.get("urla") or {}).get("loan_purpose") or ap.get("loan_purpose")
+    _aus_rec = (loan_terms.get("aus_findings") or {}).get("recommendation")
+    aus_result = None
+    if _aus_rec:
+        aus_result = _AUS_RESULT_LABELS.get(_aus_rec) or _aus_rec.replace("_", " ").title()
+
     return {
         "application_id": application_id,
         "borrower": _borrower_block(ap, borrower, e, loan_terms),
         "borrower_email": ap.get("email"),
         "loan_number": ap.get("loan_number"),
+        "loan_purpose": loan_purpose,
+        "aus_result": aus_result,
         "metrics": metrics_out,
         **escalation_ctx,
         "qm": _qm_status(e, loan_terms),
