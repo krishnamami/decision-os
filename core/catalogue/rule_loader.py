@@ -73,6 +73,13 @@ SAFE_DEFAULTS = {
     'se_income_years_required':        2,
     'se_declining_use_lower_year':     True,
     'employment_history_months_required': 24,   # INC-B (Fannie B3-3.1-01)
+    # Documentation-evidence confidence thresholds (Fannie B3-3.1-01). Also seeded
+    # in agency_guidelines; kept here as the RULE 9 fallback so get_rule returns
+    # them (and the enricher populates income_confidence_min / _floor) even if the
+    # catalogue row is ever deactivated — making the 12 personas' 0.75 fallbacks
+    # fully redundant in the DB path.
+    'income_documentation_confidence_min':   0.75,
+    'income_documentation_confidence_floor': 0.5,
     # INC-E — retirement / SS / asset-depletion / investment (Fannie B3-3.1-09)
     'ss_non_taxable_gross_up_factor':            1.25,
     'ss_continuance_months_required':            36,
