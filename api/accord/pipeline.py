@@ -42,6 +42,11 @@ from ui.explanations import (  # pure logic module — no web/DB deps
 )
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+# Product-API connection. Defaults to DATABASE_URL (edms_admin, RLS bypassed) so
+# this stays INERT until Step 5 sets ACCORD_DATABASE_URL to the non-bypass
+# accord_app role. Isolates the RLS flip to /api/accord/* — legacy /workbench +
+# core stores keep DATABASE_URL unchanged. Rollback = unset one ECS env var.
+ACCORD_DATABASE_URL = os.environ.get("ACCORD_DATABASE_URL", "").strip() or DATABASE_URL
 router = APIRouter(prefix="/api/accord", tags=["accord"])
 
 
@@ -117,8 +122,10 @@ async def _get_pool() -> Any:
     global _pool
     if _pool is None:
         import asyncpg  # type: ignore
+        from core.db.tenant_pool import TenantPool
 
-        _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+        _pool = TenantPool(
+            await asyncpg.create_pool(ACCORD_DATABASE_URL, min_size=1, max_size=5))
     return _pool
 
 

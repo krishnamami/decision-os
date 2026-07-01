@@ -8,6 +8,37 @@ from fastapi import FastAPI
 
 from .deps import Platform, build_default_platform
 from .routes import router
+from core.auth.service import decode_token
+from core.db.tenant_pool import set_tenant, reset_tenant
+
+
+class TenantContextMiddleware:
+    """Set app.tenant_id context from the Bearer JWT for every HTTP request,
+    before any route/DB code runs; reset it after. No token (health/login) or an
+    invalid token => empty tenant => fail-closed. Only the product-API pool
+    (TenantPool over ACCORD_DATABASE_URL) consumes this; legacy pools ignore it."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        tenant = ""
+        for k, v in scope.get("headers") or []:
+            if k == b"authorization":
+                val = v.decode("latin-1")
+                if val.startswith("Bearer "):
+                    try:
+                        tenant = (decode_token(val[7:]) or {}).get("tenant_id") or ""
+                    except Exception:
+                        tenant = ""   # invalid/expired -> fail-closed (route still 401s)
+                break
+        token = set_tenant(tenant)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            reset_tenant(token)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -188,6 +219,8 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # Tenant context for RLS on the product API — must wrap every request (QA-C).
+    app.add_middleware(TenantContextMiddleware)
 
     app.include_router(router)
 
