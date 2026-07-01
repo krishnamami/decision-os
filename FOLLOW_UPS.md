@@ -35,10 +35,11 @@ smallest blast radius). None block the QA-C fix.
   rejected by RLS. `catalogue_staging_insert` intentionally left `WITH CHECK (true)`
   (shared, no `tenant_id`).
 
-- [ ] **Migrate secrets to AWS Secrets Manager.** `DATABASE_URL`,
-  `ACCORD_DATABASE_URL`, and `JWT_SECRET` are plaintext environment variables in
-  the `accord-api` ECS task definition (and visible via CloudTrail on
-  `RegisterTaskDefinition`). Move them to Secrets Manager and reference by ARN in
-  the task-def `secrets` block.
+- [x] **Migrate secrets to AWS Secrets Manager.** — DONE 2026-07-01
+  (`item4_secrets_manager.md`). `DATABASE_URL`, `ACCORD_DATABASE_URL`, `JWT_SECRET`
+  moved to Secrets Manager (`edms/accord-api/*`, us-east-1) and injected via task-def
+  `accord-api:81` `secrets`/`valueFrom`. No IAM change (execution role already covers
+  `edms/*`). Verified: `/health` 200 + cross-tenant check (summit 49 / meridian 16,
+  isolated). Rollback: revert service to `accord-api:80`.
 
 - No other changes needed for QA-C.
