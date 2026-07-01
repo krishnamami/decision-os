@@ -4448,3 +4448,17 @@ examiner-report` — that route exists.)
 them. The `0`-sentinel for DTI/FICO is a data-quality smell in `entity_states` (the durable
 fix is upstream, not the frontend coercion). Yuki Sato's real loan is `APP-SC13-005` (tenant
 summit; the `APP-SC13-085` in the report was the applicant id `APL-SC13-005` conflated).
+
+---
+
+## QA-C — RLS tenant isolation enforced — 2026-06-30
+
+**COMPLETE.** `edms_admin`'s `BYPASSRLS` had made all 58 RLS policies (28 tables) inert — real tenant data was not isolated at the DB layer. Fixed by connecting the product API as a non-bypass role, staged in 5 steps.
+
+- **Step 1 (DB role):** `accord_app` given LOGIN + password (NOBYPASSRLS); full DML grants + ALTER DEFAULT PRIVILEGES; REVOKE I/U/D on `regulatory_rules`/`agency_guidelines` (governance boundary kept).
+- **Step 2 (API code, commit 50e2d24):** `core/db/tenant_pool.py` (`TenantPool` + `app.tenant_id` contextvar, `set_config(...,is_local=true)` = SET LOCAL on every acquire/fetch/execute); `TenantContextMiddleware` in `api/main.py` sets the tenant from the JWT per request; `api/accord/pipeline.py` routes the product pool through `ACCORD_DATABASE_URL` (defaults to `DATABASE_URL` → inert until the flip). Covers all 127 acquire sites, zero call-site edits.
+- **Step 3 (RLS policies, 43 ALTERs in one txn):** 16 read + 4 UPDATE + `catalogue_staging_approve` swapped `CURRENT_USER='edms_admin'` → `accord_admin` sentinel; the 4 UPDATE policies gained tenant fallback; 21 `vw_*` views + `document_graph` set `security_invoker=true` (closed the RLS-through-views bypass).
+- **Step 4 (isolation test as accord_app):** throwaway tenant `qa_c_test`; all 5 checks PASS (tenant scoping, accord_admin sentinel, 4 UPDATE paths, security_invoker view); cleanup left 0 rows.
+- **Step 5 (the flip):** deployed Step 2 code inert → baseline verify PASS → registered task-def `accord-api:80` with `ACCORD_DATABASE_URL=accord_app` → post-flip cross-tenant API verify ALL PASS (summit 49 / meridian 16, disjoint sets, cross-tenant 404, own-loan 200).
+
+**Live state:** `/api/accord/*` connects as `accord_app` (RLS enforced) on task-def `:80`. Legacy `/workbench` + `core/*` pools still `edms_admin` (deliberate — smallest blast radius). **Rollback:** `aws ecs update-service --cluster accord --service accord-api --task-definition accord-api:79 --force-new-deployment` (reverts to edms_admin; code stays inert). Audit scripts: `scripts/migrations/qa_c/`. Residual follow-ups tracked in `FOLLOW_UPS.md`.
