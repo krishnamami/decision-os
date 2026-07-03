@@ -258,7 +258,12 @@ function EmailPreview({ borrowerFirstName, borrowerEmail, appId, items, message,
             {items.map((it) => <li key={it}>{it}</li>)}
           </ul>
 
-          {message && <p className="mt-3 whitespace-pre-line italic text-slate-600">{message}</p>}
+          {message && (
+            <div className="mt-3">
+              <p className="font-semibold text-slate-700">Message from your underwriter:</p>
+              <p className="mt-1 whitespace-pre-line text-slate-700">{message}</p>
+            </div>
+          )}
 
           {dueDatePretty && (
             <p className="mt-3">Please upload these documents by <span className="font-semibold">{dueDatePretty}</span>.</p>
