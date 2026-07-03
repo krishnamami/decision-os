@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { fetchMyQueue, simulateResponse, type MyQueueResponse, type QueueCard } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import Modal from '../components/Modal'
+import RequestDocsModal from '../components/modals/RequestDocsModal'
 
 function money(v: number | null) {
   if (v == null) return '—'
@@ -50,6 +51,7 @@ export default function MyQueue({
   const [toast, setToast] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
   const [simCard, setSimCard] = useState<QueueCard | null>(null)
+  const [docsCard, setDocsCard] = useState<QueueCard | null>(null)
   const [activeFilter, setActiveFilter] = useState<'active' | 'pending' | 'decided' | null>(null)
 
   const act = (msg: string) => {
@@ -140,7 +142,7 @@ export default function MyQueue({
         ) : activeFilter === 'active' ? (
           <div className="space-y-3">
             {data.active.map((c) => (
-              <ActionCard key={c.application_id} c={c} canAct={canAct} onReview={() => navigate(`/pipeline/${c.application_id}`)} onAct={act} />
+              <ActionCard key={c.application_id} c={c} canAct={canAct} onReview={() => navigate(`/pipeline/${c.application_id}`)} onAct={act} onRequestDocs={() => setDocsCard(c)} />
             ))}
           </div>
         ) : activeFilter === 'pending' ? (
@@ -165,7 +167,7 @@ export default function MyQueue({
           ) : (
             <div className="mb-8 space-y-3">
               {data.active.map((c) => (
-                <ActionCard key={c.application_id} c={c} canAct={canAct} onReview={() => navigate(`/pipeline/${c.application_id}`)} onAct={act} />
+                <ActionCard key={c.application_id} c={c} canAct={canAct} onReview={() => navigate(`/pipeline/${c.application_id}`)} onAct={act} onRequestDocs={() => setDocsCard(c)} />
               ))}
             </div>
           )}
@@ -201,6 +203,14 @@ export default function MyQueue({
       )}
 
       {simCard && <SimulateResponseModal card={simCard} onClose={() => setSimCard(null)} onDone={afterSimulate} />}
+      {docsCard && (
+        <RequestDocsModal
+          applicationId={docsCard.application_id}
+          borrowerName={docsCard.borrower_name}
+          onClose={() => setDocsCard(null)}
+          onDone={(msg) => { setDocsCard(null); act(msg) }}
+        />
+      )}
     </div>
   )
 }
@@ -279,12 +289,13 @@ function CollapsibleHeader({ label, n, open, onToggle }: { label: string; n: num
 }
 
 function ActionCard({
-  c, canAct, onReview, onAct,
+  c, canAct, onReview, onAct, onRequestDocs,
 }: {
   c: QueueCard
   canAct: boolean
   onReview: () => void
   onAct: (m: string) => void
+  onRequestDocs: () => void
 }) {
   const { dot, tag, tagCls } = cardTag(c)
   const internal = c.queue_type === 'internal_request' && c.attention_request
@@ -351,7 +362,7 @@ function ActionCard({
               {c.category === 'fraud' ? (
                 <button onClick={() => onAct('Referred to BSA officer (demo)')} className="rounded-lg border border-amber-200 px-3 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-50">⚠ Refer to BSA</button>
               ) : (
-                <button onClick={() => onAct('Documents requested (demo)')} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">📧 Request docs</button>
+                <button onClick={onRequestDocs} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">📧 Request docs</button>
               )}
             </>
           )}
