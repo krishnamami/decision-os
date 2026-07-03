@@ -1,16 +1,16 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import {
   fetchLoan, fetchConditions, fetchConditionsSummary,
-  fetchSimilarCases, fetchLoanActions, decideLoan, resolveAttentionRequest,
+  fetchSimilarCases, fetchLoanActions, decideLoan, resolveAttentionRequest, createLoanAction,
   type LoanAction, type SimilarCase,
 } from '../../api/client'
 
 // Role identifiers — never hardcode role strings inline.
 const ROLES = { SENIOR_UW: 'senior_uw', ADMIN: 'admin', UW: 'underwriter', PROCESSOR: 'processor', COMPLIANCE: 'compliance' } as const
 const DENIAL_CODES = ['credit', 'income', 'collateral', 'fraud', 'other']
-import type { LoanDetail, InternalRequest } from '../../types/accord'
+import type { LoanDetail, InternalRequest, PendingDocRequest } from '../../types/accord'
 import ActionModal from './ActionModal'
 import RequestDocsModal from '../modals/RequestDocsModal'
 
@@ -196,6 +196,9 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
   const focusRequestId = searchParams.get('request_id')
   const [resolvedReqs, setResolvedReqs] = useState<Set<string>>(new Set())
   const [replyReq, setReplyReq] = useState<InternalRequest | null>(null)
+  const [docsDismissed, setDocsDismissed] = useState<Set<string>>(new Set())
+  const [returnOpen, setReturnOpen] = useState(false)
+  const [newDoc, setNewDoc] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -256,6 +259,59 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
     }
     setTimeout(() => setToast(null), 2500)
   }
+  // ── Concurrent doc-request + escalation (Pattern A) ────────────────────────
+  async function waitForDocs() {
+    try {
+      await decideLoan(applicationId, { action: 'snooze_pending_docs' })
+      setToast("Loan moved to Pending Response — you'll be notified when documents arrive")
+      setTimeout(() => setToast(null), 3000)
+      navigate('/pipeline')
+    } catch {
+      setToast('Could not move the loan — please try again.')
+      setTimeout(() => setToast(null), 2500)
+    }
+  }
+  function actNow(reqs: PendingDocRequest[]) {
+    // Proceed with available info: dismiss the banner + log the decision in the audit trail.
+    setDocsDismissed((prev) => { const n = new Set(prev); reqs.forEach((r) => n.add(r.comm_id)); return n })
+    createLoanAction(applicationId, {
+      action_type: 'add_note',
+      reason_text: 'Decision made with doc request outstanding',
+    }).catch(() => undefined)
+    setToast('Proceeding — noted in the audit trail')
+    setTimeout(() => setToast(null), 2500)
+  }
+  async function returnToUw(message: string) {
+    try {
+      await decideLoan(applicationId, { action: 'return_to_uw', note: message })
+      setReturnOpen(false)
+      setToast('Returned to the underwriter')
+      setTimeout(() => setToast(null), 2500)
+      navigate('/pipeline')
+    } catch {
+      setToast('Could not return the loan — please try again.')
+      setTimeout(() => setToast(null), 2500)
+    }
+  }
+
+  // Auto-refresh documents: poll every 30s; if a new doc arrives, refresh + badge.
+  const docCountRef = useRef(0)
+  useEffect(() => { docCountRef.current = loan?.documents?.length ?? 0 }, [loan])
+  const loaded = !!loan
+  useEffect(() => {
+    if (!loaded) return
+    const id = setInterval(() => {
+      fetchLoan(applicationId)
+        .then((fresh) => {
+          if ((fresh.documents?.length ?? 0) > docCountRef.current) {
+            setNewDoc(true)
+            setLoan(fresh)
+          }
+        })
+        .catch(() => undefined)
+    }, 30000)
+    return () => clearInterval(id)
+  }, [applicationId, loaded])
   function toggle(id: string) {
     setExpanded((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   }
@@ -413,6 +469,46 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
           <div className="mt-1.5 text-[11px] text-amber-700">{loan.escalated_by_name ?? 'The underwriter'} is waiting for your review.</div>
         </div>
       )}
+
+      {/* ── NEW DOCUMENT BADGE (borrower uploaded; auto-refreshed) ────────── */}
+      {newDoc && (
+        <div className="mx-5 mt-4 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm">
+          <span className="font-semibold text-blue-800">📄 New document uploaded</span>
+          <span className="text-blue-700">The document list has been refreshed.</span>
+          <button onClick={() => setNewDoc(false)} className="ml-auto rounded px-1.5 text-blue-600 hover:text-blue-800" title="Dismiss">✕</button>
+        </div>
+      )}
+
+      {/* ── DOCS PENDING BANNER (open doc requests on this loan) ──────────── */}
+      {(() => {
+        const pd = (loan.pending_doc_requests ?? []).filter((r) => !docsDismissed.has(r.comm_id))
+        if (pd.length === 0) return null
+        return (
+          <div className="mx-5 mt-4 rounded-lg border border-amber-300 border-l-4 border-l-amber-500 bg-amber-50 p-4">
+            {pd.map((r) => (
+              <div key={r.comm_id} className="mb-2 last:mb-0">
+                <div className="text-sm font-bold text-amber-800">📎 Document request pending</div>
+                <div className="mt-1 text-[13px] text-amber-900">
+                  {r.requested_by_name ?? 'A teammate'} requested the following from {loan.borrower?.name ?? 'the borrower'}
+                  {r.requested_at ? ` on ${shortDate(r.requested_at)}` : ''}:
+                </div>
+                <ul className="mt-1 list-disc pl-5 text-[13px] text-amber-900">
+                  {(r.document_types ?? []).map((d) => <li key={d}>{d}</li>)}
+                </ul>
+                {r.message && <p className="mt-1 text-[12px] text-amber-800">{r.message}</p>}
+                <div className="mt-1 text-[11px] text-amber-700">
+                  {r.due_date ? `Due: ${shortDate(r.due_date)} · ` : ''}Status: Awaiting borrower
+                </div>
+              </div>
+            ))}
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button onClick={waitForDocs} className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-500">Wait for docs</button>
+              <button onClick={() => actNow(pd)} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100">Act now</button>
+              <button onClick={() => setReturnOpen(true)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Return to UW</button>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* ── INTERNAL REQUEST BANNER (pending request directed at me) ──────── */}
       {(loan.internal_requests ?? [])
@@ -580,6 +676,9 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
           onSend={(reply) => resolveRequest(replyReq, reply)}
         />
       )}
+      {returnOpen && (
+        <ReturnToUwModal onClose={() => setReturnOpen(false)} onSend={(msg) => returnToUw(msg)} />
+      )}
       {toast && (
         <div className="fixed bottom-16 left-1/2 z-40 -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>
       )}
@@ -684,6 +783,27 @@ function DecideModal({ mode, loan, onClose, onDone }: {
 
 // RequestDocsModal + its helpers now live in ../modals/RequestDocsModal.tsx
 // (shared with the UW queue cards in pages/MyQueue.tsx).
+
+// Return-to-UW modal — prefilled message; reassigns the loan to the original UW.
+function ReturnToUwModal({ onClose, onSend }: { onClose: () => void; onSend: (msg: string) => void }) {
+  const [text, setText] = useState('Please wait for borrower documents before escalating.')
+  const [busy, setBusy] = useState(false)
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="text-base font-bold text-slate-900">Return to underwriter</div>
+        <div className="mt-1 text-[12px] text-slate-500">Hands the loan back to the underwriter who escalated it, with a note.</div>
+        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4} autoFocus className="mt-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#14532d]" />
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+          <button onClick={() => { setBusy(true); onSend(text.trim()) }} disabled={busy || text.trim().length === 0} className="rounded-lg bg-[#14532d] px-4 py-1.5 text-sm font-semibold text-white hover:bg-[#0f3d22] disabled:opacity-40">
+            {busy ? 'Returning…' : 'Return to UW'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 // Simple reply modal — textarea → send reply and resolve the request.
 function RequestReplyModal({ request, onClose, onSend }: {

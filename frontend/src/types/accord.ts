@@ -110,6 +110,17 @@ export interface RainCheck {
   protection_reason: string
 }
 
+export interface PendingDocRequest {
+  comm_id: string
+  requested_by: string | null
+  requested_by_name: string | null
+  document_types: string[]
+  message: string | null
+  requested_at: string | null
+  due_date: string | null
+  send_to_email: string | null
+}
+
 export interface InternalRequest {
   request_id: string
   from: string
@@ -167,6 +178,7 @@ export interface LoanDetail {
   escalation_reason?: string | null
   escalation_category?: string | null
   internal_requests?: InternalRequest[]
+  pending_doc_requests?: PendingDocRequest[]
   decisions: DecisionDetail[]
   documents: Array<Record<string, unknown>>
   graph_edges: Array<Record<string, unknown>>

@@ -131,7 +131,7 @@ export async function fetchMe(): Promise<{ user: AuthUser; tenant: AuthTenant; p
 }
 
 export interface DecideInput {
-  action: 'approve' | 'deny' | 'override' | 'escalate'
+  action: 'approve' | 'deny' | 'override' | 'escalate' | 'snooze_pending_docs' | 'return_to_uw'
   decision_id?: string
   reasoning?: string
   conditions?: string
@@ -169,6 +169,7 @@ export interface QueueCard {
   // Pending Response sub-type: waiting on borrower docs vs the senior UW decision.
   awaiting?: 'borrower' | 'senior'
   senior_name?: string | null
+  requested_by_name?: string | null
 }
 export interface MyQueueResponse {
   user: { name: string; role: string }

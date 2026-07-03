@@ -624,10 +624,11 @@ async def my_queue(
         attn = {r["application_id"]: dict(r) for r in attn_rows}
         comm_rows = await conn.fetch(
             """
-            SELECT DISTINCT ON (application_id) application_id, items_requested, due_date, created_at, recipient_email, responded_at
-            FROM communications
-            WHERE tenant_id = $1 AND application_id = ANY($2) AND direction = 'outbound'
-            ORDER BY application_id, created_at DESC
+            SELECT DISTINCT ON (c.application_id) c.application_id, c.items_requested, c.due_date,
+                   c.created_at, c.recipient_email, c.responded_at, u.name AS requested_by_name
+            FROM communications c LEFT JOIN users u ON u.user_id = c.from_user_id
+            WHERE c.tenant_id = $1 AND c.application_id = ANY($2) AND c.direction = 'outbound'
+            ORDER BY c.application_id, c.created_at DESC
             """,
             tenant_id, app_ids,
         )
@@ -724,6 +725,7 @@ async def my_queue(
                 card["sent"] = c["created_at"].isoformat() if c.get("created_at") else None
                 card["due_date"] = c["due_date"].isoformat() if c.get("due_date") else None
                 card["recipient_email"] = c.get("recipient_email")
+                card["requested_by_name"] = c.get("requested_by_name")
             card["awaiting"] = "borrower"
             pending.append(card)
         elif st in ("decided", "funded"):
@@ -954,6 +956,39 @@ async def decide(body: DecideBody, user: dict = Depends(get_current_user)) -> di
                 await conn.execute("UPDATE entity_states SET assigned_to=$1, current_stage='decide' WHERE application_id=$2 AND tenant_id=$3", senior, app, tid)
                 await conn.execute("INSERT INTO notifications (tenant_id,user_id,type,title,application_id) VALUES ($1,$2,'escalation',$3,$4)", tid, senior, "Loan escalated to you for senior review", app)
             title = "Escalated to Senior UW"
+        elif body.action == "snooze_pending_docs":
+            # Wait-for-docs: park the loan in Pending Response until the borrower
+            # uploads (the upload flow flips it back to active + notifies). Reuses
+            # the pending_borrower mechanism — no new column.
+            await conn.execute(
+                "UPDATE loan_assignments SET status='pending_borrower' "
+                "WHERE application_id=$1 AND tenant_id=$2 AND assigned_to=$3", app, tid, uid)
+            await conn.execute(
+                "UPDATE entity_states SET loan_status='pending_borrower' WHERE application_id=$1 AND tenant_id=$2", app, tid)
+            title = "Loan moved to Pending Response — awaiting borrower documents"
+        elif body.action == "return_to_uw":
+            # Hand the loan back to the original underwriter (who escalated it).
+            arow = await conn.fetchrow(
+                "SELECT previous_assignee, assigned_by FROM loan_assignments "
+                "WHERE application_id=$1 AND tenant_id=$2 AND assigned_to=$3 "
+                "ORDER BY assigned_at DESC LIMIT 1", app, tid, uid)
+            target = arow and (arow["previous_assignee"] or arow["assigned_by"])
+            if not target:
+                raise HTTPException(422, "No original underwriter to return this loan to")
+            note = (body.note or body.reasoning
+                    or "Please wait for borrower documents before escalating.").strip()
+            await conn.execute(
+                "UPDATE loan_assignments SET previous_assignee=assigned_to, assigned_to=$1, "
+                "assigned_by=$2, status='active', handoff_notes=$3, assigned_at=NOW() "
+                "WHERE application_id=$4 AND tenant_id=$5 AND assigned_to=$6",
+                target, uid, note, app, tid, uid)
+            await conn.execute(
+                "UPDATE entity_states SET assigned_to=$1 WHERE application_id=$2 AND tenant_id=$3", target, app, tid)
+            await conn.execute(
+                "INSERT INTO notifications (tenant_id,user_id,type,title,application_id) "
+                "VALUES ($1,$2,'returned_to_uw',$3,$4)", tid, target,
+                "Loan returned to you — please wait for borrower documents", app)
+            title = "Returned to the underwriter"
         else:
             raise HTTPException(400, f"Unknown action: {body.action}")
 
@@ -1123,7 +1158,7 @@ async def simulate_response(body: dict = Body(...), user: dict = Depends(get_cur
     pool = await _get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT comm_id FROM communications WHERE application_id=$1 AND tenant_id=$2 AND direction='outbound' "
+            "SELECT comm_id, from_user_id FROM communications WHERE application_id=$1 AND tenant_id=$2 AND direction='outbound' "
             "ORDER BY created_at DESC LIMIT 1", app, tid,
         )
         if row:
@@ -1147,6 +1182,14 @@ async def simulate_response(body: dict = Body(...), user: dict = Depends(get_cur
                 "INSERT INTO notifications (tenant_id, user_id, type, title, application_id) "
                 "VALUES ($1,$2,'borrower_responded',$3,$4)",
                 tid, assignee, f"Borrower uploaded {docs_text}", app,
+            )
+        # Also notify the ORIGINAL doc requester, if different from the assignee.
+        requester = row["from_user_id"] if row else None
+        if requester and str(requester) != str(assignee):
+            await conn.execute(
+                "INSERT INTO notifications (tenant_id, user_id, type, title, application_id) "
+                "VALUES ($1,$2,'borrower_responded',$3,$4)",
+                tid, requester, f"Borrower uploaded {docs_text} (your request)", app,
             )
     return {"ok": True}
 
@@ -1667,6 +1710,19 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
             """,
             application_id, tenant_id, UUID(str(user["user_id"])),
         )
+        # Open (unfulfilled) document requests on this loan — so a senior UW who
+        # owns it via escalation still sees the pending borrower-doc context.
+        pending_doc_rows = await conn.fetch(
+            """
+            SELECT c.comm_id, c.from_user_id, c.items_requested, c.body, c.created_at,
+                   c.due_date, c.recipient_email, COALESCE(u.name, 'A teammate') AS requested_by_name
+            FROM communications c LEFT JOIN users u ON u.user_id = c.from_user_id
+            WHERE c.application_id = $1 AND c.tenant_id = $2
+              AND c.type = 'doc_request' AND c.responded_at IS NULL
+            ORDER BY c.created_at DESC
+            """,
+            application_id, tenant_id,
+        )
         doc_rows = await conn.fetch(
             """
             SELECT document_type, document_category, status, confidence_score,
@@ -1831,6 +1887,20 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
         for r in internal_req_rows
     ]
 
+    pending_doc_requests = [
+        {
+            "comm_id": str(r["comm_id"]),
+            "requested_by": str(r["from_user_id"]) if r["from_user_id"] else None,
+            "requested_by_name": r["requested_by_name"],
+            "document_types": _J(r["items_requested"]) or [],
+            "message": r["body"],
+            "requested_at": r["created_at"].isoformat() if r["created_at"] else None,
+            "due_date": r["due_date"].isoformat() if r["due_date"] else None,
+            "send_to_email": r["recipient_email"],
+        }
+        for r in pending_doc_rows
+    ]
+
     return {
         "application_id": application_id,
         "borrower": _borrower_block(ap, borrower, e, loan_terms),
@@ -1841,6 +1911,7 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
         "metrics": metrics_out,
         **escalation_ctx,
         "internal_requests": internal_requests,
+        "pending_doc_requests": pending_doc_requests,
         "qm": _qm_status(e, loan_terms),
         "examiner_readiness": compute_examiner_readiness(decisions, action_rows),
         "rain_check": rain_check,

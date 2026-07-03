@@ -421,7 +421,7 @@ function PendingCard({ c, canAct, onAct, onSimulate, onReceived, onOpen }: {
       <div className="mt-1 text-xs font-medium text-amber-600">
         {senior
           ? `Awaiting Senior UW decision${c.senior_name ? ` · with ${c.senior_name}` : ''}`
-          : 'Awaiting borrower documents'}
+          : `Awaiting borrower documents${c.requested_by_name ? ` · requested by ${c.requested_by_name}` : ''}`}
       </div>
       {!senior && (c.due_date || daysLeft != null) && (
         <div className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-slate-500">
