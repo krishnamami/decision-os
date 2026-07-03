@@ -110,6 +110,15 @@ export interface RainCheck {
   protection_reason: string
 }
 
+export interface InternalRequest {
+  request_id: string
+  from: string
+  from_user_id: string
+  message: string
+  priority: string
+  created_at: string | null
+}
+
 export interface LoanDetail {
   application_id: string
   borrower_email?: string | null
@@ -157,6 +166,7 @@ export interface LoanDetail {
   escalated_at?: string | null
   escalation_reason?: string | null
   escalation_category?: string | null
+  internal_requests?: InternalRequest[]
   decisions: DecisionDetail[]
   documents: Array<Record<string, unknown>>
   graph_edges: Array<Record<string, unknown>>

@@ -615,7 +615,7 @@ async def my_queue(
         decisions = await _page_decisions(conn, tenant_id, app_ids)
         attn_rows = await conn.fetch(
             """
-            SELECT ar.application_id, ar.message, ar.priority, u.name AS from_name
+            SELECT ar.request_id, ar.application_id, ar.message, ar.priority, u.name AS from_name
             FROM attention_requests ar LEFT JOIN users u ON u.user_id = ar.from_user_id
             WHERE ar.to_user_id = $1 AND ar.status = 'open'
             """,
@@ -695,7 +695,7 @@ async def my_queue(
             "ai_finding": ai["ai_finding"],
             "ai_data_sources": ai["ai_data_sources"],
             "ai_recommendation": ai["ai_recommendation"],
-            "attention_request": ({"from": a["from_name"], "message": a["message"], "priority": a["priority"]} if a else None),
+            "attention_request": ({"request_id": str(a["request_id"]), "from": a["from_name"], "message": a["message"], "priority": a["priority"]} if a else None),
             "senior_review": app in sr_apps,
         }
         if st == "pending_borrower":
@@ -720,7 +720,7 @@ async def my_queue(
             "category": "other", "sla_days": 5,
             "days_in_queue": None, "rate_lock_days": None, "urgency": "urgent" if a["priority"] == "urgent" else "normal",
             "ai_finding": "Internal review requested", "ai_data_sources": "", "ai_recommendation": "",
-            "attention_request": {"from": a["from_name"], "message": a["message"], "priority": a["priority"]},
+            "attention_request": {"request_id": str(a["request_id"]), "from": a["from_name"], "message": a["message"], "priority": a["priority"]},
         })
 
     active.sort(key=lambda c: (0 if c["urgency"] == "urgent" else 1, -(c["days_in_queue"] or 0)))
@@ -1135,6 +1135,51 @@ async def create_attention(body: AttentionBody, user: dict = Depends(get_current
     return {"ok": True}
 
 
+class ResolveRequestBody(BaseModel):
+    reply: Optional[str] = None
+
+
+@router.post("/loans/{application_id}/attention-requests/{request_id}/resolve")
+async def resolve_attention_request(
+    application_id: str, request_id: str, body: ResolveRequestBody,
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Resolve an internal review request directed at the caller. An optional reply
+    is stored on the request and sent back to the requester as a notification. Only
+    the request's to_user_id may resolve it — cross-user resolve is rejected."""
+    _require_db()
+    tid, uid = user["tenant_id"], UUID(str(user["user_id"]))
+    try:
+        rid = UUID(request_id)
+    except ValueError:
+        raise HTTPException(400, "Invalid request_id")
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT from_user_id, to_user_id FROM attention_requests "
+            "WHERE request_id=$1 AND tenant_id=$2 AND application_id=$3",
+            rid, tid, application_id,
+        )
+        if row is None:
+            raise HTTPException(404, "Request not found")
+        if str(row["to_user_id"]) != str(uid):
+            raise HTTPException(403, "Only the request recipient can resolve it")
+        reply = (body.reply or "").strip() or None
+        await conn.execute(
+            "UPDATE attention_requests SET status='resolved', completed_at=NOW(), response=$1 "
+            "WHERE request_id=$2 AND tenant_id=$3 AND to_user_id=$4",
+            reply, rid, tid, uid,
+        )
+        me = await conn.fetchval("SELECT name FROM users WHERE user_id=$1", uid) or "A teammate"
+        title = f"{me} resolved your review request" + (f": {reply}" if reply else "")
+        await conn.execute(
+            "INSERT INTO notifications (tenant_id, user_id, type, title, application_id) "
+            "VALUES ($1,$2,'attention_resolved',$3,$4)",
+            tid, row["from_user_id"], title, application_id,
+        )
+    return {"ok": True}
+
+
 @router.get("/loans/{application_id}/notes")
 async def get_notes(application_id: str, user: dict = Depends(get_current_user)) -> dict:
     _require_db()
@@ -1509,8 +1554,9 @@ _AUS_RESULT_LABELS = {
 
 
 @router.get("/loans/{application_id}")
-async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_id)) -> dict:
+async def loan_detail(application_id: str, user: dict = Depends(get_current_user)) -> dict:
     _require_db()
+    tenant_id = user["tenant_id"]
     pool = await _get_pool()
     async with pool.acquire() as conn:
         entity = await conn.fetchrow(
@@ -1571,6 +1617,19 @@ async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_i
             ORDER BY performed_at DESC LIMIT 1
             """,
             application_id, tenant_id,
+        )
+        # Pending internal review requests directed AT the caller (banner source).
+        internal_req_rows = await conn.fetch(
+            """
+            SELECT ar.request_id, ar.message, ar.priority, ar.created_at, ar.from_user_id,
+                   COALESCE(uf.name, 'A teammate') AS from_name
+            FROM attention_requests ar
+            LEFT JOIN users uf ON uf.user_id = ar.from_user_id
+            WHERE ar.application_id = $1 AND ar.tenant_id = $2
+              AND ar.to_user_id = $3 AND ar.status = 'open'
+            ORDER BY ar.created_at DESC
+            """,
+            application_id, tenant_id, UUID(str(user["user_id"])),
         )
         doc_rows = await conn.fetch(
             """
@@ -1724,6 +1783,18 @@ async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_i
     if _aus_rec:
         aus_result = _AUS_RESULT_LABELS.get(_aus_rec) or _aus_rec.replace("_", " ").title()
 
+    internal_requests = [
+        {
+            "request_id": str(r["request_id"]),
+            "from": r["from_name"],
+            "from_user_id": str(r["from_user_id"]),
+            "message": r["message"],
+            "priority": r["priority"],
+            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+        }
+        for r in internal_req_rows
+    ]
+
     return {
         "application_id": application_id,
         "borrower": _borrower_block(ap, borrower, e, loan_terms),
@@ -1733,6 +1804,7 @@ async def loan_detail(application_id: str, tenant_id: str = Depends(get_tenant_i
         "aus_result": aus_result,
         "metrics": metrics_out,
         **escalation_ctx,
+        "internal_requests": internal_requests,
         "qm": _qm_status(e, loan_terms),
         "examiner_readiness": compute_examiner_readiness(decisions, action_rows),
         "rain_check": rain_check,

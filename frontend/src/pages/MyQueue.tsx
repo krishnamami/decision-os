@@ -142,7 +142,7 @@ export default function MyQueue({
         ) : activeFilter === 'active' ? (
           <div className="space-y-3">
             {data.active.map((c) => (
-              <ActionCard key={c.application_id} c={c} canAct={canAct} onReview={() => navigate(`/pipeline/${c.application_id}`)} onAct={act} onRequestDocs={() => setDocsCard(c)} />
+              <ActionCard key={c.application_id} c={c} canAct={canAct} onReview={() => navigate(`/pipeline/${c.application_id}${c.attention_request ? `?request_id=${c.attention_request.request_id}` : ''}`)} onAct={act} onRequestDocs={() => setDocsCard(c)} />
             ))}
           </div>
         ) : activeFilter === 'pending' ? (
@@ -167,7 +167,7 @@ export default function MyQueue({
           ) : (
             <div className="mb-8 space-y-3">
               {data.active.map((c) => (
-                <ActionCard key={c.application_id} c={c} canAct={canAct} onReview={() => navigate(`/pipeline/${c.application_id}`)} onAct={act} onRequestDocs={() => setDocsCard(c)} />
+                <ActionCard key={c.application_id} c={c} canAct={canAct} onReview={() => navigate(`/pipeline/${c.application_id}${c.attention_request ? `?request_id=${c.attention_request.request_id}` : ''}`)} onAct={act} onRequestDocs={() => setDocsCard(c)} />
               ))}
             </div>
           )}

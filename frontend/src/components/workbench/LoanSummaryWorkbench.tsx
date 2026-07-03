@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import {
   fetchLoan, fetchConditions, fetchConditionsSummary,
-  fetchSimilarCases, fetchLoanActions, decideLoan,
+  fetchSimilarCases, fetchLoanActions, decideLoan, resolveAttentionRequest,
   type LoanAction, type SimilarCase,
 } from '../../api/client'
 
 // Role identifiers — never hardcode role strings inline.
 const ROLES = { SENIOR_UW: 'senior_uw', ADMIN: 'admin', UW: 'underwriter', PROCESSOR: 'processor', COMPLIANCE: 'compliance' } as const
 const DENIAL_CODES = ['credit', 'income', 'collateral', 'fraud', 'other']
-import type { LoanDetail } from '../../types/accord'
+import type { LoanDetail, InternalRequest } from '../../types/accord'
 import ActionModal from './ActionModal'
 import RequestDocsModal from '../modals/RequestDocsModal'
 
@@ -78,6 +78,21 @@ function pct(n: number | null | undefined): string {
 function pretty(s?: string | null): string {
   if (!s) return DASH
   return s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+}
+// Relative "time ago" for the internal-request banner. The backend sends a naive
+// UTC timestamp (isoformat, no offset), so treat a tz-less string as UTC.
+function timeAgo(iso?: string | null): string {
+  if (!iso) return ''
+  const ms = new Date(/[Z+]/.test(iso) ? iso : `${iso}Z`).getTime()
+  if (isNaN(ms)) return ''
+  const secs = Math.max(0, Math.floor((Date.now() - ms) / 1000))
+  if (secs < 60) return 'just now'
+  const mins = Math.floor(secs / 60)
+  if (mins < 60) return `${mins} min ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`
+  const days = Math.floor(hrs / 24)
+  return `${days} day${days === 1 ? '' : 's'} ago`
 }
 function shortDate(iso?: string | null): string {
   if (!iso) return DASH
@@ -177,6 +192,10 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
   // The two never share a modal component.
   const [showRequestDocsModal, setShowRequestDocsModal] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+  const [searchParams] = useSearchParams()
+  const focusRequestId = searchParams.get('request_id')
+  const [resolvedReqs, setResolvedReqs] = useState<Set<string>>(new Set())
+  const [replyReq, setReplyReq] = useState<InternalRequest | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -223,6 +242,19 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
   function openAction(t: string) {
     if (t === 'request_documents') { setShowRequestDocsModal(true); return }
     setModalAction(t)
+  }
+  // Resolve an internal review request (optionally with a reply). Hides the
+  // banner locally on success and shows the green confirmation toast.
+  async function resolveRequest(r: InternalRequest, reply?: string) {
+    try {
+      await resolveAttentionRequest(applicationId, r.request_id, reply)
+      setResolvedReqs((prev) => new Set(prev).add(r.request_id))
+      setReplyReq(null)
+      setToast('Request marked as resolved')
+    } catch {
+      setToast('Could not resolve the request — please try again.')
+    }
+    setTimeout(() => setToast(null), 2500)
   }
   function toggle(id: string) {
     setExpanded((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
@@ -382,6 +414,24 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
         </div>
       )}
 
+      {/* ── INTERNAL REQUEST BANNER (pending request directed at me) ──────── */}
+      {(loan.internal_requests ?? [])
+        .filter((r) => !resolvedReqs.has(r.request_id))
+        .sort((a, b) => Number(b.request_id === focusRequestId) - Number(a.request_id === focusRequestId))
+        .map((r) => (
+          <div key={r.request_id} className="mx-5 mt-4 rounded-lg border border-blue-200 border-l-4 border-l-blue-500 bg-blue-50 p-4">
+            <div className="text-sm font-bold text-blue-800">📋 Internal request from {r.from}</div>
+            <p className="mt-1 text-sm text-slate-700">"{r.message}"</p>
+            <div className="mt-1 text-[11px] text-slate-500">
+              Priority: <span className="capitalize">{r.priority}</span> · Received: {timeAgo(r.created_at)}
+            </div>
+            <div className="mt-3 flex gap-2">
+              <button onClick={() => resolveRequest(r)} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-500">Mark resolved</button>
+              <button onClick={() => setReplyReq(r)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Reply</button>
+            </div>
+          </div>
+        ))}
+
       {/* ── SECTION 5 — AI SUMMARY BANNER ───────────────────────────────── */}
       {aiDecision && (
         <div className="mx-5 mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4">
@@ -523,6 +573,13 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
           }}
         />
       )}
+      {replyReq && (
+        <RequestReplyModal
+          request={replyReq}
+          onClose={() => setReplyReq(null)}
+          onSend={(reply) => resolveRequest(replyReq, reply)}
+        />
+      )}
       {toast && (
         <div className="fixed bottom-16 left-1/2 z-40 -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>
       )}
@@ -627,6 +684,40 @@ function DecideModal({ mode, loan, onClose, onDone }: {
 
 // RequestDocsModal + its helpers now live in ../modals/RequestDocsModal.tsx
 // (shared with the UW queue cards in pages/MyQueue.tsx).
+
+// Simple reply modal — textarea → send reply and resolve the request.
+function RequestReplyModal({ request, onClose, onSend }: {
+  request: InternalRequest; onClose: () => void; onSend: (reply: string) => void
+}) {
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="text-base font-bold text-slate-900">Reply to {request.from}</div>
+        <div className="mt-1 text-[12px] italic text-slate-500">"{request.message}"</div>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={4}
+          autoFocus
+          placeholder="Write your reply…"
+          className="mt-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#14532d]"
+        />
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+          <button
+            onClick={() => { setBusy(true); onSend(text.trim()) }}
+            disabled={busy || text.trim().length === 0}
+            className="rounded-lg bg-green-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-green-500 disabled:opacity-40"
+          >
+            {busy ? 'Sending…' : 'Send reply & resolve'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function Field({ label, value, className = '' }: { label: string; value: ReactNode; className?: string }) {
   return (

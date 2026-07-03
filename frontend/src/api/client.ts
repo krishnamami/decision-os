@@ -161,7 +161,7 @@ export interface QueueCard {
   ai_data_sources: string
   ai_recommendation: string
   senior_review?: boolean
-  attention_request: { from: string; message: string; priority: string } | null
+  attention_request: { request_id: string; from: string; message: string; priority: string } | null
   requesting?: string[]
   sent?: string | null
   due_date?: string | null
@@ -271,6 +271,12 @@ export function requestInfo(body: {
 }
 export function simulateResponse(application_id: string, items?: string[]): Promise<{ ok: boolean }> {
   return postJSON('/api/accord/communications/simulate-response', { application_id, items: items ?? [] })
+}
+export function resolveAttentionRequest(appId: string, requestId: string, reply?: string): Promise<{ ok: boolean }> {
+  return postJSON(
+    `/api/accord/loans/${encodeURIComponent(appId)}/attention-requests/${encodeURIComponent(requestId)}/resolve`,
+    reply ? { reply } : {},
+  )
 }
 export function inviteUser(email: string, name: string, role: string): Promise<{ user_id: string; ok: boolean }> {
   return postJSON('/api/accord/users/invite', { email, name, role })
