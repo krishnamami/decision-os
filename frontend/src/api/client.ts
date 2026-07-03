@@ -151,7 +151,7 @@ export interface QueueCard {
   loan_type: string | null
   status: string
   stage: string
-  queue_type: 'action_needed' | 'internal_request' | 'returned'
+  queue_type: 'action_needed' | 'internal_request' | 'returned' | 'escalated'
   category?: 'clean' | 'fraud' | 'income' | 'compliance' | 'other'
   days_in_queue: number | null
   sla_days?: number
@@ -166,6 +166,9 @@ export interface QueueCard {
   sent?: string | null
   due_date?: string | null
   recipient_email?: string | null
+  // Pending Response sub-type: waiting on borrower docs vs the senior UW decision.
+  awaiting?: 'borrower' | 'senior'
+  senior_name?: string | null
 }
 export interface MyQueueResponse {
   user: { name: string; role: string }

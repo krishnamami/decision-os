@@ -63,6 +63,16 @@ export default function MyQueue({
     act('Borrower responded — loan is back in your queue 🟢')
     setReloadKey((k) => k + 1)
   }
+  // "Mark as received" — docs arrived; move the loan back to the active queue.
+  async function markReceived(c: QueueCard) {
+    try {
+      await simulateResponse(c.application_id)
+      act('Marked as received — back in your queue')
+      setReloadKey((k) => k + 1)
+    } catch {
+      act('Could not mark as received — please try again.')
+    }
+  }
 
   useEffect(() => {
     let alive = true
@@ -148,7 +158,7 @@ export default function MyQueue({
         ) : activeFilter === 'pending' ? (
           <div className="space-y-2">
             {data.pending.map((c) => (
-              <PendingCard key={c.application_id} c={c} canAct={canAct} onAct={act} onSimulate={() => setSimCard(c)} />
+              <PendingCard key={c.application_id} c={c} canAct={canAct} onAct={act} onSimulate={() => setSimCard(c)} onReceived={() => markReceived(c)} onOpen={() => navigate(`/pipeline/${c.application_id}`)} />
             ))}
           </div>
         ) : (
@@ -177,9 +187,9 @@ export default function MyQueue({
           {openPending && (
             <div className="mb-8 mt-3 space-y-2">
               {data.pending.map((c) => (
-                <PendingCard key={c.application_id} c={c} canAct={canAct} onAct={act} onSimulate={() => setSimCard(c)} />
+                <PendingCard key={c.application_id} c={c} canAct={canAct} onAct={act} onSimulate={() => setSimCard(c)} onReceived={() => markReceived(c)} onOpen={() => navigate(`/pipeline/${c.application_id}`)} />
               ))}
-              {data.pending.length === 0 && <p className="text-sm text-slate-400">No pending borrower requests.</p>}
+              {data.pending.length === 0 && <p className="text-sm text-slate-400">Nothing pending right now.</p>}
             </div>
           )}
 
@@ -208,7 +218,7 @@ export default function MyQueue({
           applicationId={docsCard.application_id}
           borrowerName={docsCard.borrower_name}
           onClose={() => setDocsCard(null)}
-          onDone={(msg) => { setDocsCard(null); act(msg) }}
+          onDone={() => { setDocsCard(null); act('Document request sent — moved to Pending Response'); setReloadKey((k) => k + 1) }}
         />
       )}
     </div>
@@ -387,33 +397,53 @@ function DecidedRow({ c, onClick }: { c: QueueCard; onClick: () => void }) {
   )
 }
 
-function PendingCard({ c, canAct, onAct, onSimulate }: { c: QueueCard; canAct: boolean; onAct: (m: string) => void; onSimulate: () => void }) {
+function PendingCard({ c, canAct, onAct, onSimulate, onReceived, onOpen }: {
+  c: QueueCard; canAct: boolean; onAct: (m: string) => void
+  onSimulate: () => void; onReceived: () => void; onOpen: () => void
+}) {
+  // Two flavours of "pending": waiting on the borrower's docs, or (for a loan the
+  // UW escalated) waiting on the senior UW's decision.
+  const senior = c.awaiting === 'senior'
   const due = c.due_date ? new Date(c.due_date) : null
   const daysLeft = due ? Math.ceil((due.getTime() - Date.now()) / 86400000) : null
   const overdue = daysLeft != null && daysLeft <= 1
   return (
     <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm">
       <div className="flex flex-wrap items-center gap-x-2">
-        <span>📧</span>
+        <span>{senior ? '⚑' : '📧'}</span>
         <span className="font-semibold text-slate-900">{c.borrower_name}</span>
         <span className="text-slate-400">·</span>
         <span className="text-slate-700">{money(c.loan_amount)}</span>
-        {c.requesting && c.requesting.length > 0 && (
+        {!senior && c.requesting && c.requesting.length > 0 && (
           <span className="text-slate-500">· Requesting: {c.requesting.join(', ')}</span>
         )}
       </div>
-      <div className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-slate-500">
-        {c.due_date && <span>Due: {new Date(c.due_date).toLocaleDateString()}</span>}
-        {daysLeft != null && (
-          <span className={overdue ? 'font-semibold text-red-600' : ''}>
-            · {daysLeft <= 0 ? 'OVERDUE' : `${daysLeft} day${daysLeft === 1 ? '' : 's'} remaining`} {overdue ? '⚠' : ''}
-          </span>
-        )}
+      <div className="mt-1 text-xs font-medium text-amber-600">
+        {senior
+          ? `Awaiting Senior UW decision${c.senior_name ? ` · with ${c.senior_name}` : ''}`
+          : 'Awaiting borrower documents'}
       </div>
+      {!senior && (c.due_date || daysLeft != null) && (
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-slate-500">
+          {c.due_date && <span>Due: {new Date(c.due_date).toLocaleDateString()}</span>}
+          {daysLeft != null && (
+            <span className={overdue ? 'font-semibold text-red-600' : ''}>
+              · {daysLeft <= 0 ? 'OVERDUE' : `${daysLeft} day${daysLeft === 1 ? '' : 's'} remaining`} {overdue ? '⚠' : ''}
+            </span>
+          )}
+        </div>
+      )}
       {canAct && (
-        <div className="mt-2 flex gap-2">
-          <button onClick={onSimulate} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">Simulate response</button>
-          <button onClick={() => onAct('Reminder sent (demo)')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">Send reminder</button>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {senior ? (
+            <button onClick={onOpen} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">View loan</button>
+          ) : (
+            <>
+              <button onClick={onReceived} className="rounded-lg bg-green-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-green-500">Mark as received</button>
+              <button onClick={onSimulate} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">Simulate response</button>
+              <button onClick={() => onAct('Reminder sent (demo)')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">Send reminder</button>
+            </>
+          )}
         </div>
       )}
     </div>

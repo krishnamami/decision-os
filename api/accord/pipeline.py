@@ -655,6 +655,25 @@ async def my_queue(
                 "WHERE es.application_id = ANY($1) AND es.tenant_id = $2",
                 extra_ids, tenant_id,
             )
+        # Loans THIS user escalated that are now awaiting the senior UW's decision.
+        # They were reassigned to the senior (assigned_to != me), so they're absent
+        # from the assigned-loans query above — surface them in Pending Response.
+        esc_rows = await conn.fetch(
+            """
+            SELECT la.application_id, la.assigned_at,
+                   COALESCE(ap.full_name, es.application_id) AS borrower_name,
+                   a.loan_type, es.loan_amount, ut.name AS senior_name
+            FROM loan_assignments la
+            JOIN entity_states es ON es.application_id = la.application_id
+            LEFT JOIN applications a ON a.application_id = la.application_id
+            LEFT JOIN applicants ap ON ap.applicant_id = a.applicant_id
+            LEFT JOIN users ut ON ut.user_id = la.assigned_to
+            WHERE la.assigned_by = $1 AND la.tenant_id = $2
+              AND la.status = 'active' AND la.stage = 'decide' AND la.assigned_to <> $1
+            ORDER BY la.assigned_at DESC
+            """,
+            UUID(str(target_uid)), tenant_id,
+        )
 
     active, pending, decided = [], [], []
     for r in rows:
@@ -705,6 +724,7 @@ async def my_queue(
                 card["sent"] = c["created_at"].isoformat() if c.get("created_at") else None
                 card["due_date"] = c["due_date"].isoformat() if c.get("due_date") else None
                 card["recipient_email"] = c.get("recipient_email")
+            card["awaiting"] = "borrower"
             pending.append(card)
         elif st in ("decided", "funded"):
             decided.append(card)
@@ -721,6 +741,22 @@ async def my_queue(
             "days_in_queue": None, "rate_lock_days": None, "urgency": "urgent" if a["priority"] == "urgent" else "normal",
             "ai_finding": "Internal review requested", "ai_data_sources": "", "ai_recommendation": "",
             "attention_request": {"request_id": str(a["request_id"]), "from": a["from_name"], "message": a["message"], "priority": a["priority"]},
+        })
+
+    # Escalated-by-me loans → Pending Response ("Awaiting Senior UW decision").
+    for r in esc_rows:
+        pending.append({
+            "application_id": r["application_id"],
+            "borrower_name": r["borrower_name"],
+            "loan_amount": _f(r["loan_amount"]),
+            "loan_type": r["loan_type"],
+            "status": "escalated", "stage": "decide",
+            "queue_type": "escalated", "awaiting": "senior",
+            "senior_name": r["senior_name"],
+            "category": "other", "sla_days": 5,
+            "days_in_queue": _days_since(r["assigned_at"]),
+            "rate_lock_days": None, "urgency": "normal",
+            "ai_finding": "", "ai_data_sources": "", "ai_recommendation": "",
         })
 
     active.sort(key=lambda c: (0 if c["urgency"] == "urgent" else 1, -(c["days_in_queue"] or 0)))
