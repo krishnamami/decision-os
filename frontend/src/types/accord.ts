@@ -194,6 +194,7 @@ export interface LoanDetail {
   escalated_at?: string | null
   escalation_reason?: string | null
   escalation_category?: string | null
+  direct_assignment?: boolean
   internal_requests?: InternalRequest[]
   pending_doc_requests?: PendingDocRequest[]
   escalation_thread?: EscalationThreadItem[]

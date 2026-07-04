@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext'
 import { changeUserRole, deactivateUser, fetchTeammates, inviteUser, type TeammateLite } from '../api/client'
 import { relativeTime } from '../components/NotesSection'
 import RulesSettings from './RulesSettings'
+import AssignmentRulesSettings from '../components/AssignmentRulesSettings'
 
 const ROLES = ['admin', 'manager', 'processor', 'underwriter', 'senior_uw', 'closer', 'compliance', 'viewer']
 const prettyRole = (r: string) => r.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
@@ -25,7 +26,7 @@ export default function Settings() {
   const [toast, setToast] = useState<string | null>(null)
   const [inv, setInv] = useState({ email: '', name: '', role: 'processor' })
   const [target, setTarget] = useState('')
-  const [tab, setTab] = useState<'general' | 'rules'>('general')
+  const [tab, setTab] = useState<'general' | 'rules' | 'assignment'>('general')
 
   const load = () => fetchTeammates().then((d) => setUsers(d.users)).catch(() => undefined)
   useEffect(() => {
@@ -76,7 +77,7 @@ export default function Settings() {
       {/* Tabs */}
       <div className="border-b border-slate-200">
         <div className="flex gap-6">
-          {([['general', 'General'], ['rules', 'Decision Rules']] as const).map(([k, label]) => (
+          {([['general', 'General'], ['rules', 'Decision Rules'], ['assignment', 'Assignment Rules']] as const).map(([k, label]) => (
             <button
               key={k}
               onClick={() => setTab(k)}
@@ -89,6 +90,7 @@ export default function Settings() {
       </div>
 
       {tab === 'rules' && <RulesSettings />}
+      {tab === 'assignment' && <AssignmentRulesSettings />}
 
       {tab === 'general' && <>
       {/* A. Company info */}

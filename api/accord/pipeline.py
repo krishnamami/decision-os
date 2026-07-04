@@ -597,6 +597,7 @@ async def my_queue(
         rows = await conn.fetch(
             """
             SELECT la.application_id, la.stage, la.status AS assign_status, la.assigned_at,
+                   la.assignment_type,
                    COALESCE(ap.full_name, es.application_id) AS borrower_name,
                    a.loan_type, es.loan_amount, es.loan_status,
                    es.dti_back, es.mid_credit_score, es.ltv, es.borrower,
@@ -694,6 +695,8 @@ async def my_queue(
         a = attn.get(app)
         if a:
             queue_type = "internal_request"
+        elif r["assignment_type"] == "direct_assignment" and st == "active":
+            queue_type = "direct_assignment"
         elif app in responded_apps and st == "active":
             queue_type = "returned"
         else:
@@ -1196,6 +1199,88 @@ class InviteBody(BaseModel):
 
 class RoleBody(BaseModel):
     role: str
+
+
+class AssignmentRuleBody(BaseModel):
+    rule_name: str
+    priority: int = 0
+    min_loan_amount: Optional[float] = None
+    max_loan_amount: Optional[float] = None
+    loan_type: Optional[str] = None
+    min_fraud_score: Optional[float] = None
+    min_ltv: Optional[float] = None
+    assign_to_role: str = "senior_uw"
+    assign_to_user_id: Optional[str] = None
+
+
+class RuleToggleBody(BaseModel):
+    is_active: bool
+
+
+def _rule_view(r) -> dict:
+    return {
+        "rule_id": str(r["rule_id"]),
+        "rule_name": r["rule_name"],
+        "priority": r["priority"],
+        "min_loan_amount": float(r["min_loan_amount"]) if r["min_loan_amount"] is not None else None,
+        "max_loan_amount": float(r["max_loan_amount"]) if r["max_loan_amount"] is not None else None,
+        "loan_type": r["loan_type"],
+        "min_fraud_score": float(r["min_fraud_score"]) if r["min_fraud_score"] is not None else None,
+        "min_ltv": float(r["min_ltv"]) if r["min_ltv"] is not None else None,
+        "assign_to_role": r["assign_to_role"],
+        "assign_to_user_id": str(r["assign_to_user_id"]) if r["assign_to_user_id"] else None,
+        "is_active": r["is_active"],
+        "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+    }
+
+
+@router.get("/pipeline/assignment-rules")
+async def list_assignment_rules(user: dict = Depends(get_current_user)) -> dict:
+    """Assignment rules for the tenant — drives the admin Settings UI."""
+    _require_admin(user)
+    _require_db()
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT rule_id, rule_name, priority, min_loan_amount, max_loan_amount, loan_type, "
+            "min_fraud_score, min_ltv, assign_to_role, assign_to_user_id, is_active, created_at "
+            "FROM assignment_rules WHERE tenant_id=$1 ORDER BY priority DESC, created_at ASC",
+            user["tenant_id"])
+    return {"rules": [_rule_view(r) for r in rows]}
+
+
+@router.post("/pipeline/assignment-rules")
+async def create_assignment_rule(body: AssignmentRuleBody, user: dict = Depends(get_current_user)) -> dict:
+    _require_admin(user)
+    _require_db()
+    if body.assign_to_role not in ALLOWED_ROLES:
+        raise HTTPException(400, f"Invalid assign_to_role: {body.assign_to_role}")
+    if not body.rule_name.strip():
+        raise HTTPException(422, "rule_name is required")
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        rid = await conn.fetchval(
+            "INSERT INTO assignment_rules (tenant_id, rule_name, priority, min_loan_amount, "
+            "max_loan_amount, loan_type, min_fraud_score, min_ltv, assign_to_role, assign_to_user_id) "
+            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING rule_id",
+            user["tenant_id"], body.rule_name.strip(), body.priority, body.min_loan_amount,
+            body.max_loan_amount, (body.loan_type or None), body.min_fraud_score, body.min_ltv,
+            body.assign_to_role, (UUID(body.assign_to_user_id) if body.assign_to_user_id else None))
+    return {"rule_id": str(rid), "ok": True}
+
+
+@router.patch("/pipeline/assignment-rules/{rule_id}")
+async def toggle_assignment_rule(rule_id: str, body: RuleToggleBody, user: dict = Depends(get_current_user)) -> dict:
+    _require_admin(user)
+    _require_db()
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        res = await conn.execute(
+            "UPDATE assignment_rules SET is_active=$1 WHERE rule_id=$2 AND tenant_id=$3",
+            body.is_active, UUID(rule_id), user["tenant_id"])
+    if res.endswith("0"):
+        raise HTTPException(404, "Rule not found")
+    return {"ok": True}
 
 
 @router.get("/users")
@@ -1846,7 +1931,7 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
         assign_row = await conn.fetchrow(
             """
             SELECT la.assigned_to, la.assigned_by, la.assigned_at, la.status AS assign_status,
-                   ut.name AS assigned_to_name, ub.name AS escalated_by_name
+                   la.assignment_type, ut.name AS assigned_to_name, ub.name AS escalated_by_name
             FROM loan_assignments la
             LEFT JOIN users ut ON ut.user_id = la.assigned_to
             LEFT JOIN users ub ON ub.user_id = la.assigned_by
@@ -2049,6 +2134,8 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
         "escalated_at": (_asg["assigned_at"].isoformat() if (_escalated and _asg.get("assigned_at")) else None),
         "escalation_reason": _esc.get("reason_text") if _escalated else None,
         "escalation_category": _esc.get("reason_category") if _escalated else None,
+        # Rule-routed straight to a senior role at ingestion — not an escalation.
+        "direct_assignment": _asg.get("assignment_type") == "direct_assignment",
     }
 
     metrics_out = {

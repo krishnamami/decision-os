@@ -127,6 +127,36 @@ def _apply_mapping(row: dict, mapping: Optional[dict]) -> dict:
     return out
 
 
+def _rule_matches(loan_data: dict, rule: dict) -> bool:
+    """AND logic across all set conditions. A condition on a field that isn't
+    available for this loan (e.g. fraud_score at import time) fails to match —
+    so fraud/non-QM rules stay inert until those signals exist at ingestion."""
+    amt = loan_data.get("loan_amount")
+    lt = str(loan_data.get("loan_type") or "").upper()
+    ltv = loan_data.get("ltv")
+    fs = loan_data.get("fraud_score")
+    if rule.get("min_loan_amount") is not None and (amt is None or amt < float(rule["min_loan_amount"])):
+        return False
+    if rule.get("max_loan_amount") is not None and (amt is None or amt > float(rule["max_loan_amount"])):
+        return False
+    if rule.get("loan_type") is not None and lt != str(rule["loan_type"]).upper():
+        return False
+    if rule.get("min_fraud_score") is not None and (fs is None or fs < float(rule["min_fraud_score"])):
+        return False
+    if rule.get("min_ltv") is not None and (ltv is None or ltv < float(rule["min_ltv"])):
+        return False
+    return True
+
+
+def get_assigned_role(loan_data: dict, rules: list[dict]) -> tuple[str, Any]:
+    """First matching rule wins (rules pre-sorted by priority DESC). Falls back
+    to the default underwriter role when nothing matches."""
+    for rule in rules:
+        if _rule_matches(loan_data, rule):
+            return rule["assign_to_role"], rule.get("assign_to_user_id")
+    return "underwriter", None
+
+
 class LoanImporter:
     def __init__(self, tenant_id: str, uploaded_by: Optional[str] = None):
         self.tenant_id = tenant_id
@@ -265,6 +295,15 @@ class LoanImporter:
             by_role.setdefault(u["role"], []).append(u["user_id"])
             by_email[u["email"].lower()] = u["user_id"]
         rr = {"processor": 0, "underwriter": 0, "closer": 0, "senior_uw": 0}
+        # Active assignment rules (priority DESC) — route matching loans directly
+        # to a senior role, bypassing the default UW queue.
+        rule_rows = await conn.fetch(
+            "SELECT rule_name, priority, min_loan_amount, max_loan_amount, loan_type, "
+            "min_fraud_score, min_ltv, assign_to_role, assign_to_user_id "
+            "FROM assignment_rules WHERE tenant_id=$1 AND is_active=true ORDER BY priority DESC",
+            self.tenant_id)
+        assignment_rules = [dict(r) for r in rule_rows]
+        user_ids = {u["user_id"] for u in users}
 
         def pick(role: str):
             lst = by_role.get(role) or []
@@ -304,10 +343,26 @@ class LoanImporter:
             status = str(r.get("loan_status") or "active").lower()
             stage = {"approved": "close", "funded": "close", "denied": "decide"}.get(status, "verify")
 
-            # assignment
+            # assignment — explicit email wins; else rule-based direct assignment
+            # (active loans only); else the default round-robin.
             email = str(r.get("assigned_to_email") or "").strip().lower()
-            assignee = by_email.get(email) if email else (
-                pick("processor") if status == "active" else pick("closer") if status in ("approved", "funded") else pick("underwriter"))
+            assignment_type = None
+            assign_stage = stage
+            assignee = by_email.get(email) if email else None
+            if assignee is None and status == "active" and assignment_rules:
+                loan_data = {"loan_amount": _num(r.get("loan_amount")), "loan_type": r.get("loan_type"),
+                             "ltv": ltv, "fraud_score": None}
+                role, target_uid = get_assigned_role(loan_data, assignment_rules)
+                if role and role != "underwriter":
+                    picked = target_uid if (target_uid and target_uid in user_ids) else pick(role)
+                    if picked:
+                        assignee = picked
+                        assignment_type = "direct_assignment"
+                        assign_stage = "decide"  # straight to the decision queue
+            if assignee is None:
+                assignee = (pick("processor") if status == "active"
+                            else pick("closer") if status in ("approved", "funded")
+                            else pick("underwriter"))
 
             import json
             from uuid import UUID
@@ -344,13 +399,13 @@ class LoanImporter:
                     "VALUES ($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'active',$16,$17,NOW(),NOW())",
                     app_id, self.tenant_id, json.dumps(es["borrower"]), json.dumps(es["property"]), json.dumps(es["loan_terms"]),
                     es["credit"]["mid_score"], _num(r.get("appraised_value")), _num(r.get("purchase_price")),
-                    _num(r.get("loan_amount")), _num(r.get("interest_rate")), ltv, fdti, bdti, status, stage, assignee,
+                    _num(r.get("loan_amount")), _num(r.get("interest_rate")), ltv, fdti, bdti, status, assign_stage, assignee,
                     _date(r.get("application_date")))
                 if assignee:
                     await conn.execute(
-                        "INSERT INTO loan_assignments (application_id, tenant_id, assigned_to, assigned_by, stage, status, assigned_at) "
-                        "VALUES ($1,$2,$3,$4,$5,'active',NOW())",
-                        app_id, self.tenant_id, assignee, _uuid(self.uploaded_by), stage)
+                        "INSERT INTO loan_assignments (application_id, tenant_id, assigned_to, assigned_by, stage, status, assigned_at, assignment_type) "
+                        "VALUES ($1,$2,$3,$4,$5,'active',NOW(),$6)",
+                        app_id, self.tenant_id, assignee, _uuid(self.uploaded_by), assign_stage, assignment_type)
 
             self.imported += 1
             imported_ids.append(app_id)

@@ -538,6 +538,14 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
         </div>
       )}
 
+      {/* ── DIRECT ASSIGNMENT BANNER (rule-routed straight to me — not escalated) ── */}
+      {isSeniorUW && loan.direct_assignment && !loan.escalated_by && loan.assigned_to === effectiveUser?.user_id && (
+        <div className="mx-5 mt-4 rounded-lg border border-blue-300 bg-blue-50 p-4">
+          <div className="text-sm font-bold text-blue-800">🔵 Direct assignment</div>
+          <div className="mt-1 text-[12px] text-blue-900">This loan was routed directly to you at intake by an assignment rule (loan characteristics) — no underwriter review preceded it.</div>
+        </div>
+      )}
+
       {/* ── NEW DOCUMENT BADGE (borrower uploaded; auto-refreshed) ────────── */}
       {newDoc && (
         <div className="mx-5 mt-4 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm">

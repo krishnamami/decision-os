@@ -155,7 +155,7 @@ export interface QueueCard {
   loan_type: string | null
   status: string
   stage: string
-  queue_type: 'action_needed' | 'internal_request' | 'returned' | 'escalated'
+  queue_type: 'action_needed' | 'internal_request' | 'returned' | 'escalated' | 'direct_assignment'
   category?: 'clean' | 'fraud' | 'income' | 'compliance' | 'other'
   days_in_queue: number | null
   sla_days?: number
@@ -321,6 +321,32 @@ export function markAllNotificationsRead(): Promise<{ ok: boolean }> {
 }
 export function fetchTeammates(): Promise<{ users: TeammateLite[] }> {
   return getJSON('/api/accord/users')
+}
+
+// ── Assignment rules (admin) ─────────────────────────────────────────
+export interface AssignmentRule {
+  rule_id: string
+  rule_name: string
+  priority: number
+  min_loan_amount: number | null
+  max_loan_amount: number | null
+  loan_type: string | null
+  min_fraud_score: number | null
+  min_ltv: number | null
+  assign_to_role: string
+  assign_to_user_id: string | null
+  is_active: boolean
+  created_at: string | null
+}
+export type NewAssignmentRule = Omit<AssignmentRule, 'rule_id' | 'is_active' | 'created_at'>
+export function fetchAssignmentRules(): Promise<{ rules: AssignmentRule[] }> {
+  return getJSON('/api/accord/pipeline/assignment-rules')
+}
+export function createAssignmentRule(body: NewAssignmentRule): Promise<{ rule_id: string; ok: boolean }> {
+  return postJSON('/api/accord/pipeline/assignment-rules', body)
+}
+export function toggleAssignmentRule(ruleId: string, isActive: boolean): Promise<{ ok: boolean }> {
+  return patchJSON(`/api/accord/pipeline/assignment-rules/${encodeURIComponent(ruleId)}`, { is_active: isActive })
 }
 
 // ── Pipeline ─────────────────────────────────────────────────────────

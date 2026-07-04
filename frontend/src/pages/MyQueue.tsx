@@ -32,6 +32,7 @@ function cardTag(c: QueueCard): { dot: string; tag: string; tagCls: string } {
       return { dot: '🟢', tag: 'UW RECOMMENDATION', tagCls: 'text-green-700' }
     return { dot: '🔵', tag: 'INTERNAL REQUEST', tagCls: 'text-blue-700' }
   }
+  if (c.queue_type === 'direct_assignment') return { dot: '🔵', tag: 'DIRECT ASSIGNMENT', tagCls: 'text-blue-700' }
   // Returned (borrower responded) wins over urgency — it's the salient new state.
   if (c.queue_type === 'returned') return { dot: '🟢', tag: 'RETURNED', tagCls: 'text-green-700' }
   if (c.urgency === 'urgent') return { dot: '🔴', tag: 'URGENT', tagCls: 'text-red-700' }
@@ -352,6 +353,9 @@ function ActionCard({
         )
       })() : (
         <div className="mt-2 space-y-1 text-sm">
+          {c.queue_type === 'direct_assignment' && (
+            <div className="mb-1 inline-block rounded-md bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">Direct assignment — routed to you by rule</div>
+          )}
           <div className="text-slate-800"><span className="font-medium text-slate-500">Key finding:</span> {c.ai_finding}</div>
           <div className="text-slate-700"><span className="font-medium text-slate-500">AI suggests:</span> "{c.ai_recommendation}"</div>
           <div className="text-slate-500"><span className="font-medium">Based on:</span> {c.ai_data_sources}</div>
