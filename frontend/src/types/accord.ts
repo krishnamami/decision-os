@@ -132,6 +132,21 @@ export interface InternalRequest {
   created_at: string | null
 }
 
+export type EscalationAction =
+  | 'escalated'
+  | 'returned_feedback'
+  | 're_escalated'
+  | 'approved'
+  | 'denied'
+
+export interface EscalationThreadItem {
+  actor: string
+  actor_role: string | null
+  action: EscalationAction
+  message: string
+  timestamp: string | null
+}
+
 export interface LoanDetail {
   application_id: string
   borrower_email?: string | null
@@ -181,6 +196,7 @@ export interface LoanDetail {
   escalation_category?: string | null
   internal_requests?: InternalRequest[]
   pending_doc_requests?: PendingDocRequest[]
+  escalation_thread?: EscalationThreadItem[]
   decisions: DecisionDetail[]
   documents: Array<Record<string, unknown>>
   graph_edges: Array<Record<string, unknown>>

@@ -1856,6 +1856,35 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
             """,
             application_id,
         )
+        # Escalation thread — escalate reasons (loan_actions) + senior-UW feedback
+        # (attention_requests), merged chronologically so a re-escalation carries
+        # the full prior history.
+        thread_action_rows = await conn.fetch(
+            """
+            SELECT la.action_type, la.reason_text, la.performed_at,
+                   COALESCE(u.name, la.performed_by, 'A teammate') AS actor_name,
+                   u.role AS actor_role
+            FROM loan_actions la
+            LEFT JOIN users u ON u.email = la.performed_by AND u.tenant_id = la.tenant_id
+            WHERE la.application_id = $1 AND la.tenant_id = $2
+              AND la.action_type IN ('escalate', 'senior_review', 'approve', 'deny')
+            ORDER BY la.performed_at ASC
+            """,
+            application_id, tenant_id,
+        )
+        thread_feedback_rows = await conn.fetch(
+            """
+            SELECT ar.message, ar.created_at,
+                   COALESCE(u.name, 'Senior underwriter') AS actor_name,
+                   COALESCE(u.role, 'senior_uw') AS actor_role
+            FROM attention_requests ar
+            LEFT JOIN users u ON u.user_id = ar.from_user_id
+            WHERE ar.application_id = $1 AND ar.tenant_id = $2
+              AND ar.source = 'senior_uw_feedback'
+            ORDER BY ar.created_at ASC
+            """,
+            application_id, tenant_id,
+        )
         rain_check = await compute_rain_check(conn, tenant_id, dict(entity))
 
     e = dict(entity)
@@ -1983,6 +2012,47 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
         for r in internal_req_rows
     ]
 
+    # Merge the escalation history into one chronological thread. The first
+    # escalation reads 'escalated'; every later one 're_escalated'.
+    def _naive_ts(dt):
+        if dt is None:
+            return datetime.min
+        return dt.astimezone(timezone.utc).replace(tzinfo=None) if dt.tzinfo else dt
+
+    _thread_items: list[dict] = []
+    _esc_seen = 0
+    _decision_action = {"approve": "approved", "deny": "denied"}
+    for r in thread_action_rows:
+        at = r["action_type"]
+        if at in ("escalate", "senior_review"):
+            _esc_seen += 1
+            thr_action = "escalated" if _esc_seen == 1 else "re_escalated"
+        else:
+            thr_action = _decision_action.get(at)
+            if not thr_action:
+                continue
+        _thread_items.append({
+            "actor": r["actor_name"],
+            "actor_role": r["actor_role"],
+            "action": thr_action,
+            "message": r["reason_text"] or "",
+            "timestamp": r["performed_at"].isoformat() if r["performed_at"] else None,
+            "_sort": _naive_ts(r["performed_at"]),
+        })
+    for r in thread_feedback_rows:
+        _thread_items.append({
+            "actor": r["actor_name"],
+            "actor_role": r["actor_role"],
+            "action": "returned_feedback",
+            "message": r["message"] or "",
+            "timestamp": r["created_at"].isoformat() if r["created_at"] else None,
+            "_sort": _naive_ts(r["created_at"]),
+        })
+    _thread_items.sort(key=lambda x: x["_sort"])
+    escalation_thread = [
+        {k: v for k, v in it.items() if k != "_sort"} for it in _thread_items
+    ]
+
     pending_doc_requests = [
         {
             "comm_id": str(r["comm_id"]),
@@ -2008,6 +2078,7 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
         **escalation_ctx,
         "internal_requests": internal_requests,
         "pending_doc_requests": pending_doc_requests,
+        "escalation_thread": escalation_thread,
         "qm": _qm_status(e, loan_terms),
         "examiner_readiness": compute_examiner_readiness(decisions, action_rows),
         "rain_check": rain_check,

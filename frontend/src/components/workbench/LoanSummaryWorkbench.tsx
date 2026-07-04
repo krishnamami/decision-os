@@ -12,6 +12,7 @@ const ROLES = { SENIOR_UW: 'senior_uw', ADMIN: 'admin', UW: 'underwriter', PROCE
 const DENIAL_CODES = ['credit', 'income', 'collateral', 'fraud', 'other']
 import type { LoanDetail, InternalRequest, PendingDocRequest } from '../../types/accord'
 import ActionModal from './ActionModal'
+import EscalationThread from './EscalationThread'
 import RequestDocsModal from '../modals/RequestDocsModal'
 
 // ── Presentation maps (keyed by API enum values — never business logic) ──────
@@ -187,6 +188,7 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
   const [filter, setFilter] = useState<'all' | 'blocking' | 'review' | 'cleared'>('all')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [modalAction, setModalAction] = useState<string | null>(null)
+  const [threadOpen, setThreadOpen] = useState(false)
   // Request-docs gets its OWN modal — it is a document request to the borrower
   // (POST /communications), NOT an escalation/note recorded via ActionModal.
   // The two never share a modal component.
@@ -509,6 +511,21 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
             {loan.escalated_at && <div><span className="font-semibold">Escalated:</span> {new Date(loan.escalated_at).toLocaleString()}</div>}
           </div>
           <div className="mt-1.5 text-[11px] text-amber-700">{loan.escalated_by_name ?? 'The underwriter'} is waiting for your review.</div>
+          {(loan.escalation_thread?.length ?? 0) > 0 && (
+            <div className="mt-2 border-t border-amber-200 pt-2">
+              <button
+                onClick={() => setThreadOpen((v) => !v)}
+                className="text-[11px] font-semibold text-amber-800 hover:underline"
+              >
+                {threadOpen ? 'Hide full thread ▲' : 'Show full thread ▼'}
+              </button>
+              {threadOpen && (
+                <div className="mt-2 rounded-lg border border-amber-200 bg-white/60 p-3">
+                  <EscalationThread items={loan.escalation_thread!} />
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -695,6 +712,8 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
           appId={applicationId}
           actionType={modalAction}
           relatedDecisionId={null}
+          escalationThread={loan.escalation_thread}
+          youName={effectiveUser?.name}
           onClose={() => setModalAction(null)}
           onDone={onActionDone}
         />

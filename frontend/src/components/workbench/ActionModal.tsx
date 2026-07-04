@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import Modal from '../Modal'
 import { createLoanAction, getToken, type LoanAction } from '../../api/client'
+import EscalationThread from './EscalationThread'
+import type { EscalationThreadItem } from '../../types/accord'
 
 const CATEGORIES = [
   ['policy_requirement', 'Policy Requirement'],
@@ -24,8 +26,10 @@ const DEFAULT_VISIBLE: Record<string, string[]> = {
   add_note: ['senior_uw', 'compliance'],
 }
 
-export default function ActionModal({ appId, actionType, relatedDecisionId, onClose, onDone }: {
-  appId: string; actionType: string; relatedDecisionId?: string | null; onClose: () => void; onDone: (a: LoanAction) => void
+export default function ActionModal({ appId, actionType, relatedDecisionId, escalationThread, youName, onClose, onDone }: {
+  appId: string; actionType: string; relatedDecisionId?: string | null
+  escalationThread?: EscalationThreadItem[]; youName?: string | null
+  onClose: () => void; onDone: (a: LoanAction) => void
 }) {
   const [category, setCategory] = useState('')
   const [text, setText] = useState('')
@@ -70,6 +74,13 @@ export default function ActionModal({ appId, actionType, relatedDecisionId, onCl
   return (
     <Modal title={`You are ${ACTION_PHRASE[actionType] ?? 'acting on this file'}`} onClose={onClose}>
       <div className="space-y-4 text-sm">
+        {(actionType === 'escalate' || actionType === 'senior_review') && (escalationThread?.length ?? 0) > 0 && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3">
+            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-amber-800">Prior escalation history</div>
+            <EscalationThread items={escalationThread!} youName={youName} />
+            <p className="mt-2.5 border-t border-amber-200 pt-2 text-xs font-medium text-amber-800">You are re-escalating this loan.</p>
+          </div>
+        )}
         {(actionType === 'escalate' || actionType === 'senior_review') && seniorUWName && (
           <p className="-mt-2 mb-2 text-xs text-slate-400">→ Will be assigned to: {seniorUWName}</p>
         )}
