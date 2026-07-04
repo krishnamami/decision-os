@@ -311,6 +311,80 @@ class ContextEnricher:
         except Exception:
             pass
 
+    # P0-D — rate_pricing catalogue inputs. guideline_name -> base key.
+    _PRICING_GUIDELINES = [
+        ("rate_normal_band_max",                  "pricing_rate_normal_band_max"),
+        ("llpa_manual_review_threshold",          "pricing_llpa_manual_review_threshold"),
+        ("llpa_credit_score_below_700_per_point", "pricing_llpa_credit_per_point"),
+        ("llpa_ltv_above_80_per_point",           "pricing_llpa_ltv_per_point"),
+        ("llpa_dti_above_36_per_point",           "pricing_llpa_dti_per_point"),
+        ("llpa_non_qm_add_on",                    "pricing_llpa_non_qm_add_on"),
+    ]
+    _RATE_PRODUCT_PREFIX = {
+        "conventional": "PRD-FNMA", "conforming": "PRD-FNMA",
+        "fha": "PRD-FHA", "va": "PRD-VA",
+    }
+
+    async def _attach_pricing(
+        self, base: dict, application_id: str, tenant_id: str
+    ) -> None:
+        """P0-D: resolve rate_pricing inputs from the catalogue so the persona
+        reads them off the bundle instead of hardcoding.
+          base_rate  <- rate_sheet_entry (tenant product par; percent -> fraction)
+          LLPA coeffs + band/review thresholds <- agency_guidelines (pricing)
+          usury cap  <- regulatory_rules state cap keyed on property_state
+        Best-effort; the persona keeps SAFE_DEFAULTS-matching constants as the
+        crash guard, so a missing/deactivated row can never break pricing."""
+        try:
+            from core.catalogue.rule_loader import get_rule
+            traces = {}
+            for gname, bkey in self._PRICING_GUIDELINES:
+                r = await get_rule(self.conn, gname, tenant_id, agency="fannie")
+                if r.get("applied") is not None:
+                    base[bkey] = float(r["applied"])
+                traces[gname] = self._trace(r, gname)
+            base["pricing_rule_traces"] = traces
+        except Exception:
+            pass
+        try:
+            from core.catalogue.rule_loader import _parse
+            es = await self.conn.fetchrow(
+                """SELECT loan_terms->>'loan_type' AS loan_type,
+                          property->>'state' AS property_state
+                   FROM entity_states WHERE application_id=$1 AND tenant_id=$2""",
+                application_id, tenant_id,
+            )
+            loan_type = (es and es["loan_type"]) or "conforming"
+            prefix = self._RATE_PRODUCT_PREFIX.get(str(loan_type).lower(), "PRD-FNMA")
+            par = await self.conn.fetchval(
+                """SELECT MIN(base_rate) FROM rate_sheet_entry
+                   WHERE tenant_id=$1 AND product_id LIKE $2
+                     AND effective_date <= CURRENT_DATE""",
+                tenant_id, f"{prefix}%",
+            )
+            if par is not None:
+                # rate_sheet_entry is in percent; the persona works in fractions.
+                base["pricing_base_rate"] = round(float(par) / 100.0, 5)
+                base["pricing_base_rate_governed_by"] = "rate_sheet_entry"
+            # State usury cap. Dormant when property_state is absent (e.g. summit
+            # loans) -> the persona falls back to the generous federal constant.
+            prop_state = es["property_state"] if es else None
+            base["pricing_property_state"] = prop_state
+            if prop_state:
+                row = await self.conn.fetchrow(
+                    """SELECT rule_value FROM regulatory_rules
+                       WHERE authority='state' AND is_active=true
+                         AND rule_name ILIKE '%usury%' AND state_code=$1 LIMIT 1""",
+                    prop_state,
+                )
+                if row:
+                    v = _parse(row["rule_value"])
+                    if isinstance(v, (int, float)):
+                        base["pricing_usury_limit"] = round(float(v) / 100.0, 5)
+                        base["pricing_usury_governed_by"] = "regulatory_rules"
+        except Exception:
+            pass
+
     async def evidence_facts(
         self, application_id: str, tenant_id: str,
         decision_id: Optional[str] = None,
@@ -389,6 +463,20 @@ class ContextEnricher:
             "total_liquid_assets":         None,
             # EX-B — compensating-factor inputs, only for approval_routing.
             "cf_inputs":                   None,
+            # P0-D — rate_pricing catalogue inputs (only for the rate_pricing
+            # decision; None elsewhere so the persona uses its crash-guard
+            # constants). base_rate <- rate_sheet_entry; LLPA coeffs + band/review
+            # thresholds <- agency_guidelines; usury <- regulatory_rules.
+            "pricing_base_rate":                    None,
+            "pricing_llpa_credit_per_point":        None,
+            "pricing_llpa_ltv_per_point":           None,
+            "pricing_llpa_dti_per_point":           None,
+            "pricing_llpa_non_qm_add_on":           None,
+            "pricing_rate_normal_band_max":         None,
+            "pricing_llpa_manual_review_threshold": None,
+            "pricing_usury_limit":                  None,
+            "pricing_property_state":               None,
+            "pricing_rule_traces":                  None,
         }
 
         # Thresholds + fraud first, so they ride on every return path.
@@ -407,6 +495,8 @@ class ContextEnricher:
             await self._attach_compensating_factor_inputs(base, application_id, tenant_id)
         elif decision_id == "income_verification":
             await self._attach_income_entity(base, application_id, tenant_id)
+        elif decision_id == "rate_pricing":
+            await self._attach_pricing(base, application_id, tenant_id)
 
         try:
             rows = await self.conn.fetch(

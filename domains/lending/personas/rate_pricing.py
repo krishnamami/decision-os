@@ -10,9 +10,20 @@ from core.trace import SignalDirection
 from .base import LendingPersona, OfflineReasoning, first_object, make_signal, upstream_payload
 
 
-# Light-touch rate sheet. Real implementations integrate Optimal Blue /
-# ICE; this is enough to evaluate the boundary clauses.
-_BASE_RATE = 0.0625
+# P0-D — every pricing input is now data-driven: base_rate from rate_sheet_entry,
+# the LLPA coefficients + band/review thresholds from agency_guidelines, and the
+# usury cap from regulatory_rules — all resolved by ContextEnricher._attach_pricing
+# and read off the bundle's "evidence" object. These module constants are ONLY the
+# crash-guard fallback (they match the catalogue seeds / SAFE_DEFAULTS) so a missing
+# row can never break pricing.
+_BASE_RATE = 0.0625                  # <- rate_sheet_entry (tenant product par)
+_LLPA_CREDIT_PER_POINT = 0.0005      # <- llpa_credit_score_below_700_per_point
+_LLPA_LTV_PER_POINT = 0.05           # <- llpa_ltv_above_80_per_point
+_LLPA_DTI_PER_POINT = 0.02           # <- llpa_dti_above_36_per_point
+_LLPA_NON_QM_ADD_ON = 0.0125         # <- llpa_non_qm_add_on
+_RATE_NORMAL_BAND_MAX = 0.10         # <- rate_normal_band_max
+_LLPA_MANUAL_REVIEW = 0.02           # <- llpa_manual_review_threshold
+_USURY_LIMIT_FALLBACK = 0.18         # <- regulatory_rules state usury cap (federal fallback)
 
 
 class PricingAgent(LendingPersona):
@@ -52,33 +63,50 @@ class PricingAgent(LendingPersona):
         loan = first_object(bundle, "Loan") or {}
         loan_type = loan.get("loan_type") or "conforming"
 
-        # LLPA add-ons: higher LTV / lower score / higher DTI bumps rate.
+        # P0-D — pull every pricing input from the catalogue values the enricher
+        # resolved onto the bundle; the module constants are only the crash guard.
+        ev = first_object(bundle, "evidence") or {}
+
+        def _pv(key: str, default: float) -> float:
+            v = ev.get(key)
+            return default if v is None else float(v)
+
+        base_rate = _pv("pricing_base_rate", _BASE_RATE)
+        c_credit = _pv("pricing_llpa_credit_per_point", _LLPA_CREDIT_PER_POINT)
+        c_ltv = _pv("pricing_llpa_ltv_per_point", _LLPA_LTV_PER_POINT)
+        c_dti = _pv("pricing_llpa_dti_per_point", _LLPA_DTI_PER_POINT)
+        c_non_qm = _pv("pricing_llpa_non_qm_add_on", _LLPA_NON_QM_ADD_ON)
+        normal_band_max = _pv("pricing_rate_normal_band_max", _RATE_NORMAL_BAND_MAX)
+        manual_review_max = _pv("pricing_llpa_manual_review_threshold", _LLPA_MANUAL_REVIEW)
+        usury_limit = _pv("pricing_usury_limit", _USURY_LIMIT_FALLBACK)
+
+        # LLPA add-ons: higher LTV / lower score / higher DTI bumps rate. The
+        # per-point coefficients + non-QM add-on now come from agency_guidelines.
         llpa = 0.0
         if score < 700:
-            llpa += (700 - score) * 0.0005
+            llpa += (700 - score) * c_credit
         if ltv > 0.80:
-            llpa += (ltv - 0.80) * 0.05
+            llpa += (ltv - 0.80) * c_ltv
         if dti > 0.36:
-            llpa += (dti - 0.36) * 0.02
+            llpa += (dti - 0.36) * c_dti
         if loan_type == "non_qm":
-            llpa += 0.0125
+            llpa += c_non_qm
 
-        rate = _BASE_RATE + llpa
-        usury_limit = 0.18  # generous federal-level cap
-        rate_within_normal_band = rate <= 0.10
-        manual_adjustments_required = llpa > 0.02
-        pricing_exception_possible = manual_adjustments_required and rate <= 0.10
+        rate = base_rate + llpa
+        rate_within_normal_band = rate <= normal_band_max
+        manual_adjustments_required = llpa > manual_review_max
+        pricing_exception_possible = manual_adjustments_required and rate <= normal_band_max
         usury_violation = rate > usury_limit
         concurrent_lock_conflict = bool(loan.get("concurrent_rate_lock_conflict") or False)
 
         signals = [
-            make_signal("base_rate", _BASE_RATE),
+            make_signal("base_rate", round(base_rate, 4)),
             make_signal(
                 "llpa",
                 round(llpa, 4),
                 direction=(
                     SignalDirection.CONTRADICTS
-                    if llpa > 0.02
+                    if llpa > manual_review_max
                     else SignalDirection.NEUTRAL
                 ),
             ),
@@ -149,6 +177,14 @@ class PricingAgent(LendingPersona):
             output_payload={
                 "interest_rate": round(rate, 4),
                 "llpa": round(llpa, 4),
+                # P0-D — pricing provenance: which inputs came from the catalogue
+                # vs the crash-guard constant, for the workbench disclosure.
+                "base_rate": round(base_rate, 4),
+                "usury_limit": round(usury_limit, 4),
+                "pricing_base_rate_governed_by": ev.get("pricing_base_rate_governed_by") or "safe_default",
+                "pricing_usury_governed_by": ev.get("pricing_usury_governed_by") or "safe_default",
+                "pricing_property_state": ev.get("pricing_property_state"),
+                "pricing_rule_traces": ev.get("pricing_rule_traces"),
                 # RA-PERSONA-C: evidence provenance (advisory).
                 "evidence_populated": evidence_populated,
                 "pricing_evidence_confidence": (
