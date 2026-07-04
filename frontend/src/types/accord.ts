@@ -138,13 +138,18 @@ export type EscalationAction =
   | 're_escalated'
   | 'approved'
   | 'denied'
+  | 'overridden'
+  | 'recommend_approval'
 
 export interface EscalationThreadItem {
-  actor: string
+  event_id: string | null
+  actor_name: string
   actor_role: string | null
   action: EscalationAction
-  message: string
+  message: string | null
+  category: string | null
   timestamp: string | null
+  time_ago: string
 }
 
 export interface LoanDetail {

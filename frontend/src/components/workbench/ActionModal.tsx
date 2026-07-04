@@ -37,6 +37,8 @@ export default function ActionModal({ appId, actionType, relatedDecisionId, esca
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [seniorUWName, setSeniorUWName] = useState<string | null>(null)
+  // Collapse the history when it's long; keep short threads open.
+  const [histOpen, setHistOpen] = useState((escalationThread?.length ?? 0) <= 2)
   const len = text.trim().length
   const ready = len >= 25 && !busy
 
@@ -76,9 +78,20 @@ export default function ActionModal({ appId, actionType, relatedDecisionId, esca
       <div className="space-y-4 text-sm">
         {(actionType === 'escalate' || actionType === 'senior_review') && (escalationThread?.length ?? 0) > 0 && (
           <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3">
-            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-amber-800">Prior escalation history</div>
-            <EscalationThread items={escalationThread!} youName={youName} />
-            <p className="mt-2.5 border-t border-amber-200 pt-2 text-xs font-medium text-amber-800">You are re-escalating this loan.</p>
+            <button
+              type="button"
+              onClick={() => setHistOpen((v) => !v)}
+              className="flex w-full items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-amber-800"
+            >
+              <span>Prior escalation history ({escalationThread!.length})</span>
+              <span className="normal-case">{histOpen ? 'Hide ▲' : 'Show ▼'}</span>
+            </button>
+            {histOpen && (
+              <div className="mt-2">
+                <EscalationThread items={escalationThread!} youName={youName} />
+                <p className="mt-2.5 border-t border-amber-200 pt-2 text-xs font-medium text-amber-800">You are re-escalating this loan.</p>
+              </div>
+            )}
           </div>
         )}
         {(actionType === 'escalate' || actionType === 'senior_review') && seniorUWName && (

@@ -1,4 +1,5 @@
-import type { LoanDetail } from '../types/accord'
+import type { EscalationThreadItem, LoanDetail } from '../types/accord'
+import EscalationThread from './workbench/EscalationThread'
 
 function dotColor(action: string): string {
   const a = action.toLowerCase()
@@ -38,10 +39,20 @@ function OverrideEntry({ a, d }: { a: ActivityItem; d: Record<string, unknown> }
   )
 }
 
-export default function ActivityFeed({ activity }: { activity: LoanDetail['activity'] }) {
+export default function ActivityFeed({ activity, escalationThread }: {
+  activity: LoanDetail['activity']
+  escalationThread?: EscalationThreadItem[]
+}) {
+  const thread = escalationThread ?? []
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-5">
       <div className="mb-3 text-sm font-semibold text-slate-900">Audit trail</div>
+      {thread.length > 0 && (
+        <div className="mb-4 rounded-lg border border-slate-100 bg-slate-50/60 p-3">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Escalation history</div>
+          <EscalationThread items={thread} />
+        </div>
+      )}
       {activity.length === 0 ? (
         <p className="text-sm text-slate-400">No data available.</p>
       ) : (

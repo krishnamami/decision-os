@@ -510,33 +510,39 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
       {/* ── SECTION 4 — REVIEW AREA STRIP ───────────────────────────────── */}
       <ReviewStrip conditions={conditions} />
 
-      {/* ── ESCALATION BANNER (senior UW, escalated to me) ──────────────── */}
-      {isSeniorUW && loan.escalated_by && loan.assigned_to === effectiveUser?.user_id && (
-        <div className="mx-5 mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4">
-          <div className="text-sm font-bold text-amber-800">⚠ Escalated to you by {loan.escalated_by_name ?? DASH}</div>
-          <div className="mt-1 grid gap-0.5 text-[12px] text-amber-900">
-            {loan.escalation_category && <div><span className="font-semibold">Category:</span> {pretty(loan.escalation_category)}</div>}
-            {loan.escalation_reason && <div><span className="font-semibold">Reason:</span> {loan.escalation_reason}</div>}
-            {loan.escalated_at && <div><span className="font-semibold">Escalated:</span> {new Date(loan.escalated_at).toLocaleString()}</div>}
-          </div>
-          <div className="mt-1.5 text-[11px] text-amber-700">{loan.escalated_by_name ?? 'The underwriter'} is waiting for your review.</div>
-          {(loan.escalation_thread?.length ?? 0) > 0 && (
-            <div className="mt-2 border-t border-amber-200 pt-2">
-              <button
-                onClick={() => setThreadOpen((v) => !v)}
-                className="text-[11px] font-semibold text-amber-800 hover:underline"
-              >
-                {threadOpen ? 'Hide full thread ▲' : 'Show full thread ▼'}
-              </button>
-              {threadOpen && (
-                <div className="mt-2 rounded-lg border border-amber-200 bg-white/60 p-3">
-                  <EscalationThread items={loan.escalation_thread!} />
-                </div>
+      {/* ── ESCALATION BANNER (senior UW, escalated to me) — thread-aware ── */}
+      {isSeniorUW && loan.escalated_by && loan.assigned_to === effectiveUser?.user_id && (() => {
+        const thread = loan.escalation_thread ?? []
+        const latest = thread[thread.length - 1]
+        return (
+          <div className="mx-5 mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4">
+            <div className="flex items-start justify-between gap-2">
+              <div className="text-sm font-bold text-amber-800">⚠ Escalated by {loan.escalated_by_name ?? DASH}</div>
+              {thread.length > 0 && (
+                <button
+                  onClick={() => setThreadOpen((v) => !v)}
+                  className="shrink-0 text-[11px] font-semibold text-amber-800 hover:underline"
+                >
+                  {threadOpen ? 'Hide history ▲' : 'Show history ▼'}
+                </button>
               )}
             </div>
-          )}
-        </div>
-      )}
+            {thread.length > 0 ? (
+              <div className="mt-2 rounded-lg border border-amber-200 bg-white/60 p-3">
+                {/* Collapsed → most recent event only; expanded → full thread. */}
+                <EscalationThread items={threadOpen ? thread : (latest ? [latest] : [])} />
+              </div>
+            ) : (
+              <div className="mt-1 grid gap-0.5 text-[12px] text-amber-900">
+                {loan.escalation_category && <div><span className="font-semibold">Category:</span> {pretty(loan.escalation_category)}</div>}
+                {loan.escalation_reason && <div><span className="font-semibold">Reason:</span> {loan.escalation_reason}</div>}
+                {loan.escalated_at && <div><span className="font-semibold">Escalated:</span> {new Date(loan.escalated_at).toLocaleString()}</div>}
+              </div>
+            )}
+            <div className="mt-1.5 text-[11px] text-amber-700">{loan.escalated_by_name ?? 'The underwriter'} is waiting for your review.</div>
+          </div>
+        )
+      })()}
 
       {/* ── DIRECT ASSIGNMENT BANNER (rule-routed straight to me — not escalated) ── */}
       {isSeniorUW && loan.direct_assignment && !loan.escalated_by && loan.assigned_to === effectiveUser?.user_id && (
@@ -690,8 +696,8 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
             )}
           </div>
 
-          {/* Audit trail — override entries render as the exam-ready record. */}
-          <ActivityFeed activity={loan.activity ?? []} />
+          {/* Audit trail — escalation history + override entries (exam-ready). */}
+          <ActivityFeed activity={loan.activity ?? []} escalationThread={loan.escalation_thread} />
         </div>
 
         {/* RIGHT — sticky panel */}

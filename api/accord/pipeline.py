@@ -567,6 +567,25 @@ def _days_since(ts: Any) -> Optional[int]:
     return max(0, (datetime.now(timezone.utc) - ts).days)
 
 
+def _time_ago(ts: Any) -> str:
+    """Server-side relative time (e.g. '2 hours ago'), relative to now()."""
+    if ts is None:
+        return ""
+    if getattr(ts, "tzinfo", None) is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    secs = max(0, (datetime.now(timezone.utc) - ts).total_seconds())
+    if secs < 60:
+        return "just now"
+    for unit, size in (("minute", 60), ("hour", 3600), ("day", 86400),
+                       ("month", 2592000), ("year", 31536000)):
+        nxt = {"minute": 3600, "hour": 86400, "day": 2592000,
+               "month": 31536000, "year": float("inf")}[unit]
+        if secs < nxt:
+            n = int(secs // size)
+            return f"{n} {unit}{'s' if n != 1 else ''} ago"
+    return "just now"
+
+
 def _jsonb(v: Any) -> Any:
     if isinstance(v, str):
         try:
@@ -2015,12 +2034,15 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
             """,
             application_id,
         )
-        # Escalation thread — escalate reasons (loan_actions) + senior-UW feedback
-        # (attention_requests), merged chronologically so a re-escalation carries
-        # the full prior history.
+        # Escalation thread — full history merged chronologically from every
+        # touchpoint so a re-escalation carries the prior exchange. Sources:
+        #   loan_actions        → escalate/senior_review (reasons), approve, deny
+        #   attention_requests  → senior_uw_feedback (+category), uw_recommendation
+        #   decision_outputs    → human_action='overridden'
+        # All scoped to this application_id + tenant_id (never cross-tenant).
         thread_action_rows = await conn.fetch(
             """
-            SELECT la.action_type, la.reason_text, la.performed_at,
+            SELECT la.id, la.action_type, la.reason_category, la.reason_text, la.performed_at,
                    COALESCE(u.name, la.performed_by, 'A teammate') AS actor_name,
                    u.role AS actor_role
             FROM loan_actions la
@@ -2031,16 +2053,29 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
             """,
             application_id, tenant_id,
         )
-        thread_feedback_rows = await conn.fetch(
+        thread_attention_rows = await conn.fetch(
             """
-            SELECT ar.message, ar.created_at,
-                   COALESCE(u.name, 'Senior underwriter') AS actor_name,
+            SELECT ar.request_id, ar.source, ar.category, ar.message, ar.created_at,
+                   COALESCE(u.name, 'A teammate') AS actor_name,
                    COALESCE(u.role, 'senior_uw') AS actor_role
             FROM attention_requests ar
             LEFT JOIN users u ON u.user_id = ar.from_user_id
             WHERE ar.application_id = $1 AND ar.tenant_id = $2
-              AND ar.source = 'senior_uw_feedback'
+              AND ar.source IN ('senior_uw_feedback', 'uw_recommendation')
             ORDER BY ar.created_at ASC
+            """,
+            application_id, tenant_id,
+        )
+        thread_override_rows = await conn.fetch(
+            """
+            SELECT dout.id, dout.decision_id, dout.human_override_reason, dout.acted_at,
+                   COALESCE(u.name, dout.human_reviewer, 'A teammate') AS actor_name,
+                   u.role AS actor_role
+            FROM decision_outputs dout
+            LEFT JOIN users u ON u.name = dout.human_reviewer AND u.tenant_id = dout.tenant_id
+            WHERE dout.application_id = $1 AND dout.tenant_id = $2
+              AND dout.human_action = 'overridden'
+            ORDER BY dout.acted_at ASC
             """,
             application_id, tenant_id,
         )
@@ -2183,6 +2218,20 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
     _thread_items: list[dict] = []
     _esc_seen = 0
     _decision_action = {"approve": "approved", "deny": "denied"}
+
+    def _thread_add(event_id, actor, role, action, message, category, ts):
+        _thread_items.append({
+            "event_id": str(event_id) if event_id is not None else None,
+            "actor_name": actor,
+            "actor_role": role,
+            "action": action,
+            "message": (message or "") or None,
+            "category": category,
+            "timestamp": ts.isoformat() if ts else None,
+            "time_ago": _time_ago(ts),
+            "_sort": _naive_ts(ts),
+        })
+
     for r in thread_action_rows:
         at = r["action_type"]
         if at in ("escalate", "senior_review"):
@@ -2192,23 +2241,16 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
             thr_action = _decision_action.get(at)
             if not thr_action:
                 continue
-        _thread_items.append({
-            "actor": r["actor_name"],
-            "actor_role": r["actor_role"],
-            "action": thr_action,
-            "message": r["reason_text"] or "",
-            "timestamp": r["performed_at"].isoformat() if r["performed_at"] else None,
-            "_sort": _naive_ts(r["performed_at"]),
-        })
-    for r in thread_feedback_rows:
-        _thread_items.append({
-            "actor": r["actor_name"],
-            "actor_role": r["actor_role"],
-            "action": "returned_feedback",
-            "message": r["message"] or "",
-            "timestamp": r["created_at"].isoformat() if r["created_at"] else None,
-            "_sort": _naive_ts(r["created_at"]),
-        })
+        _thread_add(r["id"], r["actor_name"], r["actor_role"], thr_action,
+                    r["reason_text"], r["reason_category"], r["performed_at"])
+    for r in thread_attention_rows:
+        action = "recommend_approval" if r["source"] == "uw_recommendation" else "returned_feedback"
+        _thread_add(r["request_id"], r["actor_name"], r["actor_role"], action,
+                    r["message"], r["category"], r["created_at"])
+    for r in thread_override_rows:
+        _thread_add(r["id"], r["actor_name"], r["actor_role"], "overridden",
+                    r["human_override_reason"], None, r["acted_at"])
+
     _thread_items.sort(key=lambda x: x["_sort"])
     escalation_thread = [
         {k: v for k, v in it.items() if k != "_sort"} for it in _thread_items
