@@ -199,6 +199,8 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
   const [docsDismissed, setDocsDismissed] = useState<Set<string>>(new Set())
   const [returnOpen, setReturnOpen] = useState(false)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
+  const [recommendOpen, setRecommendOpen] = useState(false)
+  const [recommended, setRecommended] = useState(false)
   const [newDoc, setNewDoc] = useState(false)
 
   useEffect(() => {
@@ -317,6 +319,19 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
       navigate('/pipeline')
     } catch {
       setToast('Could not re-escalate — please try again.')
+      setTimeout(() => setToast(null), 2500)
+    }
+  }
+  // UW recommends a clean file for approval → senior UW decides.
+  async function sendRecommendation(notes: string) {
+    try {
+      await decideLoan(applicationId, { action: 'recommend_approval', note: notes })
+      setRecommendOpen(false)
+      setRecommended(true)
+      setToast('Recommendation sent to Senior UW')
+      setTimeout(() => setToast(null), 2500)
+    } catch {
+      setToast('Could not send recommendation — please try again.')
       setTimeout(() => setToast(null), 2500)
     }
   }
@@ -652,9 +667,12 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
               canOverride={canOverride}
               canEscalate={canEscalate}
               showFeedback={isSeniorUW && !!loan.escalated_by}
+              showRecommend={role === ROLES.UW && (summary?.blocking_conditions ?? 0) === 0 && loan.assigned_to === effectiveUser?.user_id && !recommended}
+              recommendedPending={recommended}
               onAction={openAction}
               onDecide={(m) => setDecideModal(m)}
               onSendFeedback={() => setFeedbackOpen(true)}
+              onRecommend={() => setRecommendOpen(true)}
             />
             <SimilarFiles similar={similar} />
           </div>
@@ -721,6 +739,17 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
       )}
       {feedbackOpen && (
         <FeedbackModal toName={loan.escalated_by_name ?? 'the underwriter'} onClose={() => setFeedbackOpen(false)} onSend={(cat, msg) => sendFeedback(cat, msg)} />
+      )}
+      {recommendOpen && (
+        <RecommendModal
+          borrowerName={loan.borrower?.name ?? DASH}
+          creditScore={nonZero(loan.metrics?.credit_score) ?? DASH}
+          ltv={pct(loan.metrics?.ltv)}
+          dti={pct(nonZero(loan.metrics?.dti) ?? signalNumber(loan, 'dti_calculation', ['dti']))}
+          ausResult={(loan as any).aus_result ?? DASH}
+          onClose={() => setRecommendOpen(false)}
+          onSend={(notes) => sendRecommendation(notes)}
+        />
       )}
       {toast && (
         <div className="fixed bottom-16 left-1/2 z-40 -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>
@@ -826,6 +855,44 @@ function DecideModal({ mode, loan, onClose, onDone }: {
 
 // RequestDocsModal + its helpers now live in ../modals/RequestDocsModal.tsx
 // (shared with the UW queue cards in pages/MyQueue.tsx).
+
+// UW recommend-for-approval modal — read-only summary + optional notes.
+function RecommendModal({ borrowerName, creditScore, ltv, dti, ausResult, onClose, onSend }: {
+  borrowerName: string; creditScore: ReactNode; ltv: ReactNode; dti: ReactNode; ausResult: ReactNode
+  onClose: () => void; onSend: (notes: string) => void
+}) {
+  const [notes, setNotes] = useState('')
+  const [busy, setBusy] = useState(false)
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="text-base font-bold text-slate-900">Recommend for approval</div>
+        <div className="mt-1 text-[12px] text-slate-500">Send your recommendation to the senior underwriter for final decision.</div>
+        <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+          <div className="font-semibold text-slate-800">{borrowerName}</div>
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-slate-600">
+            <span>FICO: <span className="font-medium text-slate-800">{creditScore}</span></span>
+            <span>LTV: <span className="font-medium text-slate-800">{ltv}</span></span>
+            <span>DTI: <span className="font-medium text-slate-800">{dti}</span></span>
+            <span>AUS: <span className="font-medium text-slate-800">{ausResult}</span></span>
+          </div>
+        </div>
+        <div className="mt-4">
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-slate-600">Notes (optional)</span>
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} autoFocus placeholder="Any notes for the senior underwriter…" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#14532d]" />
+          </label>
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+          <button onClick={() => { setBusy(true); onSend(notes.trim()) }} disabled={busy} className="rounded-lg bg-green-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-green-500 disabled:opacity-40">
+            {busy ? 'Sending…' : 'Send recommendation'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 // Senior-UW feedback modal — category radios + message (min 25) → return to UW.
 const FEEDBACK_CATEGORIES: Array<[string, string]> = [
@@ -1227,10 +1294,10 @@ function RuleCard({ badge, title, citation }: { badge: { label: string; cls: str
   )
 }
 
-function ActionPanel({ cond, fallbackAction, blockingPersona, canOverride, canEscalate, showFeedback, onAction, onDecide, onSendFeedback }: {
+function ActionPanel({ cond, fallbackAction, blockingPersona, canOverride, canEscalate, showFeedback, showRecommend, recommendedPending, onAction, onDecide, onSendFeedback, onRecommend }: {
   cond: Cond | null; fallbackAction?: string | null; blockingPersona?: string | null
-  canOverride: boolean; canEscalate: boolean; showFeedback?: boolean
-  onAction: (t: string) => void; onDecide: (mode: 'approve' | 'deny' | 'override') => void; onSendFeedback?: () => void
+  canOverride: boolean; canEscalate: boolean; showFeedback?: boolean; showRecommend?: boolean; recommendedPending?: boolean
+  onAction: (t: string) => void; onDecide: (mode: 'approve' | 'deny' | 'override') => void; onSendFeedback?: () => void; onRecommend?: () => void
 }) {
   const rec = cond?.recommended_action ?? fallbackAction ?? null
   const primary = rec ? ACTION_PRIMARY[rec] : null
@@ -1279,6 +1346,12 @@ function ActionPanel({ cond, fallbackAction, blockingPersona, canOverride, canEs
 
       {showFeedback && (
         <button onClick={onSendFeedback} className="mt-2 w-full rounded-lg border border-amber-400 bg-amber-50 px-3 py-1.5 text-left text-xs font-semibold text-amber-800 hover:bg-amber-100">📨 Send feedback to UW</button>
+      )}
+      {showRecommend && (
+        <button onClick={onRecommend} className="mt-2 w-full rounded-lg border border-green-500 bg-white px-3 py-1.5 text-left text-xs font-semibold text-green-700 hover:bg-green-50">✅ Recommend approval</button>
+      )}
+      {recommendedPending && (
+        <div className="mt-2 rounded-lg border border-green-200 bg-green-50 px-3 py-1.5 text-xs font-semibold text-green-700">⏳ Pending Senior UW decision</div>
       )}
 
       <div className="mt-2 space-y-1.5">

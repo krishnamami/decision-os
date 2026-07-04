@@ -1036,6 +1036,53 @@ async def decide(body: DecideBody, user: dict = Depends(get_current_user)) -> di
             except Exception:  # noqa: BLE001 — audit is best-effort
                 pass
             title = "Feedback sent — loan returned to the underwriter"
+        elif body.action == "recommend_approval":
+            # Clean-file forward path: a UW recommends approval; the loan goes to the
+            # senior UW for the decision (reassigned like an escalation, so the senior
+            # can actually act on it) with status pending_decision.
+            if user.get("role") not in ("underwriter", "processor"):
+                raise HTTPException(403, "Only an underwriter can recommend approval")
+            blocking = await conn.fetchval(
+                "SELECT count(*) FROM loan_condition_instances "
+                "WHERE application_id=$1 AND tenant_id=$2 AND status='open' AND blocks_closing=true",
+                app, tid)
+            if blocking and blocking > 0:
+                raise HTTPException(400, "Cannot recommend approval — blocking conditions exist")
+            senior = await conn.fetchval(
+                "SELECT user_id FROM users WHERE tenant_id=$1 AND role='senior_uw' AND is_active=true ORDER BY name LIMIT 1", tid)
+            if not senior:
+                raise HTTPException(422, "No senior underwriter available")
+            await conn.execute(
+                "UPDATE loan_assignments SET previous_assignee=assigned_to, assigned_to=$1, assigned_by=$2, "
+                "status='pending_decision', stage='decide', assigned_at=NOW() "
+                "WHERE application_id=$3 AND tenant_id=$4 AND assigned_to=$5", senior, uid, app, tid, uid)
+            await conn.execute(
+                "UPDATE entity_states SET assigned_to=$1, current_stage='decide' WHERE application_id=$2 AND tenant_id=$3",
+                senior, app, tid)
+            uw_name = user.get("name") or "The underwriter"
+            notes = (body.note or "").strip()
+            msg = f"{uw_name} reviewed {app} and recommends approval." + (f" Notes: {notes}" if notes else "")
+            await conn.execute(
+                "INSERT INTO attention_requests (application_id, tenant_id, from_user_id, to_user_id, "
+                "message, priority, status, source) VALUES ($1,$2,$3,$4,$5,'normal','open','uw_recommendation')",
+                app, tid, uid, senior, msg)
+            borrower_name = await conn.fetchval(
+                "SELECT COALESCE(ap.full_name, es.application_id) FROM entity_states es "
+                "LEFT JOIN applications a ON a.application_id = es.application_id "
+                "LEFT JOIN applicants ap ON ap.applicant_id = a.applicant_id "
+                "WHERE es.application_id=$1 AND es.tenant_id=$2", app, tid) or app
+            await conn.execute(
+                "INSERT INTO notifications (tenant_id, user_id, type, title, application_id) "
+                "VALUES ($1,$2,'uw_recommendation',$3,$4)",
+                tid, senior, f"{uw_name} recommends approval for {borrower_name} ({app})", app)
+            try:
+                await conn.execute(
+                    "INSERT INTO activity_log (tenant_id, application_id, actor, action, target, detail) "
+                    "VALUES ($1,$2,$3,'recommend_approval',$4,$5::jsonb)",
+                    tid, app, uw_name, app, json.dumps({"notes": notes}))
+            except Exception:  # noqa: BLE001 — audit is best-effort
+                pass
+            title = "Recommendation sent to Senior UW"
         else:
             raise HTTPException(400, f"Unknown action: {body.action}")
 

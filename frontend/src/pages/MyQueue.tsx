@@ -28,6 +28,8 @@ function cardTag(c: QueueCard): { dot: string; tag: string; tagCls: string } {
   if (c.queue_type === 'internal_request') {
     if (c.attention_request?.source === 'senior_uw_feedback')
       return { dot: '🟠', tag: 'FEEDBACK FROM SENIOR UW', tagCls: 'text-amber-700' }
+    if (c.attention_request?.source === 'uw_recommendation')
+      return { dot: '🟢', tag: 'UW RECOMMENDATION', tagCls: 'text-green-700' }
     return { dot: '🔵', tag: 'INTERNAL REQUEST', tagCls: 'text-blue-700' }
   }
   // Returned (borrower responded) wins over urgency — it's the salient new state.
@@ -334,16 +336,21 @@ function ActionCard({
         )}
       </div>
 
-      {internal ? (
-        <div className={`mt-2 rounded-lg px-3 py-2 text-sm ${c.attention_request!.source === 'senior_uw_feedback' ? 'bg-amber-50' : 'bg-blue-50'}`}>
-          <div className={`text-xs font-medium ${c.attention_request!.source === 'senior_uw_feedback' ? 'text-amber-700' : 'text-blue-700'}`}>From: {c.attention_request!.from}</div>
-          {c.attention_request!.source === 'senior_uw_feedback' && c.attention_request!.category && (
-            <div className="text-xs capitalize text-amber-700">Category: {c.attention_request!.category}</div>
-          )}
-          <div className="text-slate-700">"{c.attention_request!.message}"</div>
-          <div className="mt-0.5 text-xs capitalize text-slate-500">Priority: {c.attention_request!.priority}</div>
-        </div>
-      ) : (
+      {internal ? (() => {
+        const ar = c.attention_request!
+        const rec = ar.source === 'uw_recommendation'
+        const fb = ar.source === 'senior_uw_feedback'
+        const bg = rec ? 'bg-green-50' : fb ? 'bg-amber-50' : 'bg-blue-50'
+        const fg = rec ? 'text-green-700' : fb ? 'text-amber-700' : 'text-blue-700'
+        return (
+          <div className={`mt-2 rounded-lg px-3 py-2 text-sm ${bg}`}>
+            <div className={`text-xs font-medium ${fg}`}>{rec ? `Recommended by: ${ar.from}` : `From: ${ar.from}`}</div>
+            {fb && ar.category && <div className="text-xs capitalize text-amber-700">Category: {ar.category}</div>}
+            <div className="text-slate-700">"{ar.message}"</div>
+            {!rec && <div className="mt-0.5 text-xs capitalize text-slate-500">Priority: {ar.priority}</div>}
+          </div>
+        )
+      })() : (
         <div className="mt-2 space-y-1 text-sm">
           <div className="text-slate-800"><span className="font-medium text-slate-500">Key finding:</span> {c.ai_finding}</div>
           <div className="text-slate-700"><span className="font-medium text-slate-500">AI suggests:</span> "{c.ai_recommendation}"</div>
@@ -365,7 +372,7 @@ function ActionCard({
       {canAct && (
         <div className="mt-3 flex flex-wrap gap-2">
           {internal ? (
-            <button onClick={onReview} className="rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-dark">{c.attention_request?.source === 'senior_uw_feedback' ? 'Review feedback' : 'Review request'}</button>
+            <button onClick={onReview} className="rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-dark">{c.attention_request?.source === 'uw_recommendation' ? 'Review recommendation' : c.attention_request?.source === 'senior_uw_feedback' ? 'Review feedback' : 'Review request'}</button>
           ) : c.category === 'clean' ? (
             // Clean file: quick approve is the primary (green) action.
             <>

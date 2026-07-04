@@ -131,7 +131,7 @@ export async function fetchMe(): Promise<{ user: AuthUser; tenant: AuthTenant; p
 }
 
 export interface DecideInput {
-  action: 'approve' | 'deny' | 'override' | 'escalate' | 'snooze_pending_docs' | 'return_to_uw' | 'request_more_info'
+  action: 'approve' | 'deny' | 'override' | 'escalate' | 'snooze_pending_docs' | 'return_to_uw' | 'request_more_info' | 'recommend_approval'
   decision_id?: string
   feedback_message?: string
   feedback_category?: string
