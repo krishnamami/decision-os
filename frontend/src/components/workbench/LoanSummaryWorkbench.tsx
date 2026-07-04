@@ -10,9 +10,18 @@ import {
 // Role identifiers — never hardcode role strings inline.
 const ROLES = { SENIOR_UW: 'senior_uw', ADMIN: 'admin', UW: 'underwriter', PROCESSOR: 'processor', COMPLIANCE: 'compliance' } as const
 const DENIAL_CODES = ['credit', 'income', 'collateral', 'fraud', 'other']
+// Override outcomes — value, label, one-line effect. Drives the override modal
+// radios and maps to the backend override_outcome.
+const OVERRIDE_OUTCOMES = [
+  ['clear_block', 'Clear this block', 'allow pipeline to continue'],
+  ['approve', 'Approve loan', 'final approval'],
+  ['waive_condition', 'Waive condition', 'mark condition as waived'],
+  ['deny', 'Deny loan', 'final denial'],
+] as const
 import type { LoanDetail, InternalRequest, PendingDocRequest } from '../../types/accord'
 import ActionModal from './ActionModal'
 import EscalationThread from './EscalationThread'
+import ActivityFeed from '../ActivityFeed'
 import RequestDocsModal from '../modals/RequestDocsModal'
 
 // ── Presentation maps (keyed by API enum values — never business logic) ──────
@@ -672,6 +681,9 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
               </table>
             )}
           </div>
+
+          {/* Audit trail — override entries render as the exam-ready record. */}
+          <ActivityFeed activity={loan.activity ?? []} />
         </div>
 
         {/* RIGHT — sticky panel */}
@@ -790,14 +802,16 @@ function DecideModal({ mode, loan, onClose, onDone }: {
   const [denialReason, setDenialReason] = useState('')
   const [denialCode, setDenialCode] = useState(DENIAL_CODES[0])
   const [decisionId, setDecisionId] = useState((loan.decisions?.[0] as any)?.decision_id ?? '')
+  const [overrideOutcome, setOverrideOutcome] = useState<'clear_block' | 'approve' | 'waive_condition' | 'deny'>('clear_block')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
-  const title = mode === 'approve' ? 'Approve Loan' : mode === 'deny' ? 'Deny Loan' : 'Override Decision'
+  const selDec = (loan.decisions ?? []).find((d: any) => d.decision_id === decisionId) as any
+  const title = mode === 'approve' ? 'Approve Loan' : mode === 'deny' ? 'Deny Loan' : 'Override decision'
   const amount = money(loan.metrics?.loan_amount)
   const name = loan.borrower?.name ?? 'this borrower'
   const ready = mode === 'deny' ? denialReason.trim().length >= 50
-    : mode === 'override' ? (!!decisionId && reasoning.trim().length >= 25)
+    : mode === 'override' ? (!!decisionId && !!overrideOutcome && reasoning.trim().length >= 50)
     : reasoning.trim().length >= 25
 
   async function submit() {
@@ -806,7 +820,7 @@ function DecideModal({ mode, loan, onClose, onDone }: {
     try {
       const body = mode === 'approve' ? { action: 'approve' as const, reasoning: reasoning.trim(), conditions: conditions.trim() || undefined }
         : mode === 'deny' ? { action: 'deny' as const, denial_reason: denialReason.trim(), denial_code: denialCode }
-        : { action: 'override' as const, decision_id: decisionId, reasoning: reasoning.trim() }
+        : { action: 'override' as const, decision_id: decisionId, override_outcome: overrideOutcome, override_reason: reasoning.trim() }
       const res = await decideLoan(loan.application_id, body)
       onDone(res?.title || 'Done')
     } catch {
@@ -826,12 +840,35 @@ function DecideModal({ mode, loan, onClose, onDone }: {
         )}
         <div className="mt-3 space-y-3 text-sm">
           {mode === 'override' && (
-            <label className="block">
-              <span className="mb-1 block text-xs font-medium text-slate-600">Decision to override</span>
-              <select value={decisionId} onChange={(e) => setDecisionId(e.target.value)} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm">
-                {(loan.decisions ?? []).map((d: any) => <option key={d.decision_id} value={d.decision_id}>{(d.persona_name ?? d.decision_id)} — {d.outcome}</option>)}
-              </select>
-            </label>
+            <>
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium text-slate-600">Decision to override</span>
+                <select value={decisionId} onChange={(e) => setDecisionId(e.target.value)} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm">
+                  {(loan.decisions ?? []).map((d: any) => <option key={d.decision_id} value={d.decision_id}>{(d.persona_name ?? d.decision_id)} — {d.outcome}</option>)}
+                </select>
+              </label>
+              {selDec && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-[12px] leading-relaxed">
+                  <div><span className="text-slate-500">Decision:</span> <span className="font-semibold text-slate-800">{selDec.persona_name ?? selDec.decision_id}</span></div>
+                  <div><span className="text-slate-500">Original outcome:</span> <span className="font-bold uppercase text-slate-800">{selDec.outcome}</span></div>
+                  {selDec.rule && <div><span className="text-slate-500">Rule citation:</span> <span className="font-mono text-slate-700">{selDec.rule}</span></div>}
+                </div>
+              )}
+              <div>
+                <span className="mb-1 block text-xs font-medium text-slate-600">Override outcome <span className="text-red-500">*</span></span>
+                <div className="space-y-1.5">
+                  {OVERRIDE_OUTCOMES.map(([val, label, desc]) => (
+                    <label key={val} className={`flex cursor-pointer items-start gap-2 rounded-lg border px-2.5 py-1.5 ${overrideOutcome === val ? 'border-[#14532d] bg-green-50' : 'border-slate-200 hover:border-slate-300'}`}>
+                      <input type="radio" name="ovout" checked={overrideOutcome === val} onChange={() => setOverrideOutcome(val)} className="mt-0.5 accent-[#14532d]" />
+                      <span className="text-[12px]"><span className="font-medium text-slate-800">{label}</span> <span className="text-slate-500">— {desc}</span></span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] font-medium text-amber-800">
+                <span>⚠</span><span>Override decisions are permanent and appear in the regulatory audit trail.</span>
+              </div>
+            </>
           )}
           {mode === 'approve' && (
             <label className="block">
@@ -849,13 +886,14 @@ function DecideModal({ mode, loan, onClose, onDone }: {
           )}
           <label className="block">
             <span className="mb-1 flex items-center justify-between text-xs font-medium text-slate-600">
-              <span>{mode === 'deny' ? 'Denial reason' : 'Reasoning'} <span className="text-red-500">*</span></span>
-              <span className="text-slate-400">{(mode === 'deny' ? denialReason : reasoning).trim().length}/{mode === 'deny' ? 50 : 25} min</span>
+              <span>{mode === 'deny' ? 'Denial reason' : mode === 'override' ? 'Override reason' : 'Reasoning'} <span className="text-red-500">*</span></span>
+              <span className="text-slate-400">{(mode === 'deny' ? denialReason : reasoning).trim().length}/{mode === 'deny' || mode === 'override' ? 50 : 25} min</span>
             </span>
             <textarea
               value={mode === 'deny' ? denialReason : reasoning}
               onChange={(e) => (mode === 'deny' ? setDenialReason(e.target.value) : setReasoning(e.target.value))}
               rows={4}
+              placeholder={mode === 'override' ? 'Document the specific reason for overriding this decision. This will appear in the exam-ready audit trail.' : undefined}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#14532d]"
             />
           </label>
@@ -864,7 +902,7 @@ function DecideModal({ mode, loan, onClose, onDone }: {
         <div className="mt-4 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
           <button onClick={submit} disabled={!ready || busy} className={`rounded-lg px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-40 ${mode === 'deny' ? 'bg-red-600' : mode === 'approve' ? 'bg-green-600' : 'bg-[#14532d]'}`}>
-            {busy ? 'Working…' : title}
+            {busy ? 'Working…' : mode === 'override' ? 'Confirm override' : title}
           </button>
         </div>
       </div>

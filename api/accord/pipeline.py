@@ -893,6 +893,8 @@ class DecideBody(BaseModel):
     action: str  # approve | deny | escalate | override
     note: Optional[str] = None
     decision_id: Optional[str] = None      # override: which decision to override
+    override_reason: Optional[str] = None  # override: exam-trail rationale (>=50)
+    override_outcome: Optional[str] = None # override: approve|deny|clear_block|waive_condition
     reasoning: Optional[str] = None        # override/approve/deny rationale
     conditions: Optional[str] = None       # approve: optional conditions
     denial_code: Optional[str] = None      # deny: credit|income|collateral|fraud|other
@@ -939,14 +941,83 @@ async def decide(body: DecideBody, user: dict = Depends(get_current_user)) -> di
         elif body.action == "override":
             if not body.decision_id:
                 raise HTTPException(422, "decision_id is required to override")
-            if len((body.reasoning or "").strip()) < 25:
-                raise HTTPException(422, "reasoning is required (min 25 characters)")
+            override_outcome = (body.override_outcome or "").strip()
+            if override_outcome not in ("approve", "deny", "clear_block", "waive_condition"):
+                raise HTTPException(422, "override_outcome must be approve|deny|clear_block|waive_condition")
+            reason = (body.override_reason or body.reasoning or "").strip()
+            if len(reason) < 50:
+                raise HTTPException(422, "override_reason is required (min 50 characters)")
+            reviewer_name = user.get("name") or user.get("email") or str(uid)
+            # Current decision — preserve its ORIGINAL outcome for the audit trail.
+            cur = await conn.fetchrow(
+                "SELECT id, outcome, wave FROM decision_outputs "
+                "WHERE application_id=$1 AND tenant_id=$2 AND decision_id=$3 AND superseded_by IS NULL "
+                "ORDER BY version DESC LIMIT 1",
+                app, tid, body.decision_id)
+            if not cur:
+                raise HTTPException(404, "Decision not found")
+            original_outcome = cur["outcome"]
+            # New engine outcome by override type (clear_block/approve/waive all
+            # unblock the gate → 'allow'; deny → 'block').
+            new_outcome = {"approve": "allow", "clear_block": "allow",
+                           "waive_condition": "allow", "deny": "block"}[override_outcome]
             await conn.execute(
                 "UPDATE decision_outputs SET human_action='overridden', human_reviewer=$1, "
-                "human_override_reason=$2, acted_at=NOW() "
-                "WHERE application_id=$3 AND tenant_id=$4 AND decision_id=$5 AND superseded_by IS NULL",
-                user.get("name") or user.get("email") or str(uid), body.reasoning.strip(), app, tid, body.decision_id)
-            title = f"Decision overridden: {body.decision_id}"
+                "human_override_reason=$2, outcome=$3, acted_at=NOW() WHERE id=$4",
+                reviewer_name, reason, new_outcome, cur["id"])
+            # Preserve original → new as a queryable transition (drives revert +
+            # the audit trail's "Original: BLOCK → New: CLEARED").
+            try:
+                await conn.execute(
+                    "INSERT INTO decision_timeline (application_id, decision_id, wave, "
+                    "from_state, to_state, trigger, transition_at, tenant_id) "
+                    "VALUES ($1,$2,$3,$4,$5,'human_override',NOW(),$6)",
+                    app, body.decision_id, cur["wave"], original_outcome, new_outcome, tid)
+            except Exception:  # noqa: BLE001 — timeline is best-effort
+                pass
+            invalidate_agg_cache()  # a decision outcome changed → portfolio aggregates
+            # Waive open blocking conditions when requested.
+            waived = 0
+            if override_outcome == "waive_condition":
+                res = await conn.execute(
+                    "UPDATE loan_condition_instances SET status='waived', cleared_at=NOW(), "
+                    "notes=CONCAT(COALESCE(notes,''), $3::text), updated_at=NOW() "
+                    "WHERE application_id=$1 AND tenant_id=$2 AND status='open' AND blocks_closing=true",
+                    app, tid, f"\n[waived by {reviewer_name}]: {reason}")
+                waived = int(res.split()[-1]) if res and res.startswith("UPDATE") else 0
+            # Final-decision override types mirror the approve/deny loan-state moves.
+            if override_outcome == "approve":
+                await conn.execute("UPDATE loan_assignments SET status='decided', completed_at=NOW() WHERE application_id=$1 AND tenant_id=$2 AND assigned_to=$3", app, tid, uid)
+                await conn.execute("UPDATE entity_states SET loan_status='decided' WHERE application_id=$1 AND tenant_id=$2", app, tid)
+            elif override_outcome == "deny":
+                await conn.execute("UPDATE loan_assignments SET status='denied', completed_at=NOW() WHERE application_id=$1 AND tenant_id=$2 AND assigned_to=$3", app, tid, uid)
+                await conn.execute("UPDATE entity_states SET loan_status='denied' WHERE application_id=$1 AND tenant_id=$2", app, tid)
+            # clear_block / waive_condition leave the loan active so a final
+            # decision can still be made now that the gate is cleared.
+            decision_name = body.decision_id.replace("_", " ").title()
+            # Detailed audit entry — the exam-ready override record.
+            try:
+                await conn.execute(
+                    "INSERT INTO activity_log (tenant_id, application_id, actor, action, target, detail) "
+                    "VALUES ($1,$2,$3,'override',$4,$5::jsonb)",
+                    tid, app, reviewer_name, decision_name,
+                    json.dumps({"decision_id": body.decision_id, "decision_name": decision_name,
+                                "original_outcome": original_outcome, "new_outcome": new_outcome,
+                                "override_outcome": override_outcome, "reason": reason,
+                                "conditions_waived": waived}))
+            except Exception:  # noqa: BLE001 — best-effort
+                pass
+            # Notify the original underwriter (whoever escalated it) with specifics.
+            orig_uw = await conn.fetchval(
+                "SELECT assigned_by FROM loan_assignments WHERE application_id=$1 AND tenant_id=$2 "
+                "AND assigned_by IS NOT NULL ORDER BY assigned_at DESC LIMIT 1", app, tid)
+            if orig_uw and str(orig_uw) != str(uid):
+                _lbl = {"approve": "approved", "deny": "denied",
+                        "clear_block": "cleared the block", "waive_condition": "waived the condition"}[override_outcome]
+                await conn.execute(
+                    "INSERT INTO notifications (tenant_id,user_id,type,title,application_id) VALUES ($1,$2,'override',$3,$4)",
+                    tid, orig_uw, f"{reviewer_name} overrode {decision_name} on {app}: {_lbl}. Reason: {reason[:140]}", app)
+            title = f"Override recorded: {decision_name} → {override_outcome.replace('_', ' ')}"
         elif body.action == "escalate":
             senior = await conn.fetchval(
                 "SELECT user_id FROM users WHERE tenant_id=$1 AND role='senior_uw' AND is_active=true ORDER BY name LIMIT 1", tid,
@@ -1087,20 +1158,23 @@ async def decide(body: DecideBody, user: dict = Depends(get_current_user)) -> di
             raise HTTPException(400, f"Unknown action: {body.action}")
 
         # Audit trail (best-effort) — actor name + action + full reason context.
-        try:
-            detail = {"note": body.note or "", "reasoning": body.reasoning or "",
-                      "decision_id": body.decision_id or "", "denial_code": body.denial_code or "",
-                      "denial_reason": body.denial_reason or "", "conditions": body.conditions or ""}
-            await conn.execute(
-                "INSERT INTO activity_log (tenant_id, application_id, actor, action, target, detail) VALUES ($1,$2,$3,$4,$5,$6::jsonb)",
-                tid, app, user.get("name") or user.get("email", "user"), body.action, app, json.dumps(detail),
-            )
-        except Exception:  # noqa: BLE001 — best-effort
-            pass
+        # override writes its own richer entry above, so skip the generic one.
+        if body.action != "override":
+            try:
+                detail = {"note": body.note or "", "reasoning": body.reasoning or "",
+                          "decision_id": body.decision_id or "", "denial_code": body.denial_code or "",
+                          "denial_reason": body.denial_reason or "", "conditions": body.conditions or ""}
+                await conn.execute(
+                    "INSERT INTO activity_log (tenant_id, application_id, actor, action, target, detail) VALUES ($1,$2,$3,$4,$5,$6::jsonb)",
+                    tid, app, user.get("name") or user.get("email", "user"), body.action, app, json.dumps(detail),
+                )
+            except Exception:  # noqa: BLE001 — best-effort
+                pass
 
         # Notify the actor; and on a senior decision, notify the UW who escalated.
+        # (override already notified the original UW with a specific message.)
         await conn.execute("INSERT INTO notifications (tenant_id,user_id,type,title,application_id) VALUES ($1,$2,'decision_made',$3,$4)", tid, uid, title, app)
-        if body.action in ("approve", "deny", "override"):
+        if body.action in ("approve", "deny"):
             escalator = await conn.fetchval(
                 "SELECT assigned_by FROM loan_assignments WHERE application_id=$1 AND tenant_id=$2 "
                 "AND assigned_by IS NOT NULL ORDER BY assigned_at DESC LIMIT 1", app, tid)

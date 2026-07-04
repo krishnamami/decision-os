@@ -133,6 +133,8 @@ export async function fetchMe(): Promise<{ user: AuthUser; tenant: AuthTenant; p
 export interface DecideInput {
   action: 'approve' | 'deny' | 'override' | 'escalate' | 'snooze_pending_docs' | 'return_to_uw' | 'request_more_info' | 'recommend_approval'
   decision_id?: string
+  override_reason?: string
+  override_outcome?: 'approve' | 'deny' | 'clear_block' | 'waive_condition'
   feedback_message?: string
   feedback_category?: string
   reasoning?: string
