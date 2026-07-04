@@ -127,6 +127,8 @@ export interface InternalRequest {
   from_user_id: string
   message: string
   priority: string
+  category: string | null
+  source: string | null   // 'senior_uw_feedback' → render as the amber feedback variant
   created_at: string | null
 }
 

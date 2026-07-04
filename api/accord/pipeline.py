@@ -615,7 +615,7 @@ async def my_queue(
         decisions = await _page_decisions(conn, tenant_id, app_ids)
         attn_rows = await conn.fetch(
             """
-            SELECT ar.request_id, ar.application_id, ar.message, ar.priority, u.name AS from_name
+            SELECT ar.request_id, ar.application_id, ar.message, ar.priority, ar.category, ar.source, u.name AS from_name
             FROM attention_requests ar LEFT JOIN users u ON u.user_id = ar.from_user_id
             WHERE ar.to_user_id = $1 AND ar.status = 'open'
             """,
@@ -715,7 +715,7 @@ async def my_queue(
             "ai_finding": ai["ai_finding"],
             "ai_data_sources": ai["ai_data_sources"],
             "ai_recommendation": ai["ai_recommendation"],
-            "attention_request": ({"request_id": str(a["request_id"]), "from": a["from_name"], "message": a["message"], "priority": a["priority"]} if a else None),
+            "attention_request": ({"request_id": str(a["request_id"]), "from": a["from_name"], "message": a["message"], "priority": a["priority"], "category": a.get("category"), "source": a.get("source")} if a else None),
             "senior_review": app in sr_apps,
         }
         if st == "pending_borrower":
@@ -742,7 +742,7 @@ async def my_queue(
             "category": "other", "sla_days": 5,
             "days_in_queue": None, "rate_lock_days": None, "urgency": "urgent" if a["priority"] == "urgent" else "normal",
             "ai_finding": "Internal review requested", "ai_data_sources": "", "ai_recommendation": "",
-            "attention_request": {"request_id": str(a["request_id"]), "from": a["from_name"], "message": a["message"], "priority": a["priority"]},
+            "attention_request": {"request_id": str(a["request_id"]), "from": a["from_name"], "message": a["message"], "priority": a["priority"], "category": a.get("category"), "source": a.get("source")},
         })
 
     # Escalated-by-me loans → Pending Response ("Awaiting Senior UW decision").
@@ -897,6 +897,8 @@ class DecideBody(BaseModel):
     conditions: Optional[str] = None       # approve: optional conditions
     denial_code: Optional[str] = None      # deny: credit|income|collateral|fraud|other
     denial_reason: Optional[str] = None    # deny: detailed reason
+    feedback_message: Optional[str] = None   # request_more_info: senior-UW feedback (>=25)
+    feedback_category: Optional[str] = None  # request_more_info: documentation|income|...
 
 
 @router.post("/pipeline/decide")
@@ -989,6 +991,51 @@ async def decide(body: DecideBody, user: dict = Depends(get_current_user)) -> di
                 "VALUES ($1,$2,'returned_to_uw',$3,$4)", tid, target,
                 "Loan returned to you — please wait for borrower documents", app)
             title = "Returned to the underwriter"
+        elif body.action == "request_more_info":
+            # Senior UW returns the loan to the original underwriter WITH structured
+            # feedback (creates an attention_request the UW sees). Distinct from
+            # return_to_uw (which only leaves a handoff note).
+            if user.get("role") not in ("senior_uw", "admin"):
+                raise HTTPException(403, "Only a senior underwriter can send feedback")
+            msg = (body.feedback_message or "").strip()
+            if len(msg) < 25:
+                raise HTTPException(422, "feedback_message is required (min 25 characters)")
+            cat = body.feedback_category or "other"
+            if cat not in ("documentation", "income", "employment", "property", "compliance", "other"):
+                raise HTTPException(422, f"Invalid feedback_category: {cat}")
+            arow = await conn.fetchrow(
+                "SELECT previous_assignee, assigned_by FROM loan_assignments "
+                "WHERE application_id=$1 AND tenant_id=$2 AND assigned_to=$3 "
+                "ORDER BY assigned_at DESC LIMIT 1", app, tid, uid)
+            target = arow and (arow["previous_assignee"] or arow["assigned_by"])
+            if not target:
+                raise HTTPException(422, "This loan is not escalated to you")
+            await conn.execute(
+                "UPDATE loan_assignments SET previous_assignee=assigned_to, assigned_to=$1, "
+                "assigned_by=$2, status='active', stage='underwrite', assigned_at=NOW() "
+                "WHERE application_id=$3 AND tenant_id=$4 AND assigned_to=$5",
+                target, uid, app, tid, uid)
+            await conn.execute(
+                "UPDATE entity_states SET assigned_to=$1, current_stage='underwrite' WHERE application_id=$2 AND tenant_id=$3",
+                target, app, tid)
+            await conn.execute(
+                "INSERT INTO attention_requests (application_id, tenant_id, from_user_id, to_user_id, "
+                "message, priority, status, category, source) "
+                "VALUES ($1,$2,$3,$4,$5,'high','open',$6,'senior_uw_feedback')",
+                app, tid, uid, target, msg, cat)
+            me_name = user.get("name") or "Senior UW"
+            await conn.execute(
+                "INSERT INTO notifications (tenant_id, user_id, type, title, application_id) "
+                "VALUES ($1,$2,'senior_uw_feedback',$3,$4)",
+                tid, target, f"{me_name} returned {app} with feedback: {msg[:120]}", app)
+            try:
+                await conn.execute(
+                    "INSERT INTO activity_log (tenant_id, application_id, actor, action, target, detail) "
+                    "VALUES ($1,$2,$3,'returned_to_uw',$4,$5::jsonb)",
+                    tid, app, me_name, app, json.dumps({"reason": msg, "category": cat}))
+            except Exception:  # noqa: BLE001 — audit is best-effort
+                pass
+            title = "Feedback sent — loan returned to the underwriter"
         else:
             raise HTTPException(400, f"Unknown action: {body.action}")
 
@@ -1701,7 +1748,7 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
         internal_req_rows = await conn.fetch(
             """
             SELECT ar.request_id, ar.message, ar.priority, ar.created_at, ar.from_user_id,
-                   COALESCE(uf.name, 'A teammate') AS from_name
+                   ar.category, ar.source, COALESCE(uf.name, 'A teammate') AS from_name
             FROM attention_requests ar
             LEFT JOIN users uf ON uf.user_id = ar.from_user_id
             WHERE ar.application_id = $1 AND ar.tenant_id = $2
@@ -1882,6 +1929,8 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
             "from_user_id": str(r["from_user_id"]),
             "message": r["message"],
             "priority": r["priority"],
+            "category": r["category"],
+            "source": r["source"],
             "created_at": r["created_at"].isoformat() if r["created_at"] else None,
         }
         for r in internal_req_rows

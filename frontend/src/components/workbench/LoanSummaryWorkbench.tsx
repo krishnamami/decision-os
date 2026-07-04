@@ -198,6 +198,7 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
   const [replyReq, setReplyReq] = useState<InternalRequest | null>(null)
   const [docsDismissed, setDocsDismissed] = useState<Set<string>>(new Set())
   const [returnOpen, setReturnOpen] = useState(false)
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [newDoc, setNewDoc] = useState(false)
 
   useEffect(() => {
@@ -290,6 +291,32 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
       navigate('/pipeline')
     } catch {
       setToast('Could not return the loan — please try again.')
+      setTimeout(() => setToast(null), 2500)
+    }
+  }
+  // Senior UW returns an escalated loan to the underwriter with structured feedback.
+  async function sendFeedback(category: string, message: string) {
+    try {
+      await decideLoan(applicationId, { action: 'request_more_info', feedback_message: message, feedback_category: category })
+      setFeedbackOpen(false)
+      setToast(`Feedback sent to ${loan?.escalated_by_name ?? 'the underwriter'}`)
+      setTimeout(() => setToast(null), 2500)
+      navigate('/pipeline')
+    } catch {
+      setToast('Could not send feedback — please try again.')
+      setTimeout(() => setToast(null), 2500)
+    }
+  }
+  // James addresses senior feedback then re-escalates (resolves the feedback request).
+  async function reEscalate(r: InternalRequest) {
+    try {
+      await resolveAttentionRequest(applicationId, r.request_id)
+      await decideLoan(applicationId, { action: 'escalate' })
+      setToast('Re-escalated to senior UW')
+      setTimeout(() => setToast(null), 2500)
+      navigate('/pipeline')
+    } catch {
+      setToast('Could not re-escalate — please try again.')
       setTimeout(() => setToast(null), 2500)
     }
   }
@@ -514,7 +541,18 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
       {(loan.internal_requests ?? [])
         .filter((r) => !resolvedReqs.has(r.request_id))
         .sort((a, b) => Number(b.request_id === focusRequestId) - Number(a.request_id === focusRequestId))
-        .map((r) => (
+        .map((r) => r.source === 'senior_uw_feedback' ? (
+          <div key={r.request_id} className="mx-5 mt-4 rounded-lg border border-amber-300 border-l-4 border-l-amber-500 bg-amber-50 p-4">
+            <div className="text-sm font-bold text-amber-800">⚠ Feedback from {r.from}</div>
+            {r.category && <div className="mt-0.5 text-[12px] capitalize text-amber-900"><span className="font-semibold">Category:</span> {r.category}</div>}
+            <p className="mt-1 text-sm text-slate-700">"{r.message}"</p>
+            <div className="mt-1 text-[11px] text-amber-700">Received: {timeAgo(r.created_at)}</div>
+            <div className="mt-3 flex gap-2">
+              <button onClick={() => reEscalate(r)} className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-500">Re-escalate after addressing</button>
+              <button onClick={() => resolveRequest(r)} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100">Mark resolved</button>
+            </div>
+          </div>
+        ) : (
           <div key={r.request_id} className="mx-5 mt-4 rounded-lg border border-blue-200 border-l-4 border-l-blue-500 bg-blue-50 p-4">
             <div className="text-sm font-bold text-blue-800">📋 Internal request from {r.from}</div>
             <p className="mt-1 text-sm text-slate-700">"{r.message}"</p>
@@ -613,8 +651,10 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
               blockingPersona={loan.blocking_persona}
               canOverride={canOverride}
               canEscalate={canEscalate}
+              showFeedback={isSeniorUW && !!loan.escalated_by}
               onAction={openAction}
               onDecide={(m) => setDecideModal(m)}
+              onSendFeedback={() => setFeedbackOpen(true)}
             />
             <SimilarFiles similar={similar} />
           </div>
@@ -678,6 +718,9 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
       )}
       {returnOpen && (
         <ReturnToUwModal onClose={() => setReturnOpen(false)} onSend={(msg) => returnToUw(msg)} />
+      )}
+      {feedbackOpen && (
+        <FeedbackModal toName={loan.escalated_by_name ?? 'the underwriter'} onClose={() => setFeedbackOpen(false)} onSend={(cat, msg) => sendFeedback(cat, msg)} />
       )}
       {toast && (
         <div className="fixed bottom-16 left-1/2 z-40 -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>
@@ -783,6 +826,71 @@ function DecideModal({ mode, loan, onClose, onDone }: {
 
 // RequestDocsModal + its helpers now live in ../modals/RequestDocsModal.tsx
 // (shared with the UW queue cards in pages/MyQueue.tsx).
+
+// Senior-UW feedback modal — category radios + message (min 25) → return to UW.
+const FEEDBACK_CATEGORIES: Array<[string, string]> = [
+  ['documentation', 'Documentation needed'],
+  ['income', 'Income clarification'],
+  ['employment', 'Employment verification'],
+  ['property', 'Property concern'],
+  ['compliance', 'Compliance issue'],
+  ['other', 'Other'],
+]
+
+function FeedbackModal({ toName, onClose, onSend }: {
+  toName: string; onClose: () => void; onSend: (category: string, message: string) => void
+}) {
+  const [category, setCategory] = useState('documentation')
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+  const len = message.trim().length
+  const ready = len >= 25 && !busy
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="text-base font-bold text-slate-900">Send feedback to underwriter</div>
+        <div className="mt-1 text-[12px] text-slate-500">Return this loan to {toName} with your feedback.</div>
+
+        <div className="mt-4">
+          <div className="mb-1.5 text-xs font-semibold text-slate-600">Feedback category</div>
+          <div className="space-y-1.5">
+            {FEEDBACK_CATEGORIES.map(([k, label]) => (
+              <label key={k} className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+                <input type="radio" name="fbcat" checked={category === k} onChange={() => setCategory(k)} className="accent-[#14532d]" />
+                {label}
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-4">
+          <label className="block">
+            <span className="mb-1 flex items-center justify-between text-xs font-semibold text-slate-600">
+              <span>Feedback message <span className="text-red-500">*</span></span>
+              <span className={len < 25 ? 'text-slate-400' : 'text-green-600'}>{len}/25 min</span>
+            </span>
+            <textarea
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              rows={4}
+              autoFocus
+              placeholder={`Explain what you need ${toName} to address before you can make a decision…`}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#14532d]"
+            />
+          </label>
+        </div>
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+          <button onClick={() => { setBusy(true); onSend(category, message.trim()) }} disabled={!ready}
+            className="rounded-lg bg-amber-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-amber-500 disabled:opacity-40">
+            {busy ? 'Sending…' : 'Send feedback & return to UW'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 // Return-to-UW modal — prefilled message; reassigns the loan to the original UW.
 function ReturnToUwModal({ onClose, onSend }: { onClose: () => void; onSend: (msg: string) => void }) {
@@ -1119,9 +1227,10 @@ function RuleCard({ badge, title, citation }: { badge: { label: string; cls: str
   )
 }
 
-function ActionPanel({ cond, fallbackAction, blockingPersona, canOverride, canEscalate, onAction, onDecide }: {
+function ActionPanel({ cond, fallbackAction, blockingPersona, canOverride, canEscalate, showFeedback, onAction, onDecide, onSendFeedback }: {
   cond: Cond | null; fallbackAction?: string | null; blockingPersona?: string | null
-  canOverride: boolean; canEscalate: boolean; onAction: (t: string) => void; onDecide: (mode: 'approve' | 'deny' | 'override') => void
+  canOverride: boolean; canEscalate: boolean; showFeedback?: boolean
+  onAction: (t: string) => void; onDecide: (mode: 'approve' | 'deny' | 'override') => void; onSendFeedback?: () => void
 }) {
   const rec = cond?.recommended_action ?? fallbackAction ?? null
   const primary = rec ? ACTION_PRIMARY[rec] : null
@@ -1166,6 +1275,10 @@ function ActionPanel({ cond, fallbackAction, blockingPersona, canOverride, canEs
           <button onClick={() => onDecide('approve')} className="w-full rounded-lg bg-green-600 px-3 py-1.5 text-left text-xs font-semibold text-white hover:bg-green-500">✓ Approve</button>
           <button onClick={() => onDecide('deny')} className="w-full rounded-lg bg-red-600 px-3 py-1.5 text-left text-xs font-semibold text-white hover:bg-red-500">✕ Deny</button>
         </div>
+      )}
+
+      {showFeedback && (
+        <button onClick={onSendFeedback} className="mt-2 w-full rounded-lg border border-amber-400 bg-amber-50 px-3 py-1.5 text-left text-xs font-semibold text-amber-800 hover:bg-amber-100">📨 Send feedback to UW</button>
       )}
 
       <div className="mt-2 space-y-1.5">

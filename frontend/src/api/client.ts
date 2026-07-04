@@ -131,8 +131,10 @@ export async function fetchMe(): Promise<{ user: AuthUser; tenant: AuthTenant; p
 }
 
 export interface DecideInput {
-  action: 'approve' | 'deny' | 'override' | 'escalate' | 'snooze_pending_docs' | 'return_to_uw'
+  action: 'approve' | 'deny' | 'override' | 'escalate' | 'snooze_pending_docs' | 'return_to_uw' | 'request_more_info'
   decision_id?: string
+  feedback_message?: string
+  feedback_category?: string
   reasoning?: string
   conditions?: string
   denial_code?: string
@@ -161,7 +163,7 @@ export interface QueueCard {
   ai_data_sources: string
   ai_recommendation: string
   senior_review?: boolean
-  attention_request: { request_id: string; from: string; message: string; priority: string } | null
+  attention_request: { request_id: string; from: string; message: string; priority: string; category?: string | null; source?: string | null } | null
   requesting?: string[]
   sent?: string | null
   due_date?: string | null

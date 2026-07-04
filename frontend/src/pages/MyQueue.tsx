@@ -25,7 +25,11 @@ const FILTER_LABEL: Record<'active' | 'pending' | 'decided', string> = {
 
 // queue_type/urgency → dot + tag shown on each action card.
 function cardTag(c: QueueCard): { dot: string; tag: string; tagCls: string } {
-  if (c.queue_type === 'internal_request') return { dot: '🔵', tag: 'INTERNAL REQUEST', tagCls: 'text-blue-700' }
+  if (c.queue_type === 'internal_request') {
+    if (c.attention_request?.source === 'senior_uw_feedback')
+      return { dot: '🟠', tag: 'FEEDBACK FROM SENIOR UW', tagCls: 'text-amber-700' }
+    return { dot: '🔵', tag: 'INTERNAL REQUEST', tagCls: 'text-blue-700' }
+  }
   // Returned (borrower responded) wins over urgency — it's the salient new state.
   if (c.queue_type === 'returned') return { dot: '🟢', tag: 'RETURNED', tagCls: 'text-green-700' }
   if (c.urgency === 'urgent') return { dot: '🔴', tag: 'URGENT', tagCls: 'text-red-700' }
@@ -331,8 +335,11 @@ function ActionCard({
       </div>
 
       {internal ? (
-        <div className="mt-2 rounded-lg bg-blue-50 px-3 py-2 text-sm">
-          <div className="text-xs font-medium text-blue-700">From: {c.attention_request!.from}</div>
+        <div className={`mt-2 rounded-lg px-3 py-2 text-sm ${c.attention_request!.source === 'senior_uw_feedback' ? 'bg-amber-50' : 'bg-blue-50'}`}>
+          <div className={`text-xs font-medium ${c.attention_request!.source === 'senior_uw_feedback' ? 'text-amber-700' : 'text-blue-700'}`}>From: {c.attention_request!.from}</div>
+          {c.attention_request!.source === 'senior_uw_feedback' && c.attention_request!.category && (
+            <div className="text-xs capitalize text-amber-700">Category: {c.attention_request!.category}</div>
+          )}
           <div className="text-slate-700">"{c.attention_request!.message}"</div>
           <div className="mt-0.5 text-xs capitalize text-slate-500">Priority: {c.attention_request!.priority}</div>
         </div>
@@ -358,7 +365,7 @@ function ActionCard({
       {canAct && (
         <div className="mt-3 flex flex-wrap gap-2">
           {internal ? (
-            <button onClick={onReview} className="rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-dark">Review request</button>
+            <button onClick={onReview} className="rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-dark">{c.attention_request?.source === 'senior_uw_feedback' ? 'Review feedback' : 'Review request'}</button>
           ) : c.category === 'clean' ? (
             // Clean file: quick approve is the primary (green) action.
             <>
