@@ -70,7 +70,17 @@ class CreditRiskAgent(LendingPersona):
         thin_file = bool(credit.get("thin_file") or False)
         no_derog_24 = bool(credit.get("no_derogatory_last_24_months") or False)
 
-        band = _band_for(score)
+        # Catalogue-driven band thresholds + high-utilization cutoff
+        # (ContextEnricher._attach_credit_bands injects them); fall back to the
+        # module constants when not present.
+        ev = latest_object(bundle, "evidence") or {}
+        _inj_bands = ev.get("credit_bands")
+        _bands = [(t, l) for t, l in _inj_bands] if _inj_bands else _BAND_THRESHOLDS
+        util_high = ev.get("credit_utilization_high_threshold")
+        if util_high is None:
+            util_high = 0.6
+
+        band = _band_for(score, _bands)
         if thin_file:
             band = "thin_file"
 
@@ -84,7 +94,7 @@ class CreditRiskAgent(LendingPersona):
                 credit.get("credit_utilization"),
                 direction=(
                     SignalDirection.CONTRADICTS
-                    if (credit.get("credit_utilization") or 0) > 0.6
+                    if (credit.get("credit_utilization") or 0) > util_high
                     else SignalDirection.NEUTRAL
                 ),
             ),
@@ -182,8 +192,8 @@ class CreditRiskAgent(LendingPersona):
         # (income_documentation_confidence_min, Fannie B3-3.1-01, governed_by=
         # agency) the enricher attaches to every bundle; the constant is a
         # catalogue-unreachable safety net only. Graceful: non-meridian apps
-        # have no evidence object → no signals.
-        ev = latest_object(bundle, "evidence") or {}
+        # have no evidence object → no signals. (ev was resolved above for the
+        # band thresholds.)
         evidence_populated = bool(ev.get("evidence_populated"))
         ev_credit_value = ev.get("ev_credit_value")
         ev_credit_conf = ev.get("ev_credit_confidence")
@@ -263,10 +273,10 @@ class CreditRiskAgent(LendingPersona):
         )
 
 
-def _band_for(score: Optional[int]) -> str:
+def _band_for(score: Optional[int], thresholds=None) -> str:
     if score is None:
         return "thin_file"
-    for threshold, label in _BAND_THRESHOLDS:
+    for threshold, label in (thresholds or _BAND_THRESHOLDS):
         if score >= threshold:
             return label
     return "deep_subprime"

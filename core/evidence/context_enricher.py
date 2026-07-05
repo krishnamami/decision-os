@@ -446,6 +446,41 @@ class ContextEnricher:
         except Exception:
             pass
 
+    # Credit band thresholds (min score per band) — guideline_name -> band label.
+    _CREDIT_BAND_GUIDELINES = [
+        ("credit_band_threshold_super_prime", "super_prime"),
+        ("credit_band_threshold_prime", "prime"),
+        ("credit_band_threshold_near_prime", "near_prime"),
+        ("credit_band_threshold_subprime", "subprime"),
+    ]
+
+    async def _attach_credit_bands(self, base: dict, tenant_id: str) -> None:
+        """Resolve the per-band minimum credit scores + the high-utilization
+        threshold from the catalogue so credit_assessment reads them off the
+        bundle instead of hardcoding _BAND_THRESHOLDS / 0.6. credit_bands is a
+        [threshold, label] list sorted DESC (deep_subprime=0 floor appended).
+        Best-effort; the persona keeps its constants as the crash-guard fallback."""
+        try:
+            from core.catalogue.rule_loader import get_rule
+            bands = []
+            traces = {}
+            for gname, label in self._CREDIT_BAND_GUIDELINES:
+                r = await get_rule(self.conn, gname, tenant_id, agency="fannie", is_ceiling=False)
+                if r.get("applied") is not None:
+                    bands.append([float(r["applied"]), label])
+                traces[gname] = self._trace(r, gname)
+            if bands:
+                bands.append([0.0, "deep_subprime"])  # implicit floor
+                bands.sort(key=lambda x: x[0], reverse=True)
+                base["credit_bands"] = bands
+            base["credit_band_traces"] = traces
+            r = await get_rule(self.conn, "credit_utilization_high_threshold",
+                               tenant_id, agency="fannie", is_ceiling=True)
+            if r.get("applied") is not None:
+                base["credit_utilization_high_threshold"] = float(r["applied"])
+        except Exception:
+            pass
+
     async def evidence_facts(
         self, application_id: str, tenant_id: str,
         decision_id: Optional[str] = None,
@@ -547,6 +582,11 @@ class ContextEnricher:
             "product_matrix":                       None,
             "conforming_loan_limit":                None,
             "conforming_loan_limit_trace":          None,
+            # Credit band thresholds (only for credit_assessment; None elsewhere
+            # so the persona uses its _BAND_THRESHOLDS / 0.6 crash-guard fallback).
+            "credit_bands":                         None,
+            "credit_band_traces":                   None,
+            "credit_utilization_high_threshold":    None,
         }
 
         # Thresholds + fraud first, so they ride on every return path.
@@ -571,6 +611,8 @@ class ContextEnricher:
             await self._attach_ltv_caps(base, tenant_id)
         elif decision_id == "product_eligibility":
             await self._attach_product_eligibility(base, application_id, tenant_id)
+        elif decision_id == "credit_assessment":
+            await self._attach_credit_bands(base, tenant_id)
 
         try:
             rows = await self.conn.fetch(
