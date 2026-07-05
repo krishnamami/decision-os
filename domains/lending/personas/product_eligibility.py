@@ -122,22 +122,64 @@ class ProductEligibilityAgent(LendingPersona):
         dti = dti_payload.get("dti_ratio") or dti_payload.get("dti")
         ltv = ltv_payload.get("ltv_ratio") or ltv_payload.get("ltv")
         credit_band = credit_payload.get("credit_band") or "thin_file"
+        credit_score = credit_payload.get("credit_score")
         applicant_band_rank = _BAND_RANK.get(credit_band, 0)
+
+        # Catalogue-driven product matrix (ContextEnricher._attach_product_eligibility
+        # injects the tenant's active products + conforming loan limit). Falls back to
+        # the hardcoded _PRODUCTS (band-based) offline / when nothing is injected.
+        ev = first_object(bundle, "evidence") or {}
+        product_matrix = ev.get("product_matrix")
+        conforming_limit = ev.get("conforming_loan_limit")
+        _app0 = first_object(bundle, "Application") or {}
+
+        def _fnum(x):
+            try:
+                return float(x)
+            except (TypeError, ValueError):
+                return None
+        loan_amount_val = _fnum(_app0.get("loan_amount"))
 
         eligible: list[str] = []
         exceptions_required: list[str] = []
-        for product, dti_max, ltv_max, min_band in _PRODUCTS:
-            min_rank = _BAND_RANK[min_band]
-            band_ok = applicant_band_rank >= min_rank
-            dti_ok = dti is not None and dti <= dti_max
-            ltv_ok = ltv is not None and ltv <= ltv_max
-            if band_ok and dti_ok and ltv_ok:
-                eligible.append(product)
-            elif band_ok and (
-                (dti is not None and dti <= dti_max + 0.05)
-                or (ltv is not None and ltv <= ltv_max + 0.02)
-            ):
-                exceptions_required.append(product)
+        if product_matrix:
+            # DB path: filter by min_credit_score / max_dti / max_ltv / max_loan_amount,
+            # and route conforming vs jumbo by loan amount (not just product name).
+            for p in product_matrix:
+                name = p.get("product_name")
+                dti_max = p.get("max_dti")
+                ltv_max = p.get("max_ltv")
+                score_min = p.get("min_credit_score")
+                amount_max = p.get("max_loan_amount")
+                is_conforming = str(p.get("loan_type") or "").lower() in ("conventional", "conforming")
+                score_ok = score_min is None or credit_score is None or credit_score >= score_min
+                dti_ok = dti_max is not None and dti is not None and dti <= dti_max
+                ltv_ok = ltv_max is not None and ltv is not None and ltv <= ltv_max
+                amount_ok = amount_max is None or (loan_amount_val is not None and loan_amount_val <= amount_max)
+                # A jumbo-size loan cannot use a conforming product.
+                if (is_conforming and conforming_limit is not None
+                        and loan_amount_val is not None and loan_amount_val > conforming_limit):
+                    amount_ok = False
+                if score_ok and dti_ok and ltv_ok and amount_ok:
+                    eligible.append(name)
+                elif score_ok and amount_ok and (
+                    (dti_max is not None and dti is not None and dti <= dti_max + 0.05)
+                    or (ltv_max is not None and ltv is not None and ltv <= ltv_max + 0.02)
+                ):
+                    exceptions_required.append(name)
+        else:
+            for product, dti_max, ltv_max, min_band in _PRODUCTS:
+                min_rank = _BAND_RANK[min_band]
+                band_ok = applicant_band_rank >= min_rank
+                dti_ok = dti is not None and dti <= dti_max
+                ltv_ok = ltv is not None and ltv <= ltv_max
+                if band_ok and dti_ok and ltv_ok:
+                    eligible.append(product)
+                elif band_ok and (
+                    (dti is not None and dti <= dti_max + 0.05)
+                    or (ltv is not None and ltv <= ltv_max + 0.02)
+                ):
+                    exceptions_required.append(product)
 
         signals = [
             make_signal("dti_ratio", dti, source="dti_calculation"),
@@ -231,7 +273,7 @@ class ProductEligibilityAgent(LendingPersona):
         # driven outcome above — so 16/16 holds. Threshold is the catalogue
         # documentation-confidence floor (Fannie B3-3.1-01, governed_by=agency)
         # on every bundle; the constant is a catalogue-unreachable safety net.
-        ev = first_object(bundle, "evidence") or {}
+        # (ev was resolved above for the product matrix.)
         evidence_populated = bool(ev.get("evidence_populated"))
         evidence_any_conflicts = bool(ev.get("evidence_any_conflicts"))
         evidence_overall_conf = ev.get("evidence_overall_confidence")
@@ -255,6 +297,9 @@ class ProductEligibilityAgent(LendingPersona):
         return OfflineReasoning(
             output_payload={
                 "eligible_products": eligible,
+                # Provenance: catalogue-driven when a product matrix was injected.
+                "products_source": "products_table" if product_matrix else "hardcoded_fallback",
+                "conforming_loan_limit": conforming_limit,
                 "guideline_exceptions_required": exceptions_required,
                 "no_eligible_products": not eligible,
                 "no_guideline_exceptions_required": not exceptions_required,

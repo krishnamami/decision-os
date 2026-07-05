@@ -410,6 +410,42 @@ class ContextEnricher:
         except Exception:
             pass
 
+    async def _attach_product_eligibility(
+        self, base: dict, application_id: str, tenant_id: str
+    ) -> None:
+        """Inject the tenant's active products + the conforming loan limit so
+        product_eligibility reads the catalogue instead of hardcoding _PRODUCTS.
+        max_dti/max_ltv are percent in the table -> fractions here. Best-effort;
+        the persona keeps _PRODUCTS as the crash-guard fallback."""
+        try:
+            rows = await self.conn.fetch(
+                """SELECT product_name, loan_type, max_loan_amount, min_credit_score,
+                          max_dti, max_ltv
+                   FROM products WHERE tenant_id=$1 AND is_active=true
+                   ORDER BY product_name""",
+                tenant_id,
+            )
+            products = [{
+                "product_name": r["product_name"],
+                "loan_type": r["loan_type"],
+                "max_loan_amount": float(r["max_loan_amount"]) if r["max_loan_amount"] is not None else None,
+                "min_credit_score": int(r["min_credit_score"]) if r["min_credit_score"] is not None else None,
+                "max_dti": float(r["max_dti"]) / 100.0 if r["max_dti"] is not None else None,
+                "max_ltv": float(r["max_ltv"]) / 100.0 if r["max_ltv"] is not None else None,
+            } for r in rows]
+            base["product_matrix"] = products or None
+        except Exception:
+            pass
+        try:
+            from core.catalogue.rule_loader import get_rule
+            r = await get_rule(self.conn, "conforming_loan_limit", tenant_id,
+                               agency="fannie", is_ceiling=True)
+            if r.get("applied") is not None:
+                base["conforming_loan_limit"] = float(r["applied"])
+            base["conforming_loan_limit_trace"] = self._trace(r, "conforming_loan_limit")
+        except Exception:
+            pass
+
     async def evidence_facts(
         self, application_id: str, tenant_id: str,
         decision_id: Optional[str] = None,
@@ -506,6 +542,11 @@ class ContextEnricher:
             # persona uses its _MAX_LTV_BY_BAND crash-guard fallback).
             "ltv_caps_by_band":                     None,
             "ltv_caps_trace":                       None,
+            # Product catalogue (only for product_eligibility; None elsewhere so
+            # the persona uses its _PRODUCTS crash-guard fallback).
+            "product_matrix":                       None,
+            "conforming_loan_limit":                None,
+            "conforming_loan_limit_trace":          None,
         }
 
         # Thresholds + fraud first, so they ride on every return path.
@@ -528,6 +569,8 @@ class ContextEnricher:
             await self._attach_pricing(base, application_id, tenant_id)
         elif decision_id == "ltv_assessment":
             await self._attach_ltv_caps(base, tenant_id)
+        elif decision_id == "product_eligibility":
+            await self._attach_product_eligibility(base, application_id, tenant_id)
 
         try:
             rows = await self.conn.fetch(
