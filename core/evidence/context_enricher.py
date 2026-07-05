@@ -508,6 +508,32 @@ class ContextEnricher:
         except Exception:
             pass
 
+    # income_verification confidence scores + block threshold (name = base key).
+    _INCOME_CONFIDENCE_KEYS = [
+        "income_confidence_auto_verified",
+        "income_confidence_partial",
+        "income_confidence_conflict",
+        "income_confidence_missing",
+        "income_discrepancy_block_pct",
+    ]
+
+    async def _attach_income_confidence(self, base: dict, tenant_id: str) -> None:
+        """Resolve the income_verification confidence scores + discrepancy-block
+        threshold from the catalogue and inject them so the persona reads them
+        instead of hardcoding. Best-effort; the persona keeps the literals as
+        crash-guard fallbacks."""
+        try:
+            from core.catalogue.rule_loader import get_rule
+            traces = {}
+            for gname in self._INCOME_CONFIDENCE_KEYS:
+                r = await get_rule(self.conn, gname, tenant_id, agency="fannie")
+                if r.get("applied") is not None:
+                    base[gname] = float(r["applied"])
+                traces[gname] = self._trace(r, gname)
+            base["income_confidence_traces"] = traces
+        except Exception:
+            pass
+
     async def evidence_facts(
         self, application_id: str, tenant_id: str,
         decision_id: Optional[str] = None,
@@ -617,6 +643,8 @@ class ContextEnricher:
             # employment_reconciliation thresholds (only for that decision; None
             # elsewhere so the persona uses its hardcoded constants).
             "employment_threshold_traces":          None,
+            # income_verification confidence scores (only for that decision).
+            "income_confidence_traces":             None,
         }
 
         # Thresholds + fraud first, so they ride on every return path.
@@ -635,6 +663,7 @@ class ContextEnricher:
             await self._attach_compensating_factor_inputs(base, application_id, tenant_id)
         elif decision_id == "income_verification":
             await self._attach_income_entity(base, application_id, tenant_id)
+            await self._attach_income_confidence(base, tenant_id)
         elif decision_id == "rate_pricing":
             await self._attach_pricing(base, application_id, tenant_id)
         elif decision_id == "ltv_assessment":

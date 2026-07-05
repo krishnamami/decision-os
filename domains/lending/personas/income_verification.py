@@ -126,20 +126,36 @@ class IncomeVerificationAgent(LendingPersona):
         else:
             discrepancy = 0.0
 
+        # Catalogue-driven confidence scores + block threshold (ContextEnricher.
+        # _attach_income_confidence injects them); fall back to the hardcoded
+        # constants. The 0.05 comp-drift split + the 0.9/0.85 gates + penalties
+        # below stay hardcoded (tracked as a separate future item).
+        ev = latest_object(bundle, "evidence") or {}
+
+        def _t(key, default):
+            v = ev.get(key)
+            return default if v is None else float(v)
+
+        c_auto = _t("income_confidence_auto_verified", 0.95)
+        c_partial = _t("income_confidence_partial", 0.82)
+        c_conflict = _t("income_confidence_conflict", 0.55)
+        c_missing = _t("income_confidence_missing", 0.40)
+        block_pct = _t("income_discrepancy_block_pct", 0.25)
+
         # ── Confidence — derived from upstream status, not invented ──
         if reconciliation_status == "auto_verified":
-            confidence_score = 0.95
+            confidence_score = c_auto
         elif reconciliation_status == "partial":
             # Partial-but-clean (no provider conflict, stated matches
             # verified) is the common single-employer / single-provider
             # case. Worth high confidence — reconciliation didn't fail,
             # we just don't have multi-employer history. Provider
             # conflict drops it below the automate threshold.
-            confidence_score = 0.95 if comp_drift_pct <= 0.05 else 0.82
+            confidence_score = c_auto if comp_drift_pct <= 0.05 else c_partial
         elif reconciliation_status == "conflict":
-            confidence_score = 0.55
+            confidence_score = c_conflict
         else:  # missing
-            confidence_score = 0.4
+            confidence_score = c_missing
         # Penalize stated/verified divergence + non-salaried employment.
         confidence_score -= min(discrepancy, 0.3)
         if employment_type in ("self_employed", "contractor"):
@@ -147,7 +163,7 @@ class IncomeVerificationAgent(LendingPersona):
         confidence_score = max(0.0, min(1.0, confidence_score))
 
         # ── Outcome ─────────────────────────────────────────────────
-        if discrepancy > 0.25:
+        if discrepancy > block_pct:
             outcome = DecisionOutcome.BLOCK
         elif multiple_sources or foreign_income:
             outcome = DecisionOutcome.ESCALATE
@@ -260,7 +276,7 @@ class IncomeVerificationAgent(LendingPersona):
         # driven outcome or the verified_income downstream DTI consumes —
         # so 16/16 and income-sufficiency amounts are unchanged. Graceful:
         # non-meridian apps have no evidence object → stated path, no flags.
-        ev = latest_object(bundle, "evidence") or {}
+        # (ev was resolved above for the confidence thresholds.)
         evidence_populated = bool(ev.get("evidence_populated"))
         ev_income_value = ev.get("ev_income_value")
         ev_income_conf = ev.get("ev_income_confidence")
