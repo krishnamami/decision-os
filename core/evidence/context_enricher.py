@@ -534,6 +534,23 @@ class ContextEnricher:
         except Exception:
             pass
 
+    async def _attach_uw_thresholds(self, base: dict, tenant_id: str) -> None:
+        """Resolve the per-tenant underwriting risk thresholds from overlay_rules
+        and inject them for underwriting_decision. Lender policy, not agency —
+        seeded as overlay_rules(rule_type='uw_*'). Best-effort; the persona keeps
+        0.25 / 0.60 as crash-guard fallbacks."""
+        try:
+            from core.catalogue.rule_loader import get_rule
+            traces = {}
+            for gname in ("uw_auto_approve_risk_max", "uw_escalate_risk_min"):
+                r = await get_rule(self.conn, gname, tenant_id, agency="fannie")
+                if r.get("applied") is not None:
+                    base[gname] = float(r["applied"])
+                traces[gname] = self._trace(r, gname)
+            base["uw_threshold_traces"] = traces
+        except Exception:
+            pass
+
     async def evidence_facts(
         self, application_id: str, tenant_id: str,
         decision_id: Optional[str] = None,
@@ -645,6 +662,8 @@ class ContextEnricher:
             "employment_threshold_traces":          None,
             # income_verification confidence scores (only for that decision).
             "income_confidence_traces":             None,
+            # underwriting_decision risk thresholds (only for that decision).
+            "uw_threshold_traces":                  None,
         }
 
         # Thresholds + fraud first, so they ride on every return path.
@@ -658,6 +677,7 @@ class ContextEnricher:
         elif decision_id == "underwriting_decision":
             await self._attach_adverse_action(base, tenant_id)
             await self._attach_hmda_fields(base, application_id, tenant_id)
+            await self._attach_uw_thresholds(base, tenant_id)
         elif decision_id == "approval_routing":
             await self._attach_aus_result(base, application_id, tenant_id)
             await self._attach_compensating_factor_inputs(base, application_id, tenant_id)

@@ -55,6 +55,17 @@ class SeniorUnderwritingAgent(LendingPersona):
         }
         outcomes = {d: (per_upstream[d].get("outcome") or "missing") for d in _UPSTREAM_DECISIONS}
 
+        # Per-tenant UW risk thresholds from overlay_rules (ContextEnricher.
+        # _attach_uw_thresholds injects them); fall back to the hardcoded defaults.
+        ev = first_object(bundle, "evidence") or {}
+
+        def _t(key, default):
+            v = ev.get(key)
+            return default if v is None else float(v)
+
+        auto_max = _t("uw_auto_approve_risk_max", 0.25)
+        escalate_min = _t("uw_escalate_risk_min", 0.60)
+
         any_block = any(o == "block" for o in outcomes.values())
         all_auto_cleared = all(o == "allow" for o in outcomes.values())
         any_escalate_or_recommend = any(
@@ -71,7 +82,7 @@ class SeniorUnderwritingAgent(LendingPersona):
             risk_score = min(1.0, 0.10 + 0.15 * non_allow)
 
         senior_review_required = (
-            risk_score > 0.60
+            risk_score > escalate_min
             or any_escalate_or_recommend
         )
 
@@ -94,7 +105,7 @@ class SeniorUnderwritingAgent(LendingPersona):
                 round(risk_score, 3),
                 direction=(
                     SignalDirection.CONTRADICTS
-                    if risk_score > 0.60
+                    if risk_score > escalate_min
                     else SignalDirection.NEUTRAL
                 ),
                 weight=2.0,
@@ -109,10 +120,10 @@ class SeniorUnderwritingAgent(LendingPersona):
         if any_block or fraud_outcome == "block":
             outcome = DecisionOutcome.BLOCK
             confidence = 0.95
-        elif all_auto_cleared and risk_score <= 0.25:
+        elif all_auto_cleared and risk_score <= auto_max:
             outcome = DecisionOutcome.ALLOW
             confidence = 0.85
-        elif risk_score <= 0.60:
+        elif risk_score <= escalate_min:
             outcome = DecisionOutcome.RECOMMEND
             confidence = 0.7
         else:
@@ -131,7 +142,7 @@ class SeniorUnderwritingAgent(LendingPersona):
         # QUALITY signals + provenance; never move proposed_outcome → 16/16 holds.
         # Threshold is the catalogue documentation-confidence floor (Fannie
         # B3-3.1-01, governed_by=agency); the constant is a safety net only.
-        ev = first_object(bundle, "evidence") or {}
+        # (ev was resolved above for the risk thresholds.)
         evidence_populated = bool(ev.get("evidence_populated"))
         evidence_any_conflicts = bool(ev.get("evidence_any_conflicts"))
         evidence_overall_conf = ev.get("evidence_overall_confidence")
