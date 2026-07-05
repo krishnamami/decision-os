@@ -385,6 +385,31 @@ class ContextEnricher:
         except Exception:
             pass
 
+    # LTV per-band caps (advisory) — credit_band -> guideline_name.
+    _LTV_CAP_BANDS = ["super_prime", "prime", "near_prime", "subprime",
+                      "deep_subprime", "thin_file"]
+
+    async def _attach_ltv_caps(self, base: dict, tenant_id: str) -> None:
+        """Resolve the per-band max-LTV caps from the catalogue (agency_guidelines
+        'max_ltv_{band}', percent -> fraction) so ltv_assessment reads them off the
+        bundle instead of hardcoding _MAX_LTV_BY_BAND. Overlays tighten a band via
+        overlay_rules(rule_type='max_ltv_{band}'). Best-effort; the persona keeps
+        the dict as the crash-guard fallback."""
+        try:
+            from core.catalogue.rule_loader import get_rule
+            caps = {}
+            traces = {}
+            for band in self._LTV_CAP_BANDS:
+                gname = f"max_ltv_{band}"
+                r = await get_rule(self.conn, gname, tenant_id, agency="fannie", is_ceiling=True)
+                if r.get("applied") is not None:
+                    caps[band] = float(r["applied"]) / 100.0  # catalogue percent -> fraction
+                traces[gname] = self._trace(r, gname)
+            base["ltv_caps_by_band"] = caps or None
+            base["ltv_caps_trace"] = traces
+        except Exception:
+            pass
+
     async def evidence_facts(
         self, application_id: str, tenant_id: str,
         decision_id: Optional[str] = None,
@@ -477,6 +502,10 @@ class ContextEnricher:
             "pricing_usury_limit":                  None,
             "pricing_property_state":               None,
             "pricing_rule_traces":                  None,
+            # LTV per-band caps (only for ltv_assessment; None elsewhere so the
+            # persona uses its _MAX_LTV_BY_BAND crash-guard fallback).
+            "ltv_caps_by_band":                     None,
+            "ltv_caps_trace":                       None,
         }
 
         # Thresholds + fraud first, so they ride on every return path.
@@ -497,6 +526,8 @@ class ContextEnricher:
             await self._attach_income_entity(base, application_id, tenant_id)
         elif decision_id == "rate_pricing":
             await self._attach_pricing(base, application_id, tenant_id)
+        elif decision_id == "ltv_assessment":
+            await self._attach_ltv_caps(base, tenant_id)
 
         try:
             rows = await self.conn.fetch(

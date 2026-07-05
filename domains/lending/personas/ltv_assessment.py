@@ -10,6 +10,10 @@ from core.trace import SignalDirection
 from .base import LendingPersona, OfflineReasoning, first_object, make_signal, upstream_payload
 
 
+# Per-band max-LTV caps. These are now data-driven: ContextEnricher._attach_ltv_caps
+# resolves agency_guidelines 'max_ltv_{band}' (percent -> fraction) and injects
+# ltv_caps_by_band onto the bundle. This dict is ONLY the crash-guard fallback (it
+# matches the seeded catalogue values) so a missing row can never break the persona.
 _MAX_LTV_BY_BAND: dict[str, float] = {
     "super_prime": 0.97,
     "prime": 0.95,
@@ -68,7 +72,12 @@ class LTVAssessmentAgent(LendingPersona):
         appraisal_disputed = bool(prop.get("appraisal_disputed") or False)
 
         ltv = loan_amount / appraised if appraised > 0 else float("inf")
-        max_ltv = _MAX_LTV_BY_BAND.get(credit_band, 0.80)
+        # Per-band cap from the catalogue (ContextEnricher._attach_ltv_caps injects
+        # ltv_caps_by_band as fractions); the module dict is the crash-guard fallback.
+        _ltv_caps = (first_object(bundle, "evidence") or {}).get("ltv_caps_by_band") or {}
+        max_ltv = _ltv_caps.get(credit_band)
+        if max_ltv is None:
+            max_ltv = _MAX_LTV_BY_BAND.get(credit_band, 0.80)
 
         signals = [
             make_signal("appraised_value", appraised, source="property"),
@@ -150,6 +159,11 @@ class LTVAssessmentAgent(LendingPersona):
                 "ltv_ratio": round(ltv, 3) if ltv != float("inf") else None,
                 "ltv": round(ltv, 3) if ltv != float("inf") else None,
                 "max_allowable_ltv": max_ltv,
+                # Provenance: which layer set the per-band cap (agency/overlay/…).
+                "max_allowable_ltv_governed_by": (
+                    ((ev.get("ltv_caps_trace") or {}).get(f"max_ltv_{credit_band}") or {}).get("governed_by")
+                    or "safe_default"
+                ),
                 "appraised_value": appraised,
                 "loan_amount": loan_amount,
                 "appraisal_disputed": appraisal_disputed,
