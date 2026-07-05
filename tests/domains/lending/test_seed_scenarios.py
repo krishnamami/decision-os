@@ -2,7 +2,7 @@
 
 7 scenarios run on FRESH platforms each (no cross-contamination):
 
-  happy_path        — 12 decisions complete, no halt
+  happy_path        — 15 decisions complete, no halt
   fraud_block       — fraud_screening BLOCKs, halt_reason=
                       fraud_block_stops_pipeline, dependents skipped
   contamination     — DTI BLOCKs via contamination_guard
@@ -58,11 +58,12 @@ async def _fresh_platform_and_run(scenario: str):
 
 class HappyPathTests(unittest.IsolatedAsyncioTestCase):
 
-    async def test_completes_all_13_no_halt(self):
-        # 13 = 12 lending + employment_reconciliation (shadow).
+    async def test_completes_all_15_no_halt(self):
+        # 15 = 12 core lending + employment_reconciliation + asset_verification
+        # + title_assessment (all shadow/independent).
         p, res = await _fresh_platform_and_run("happy_path")
         self.assertFalse(res.execution.halted)
-        self.assertEqual(len(res.execution.completed_decisions), 13)
+        self.assertEqual(len(res.execution.completed_decisions), 15)
         self.assertEqual(len(res.execution.skipped_decisions), 0)
 
 
@@ -140,10 +141,10 @@ class ComplianceBlockTests(unittest.IsolatedAsyncioTestCase):
 
 class FhaScenarioTests(unittest.IsolatedAsyncioTestCase):
 
-    async def test_completes_all_13(self):
+    async def test_completes_all_15(self):
         p, res = await _fresh_platform_and_run("fha")
         self.assertFalse(res.execution.halted)
-        self.assertEqual(len(res.execution.completed_decisions), 13)
+        self.assertEqual(len(res.execution.completed_decisions), 15)
 
     async def test_ltv_chain_is_two_entries(self):
         # FHA loan_type → atomic_tool's agency_chain helper returns
@@ -267,14 +268,16 @@ class AuditGateTests(unittest.IsolatedAsyncioTestCase):
         records = await p.audit_store.list_for_application(
             APPLICATION_IDS["happy_path"]
         )
-        # 13 decisions → 13 audit records (12 lending + employment_reconciliation).
-        self.assertEqual(len(records), 13)
+        # 15 decisions → 15 audit records (12 core lending + employment_reconciliation
+        # + asset_verification + title_assessment).
+        self.assertEqual(len(records), 15)
         decision_types = {r.decision_type for r in records}
         for did in (
             "lead_scoring", "income_verification", "credit_assessment",
             "fraud_screening", "compliance_check", "dti_calculation",
             "ltv_assessment", "product_eligibility", "rate_pricing",
             "underwriting_decision", "approval_routing", "closing_readiness",
+            "asset_verification", "title_assessment",
         ):
             self.assertIn(did, decision_types)
 

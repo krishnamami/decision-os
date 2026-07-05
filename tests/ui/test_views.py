@@ -427,11 +427,12 @@ class ListWorkbenchesTests(unittest.TestCase):
     def setUpClass(cls):
         cls.platform = _PlatformFixture.setup()
 
-    def test_lists_all_9_owner_teams(self):
+    def test_lists_all_owner_teams(self):
         rows = list_workbenches(self.platform)
         teams = {r["owner_team"] for r in rows}
-        # 9 owner teams in decisions.yaml.
-        self.assertEqual(len(teams), 9)
+        # 11 owner teams in decisions.yaml (9 + asset_verification's and
+        # title_assessment's teams).
+        self.assertEqual(len(teams), 11)
 
     def test_underwriting_workbench_owns_5(self):
         # employment_reconciliation joined the underwriting team in the
@@ -452,7 +453,7 @@ class AuditViewTests(unittest.TestCase):
     def test_list_audit_for_application_returns_per_decision_rows(self):
         view = list_audit_for_application(self.platform, "app_happy")
         self.assertEqual(view["application_id"], "app_happy")
-        self.assertEqual(view["decision_count"], 13)
+        self.assertEqual(view["decision_count"], 15)
         decision_types = {r["decision_type"] for r in view["records"]}
         self.assertIn("credit_assessment", decision_types)
         self.assertIn("closing_readiness", decision_types)

@@ -410,7 +410,20 @@ class PolicyEvaluator:
                     gov_records.append(rec)
                 eff_exprs.append(eff)
             matched, unmatched, all_ok = self._evaluate_clause(eff_exprs, merged_context)
-            if all_ok:
+            # block_if is OR — ANY single violation blocks (bankruptcy OR
+            # foreclosure OR low-score; fair_lending OR missing_disclosures OR
+            # tx_cashout). The other clauses stay AND: automate_if = all safe
+            # conditions hold, and recommend_if encodes ranges
+            # (e.g. dti > 0.36 AND dti <= 0.43) that OR would make always-true.
+            fired = bool(matched) if clause_name == "block_if" else all_ok
+            if fired:
+                # For an OR block, cite only the item(s) that actually fired
+                # (fall back to all if expression matching can't correlate them).
+                gov_fired = gov_records
+                if clause_name == "block_if" and gov_records:
+                    matched_raws = {m.raw for m in matched}
+                    _f = [g for g in gov_records if g.get("expression") in matched_raws]
+                    gov_fired = _f or gov_records
                 return PolicyDecision(
                     decision_id=decision_id,
                     outcome=outcome,
@@ -418,7 +431,7 @@ class PolicyEvaluator:
                     matched_rules=matched,
                     unmatched_rules=unmatched,
                     reasons=[f"clause {clause_name} matched"],
-                    governed_by=gov_records,
+                    governed_by=gov_fired,
                     **version_stamp,
                 )
 

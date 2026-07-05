@@ -66,17 +66,19 @@ def _count_total(durable, entity_type: str) -> int:
 
 class YamlSeederTests(unittest.IsolatedAsyncioTestCase):
 
-    async def test_seeds_12_policies_and_versions(self):
+    async def test_seeds_all_policies_and_versions(self):
         backing, store, spec = _platform_pieces()
         durable = backing._durable  # type: ignore[attr-defined]
 
         policies, versions = await seed_policies_from_yaml(spec, store)
 
-        self.assertEqual(len(policies), 13)
-        self.assertEqual(len(versions), 13)
-        self.assertEqual(_count_active(durable, POLICY_ENTITY_TYPE), 13)
+        # One Policy + PolicyVersion per decision in decisions.yaml (currently 15).
+        n = len(spec.decisions)
+        self.assertEqual(len(policies), n)
+        self.assertEqual(len(versions), n)
+        self.assertEqual(_count_active(durable, POLICY_ENTITY_TYPE), n)
         self.assertEqual(
-            _count_active(durable, POLICY_VERSION_ENTITY_TYPE), 13
+            _count_active(durable, POLICY_VERSION_ENTITY_TYPE), n
         )
 
     async def test_every_decision_gets_lender_overlay_policy(self):
