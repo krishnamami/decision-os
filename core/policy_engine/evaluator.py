@@ -159,6 +159,14 @@ def _lookup(ctx: dict[str, Any], path: str) -> Any:
             cur = getattr(cur, part)
             continue
         return _MISSING
+    # A credit_score of 0 or negative is a "no score on file" sentinel (thin
+    # file), NOT a real sub-580 FICO — treat it as missing so a range check like
+    # `credit_score < 580` can't wrongly block it (while `credit_score is null`
+    # still escalates it).
+    if (path.rsplit(".", 1)[-1].strip() == "credit_score"
+            and isinstance(cur, (int, float)) and not isinstance(cur, bool)
+            and cur <= 0):
+        return _MISSING
     return cur
 
 
