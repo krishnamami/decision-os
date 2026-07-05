@@ -481,6 +481,33 @@ class ContextEnricher:
         except Exception:
             pass
 
+    # employment_reconciliation boundary thresholds (guideline_name = base key).
+    _EMPLOYMENT_THRESHOLDS = [
+        "employment_continuity_coverage_min",
+        "employment_max_gap_days_allowed",
+        "employer_match_confidence_min",
+        "employment_stated_drift_max_pct",
+        "employment_comp_drift_max_pct",
+        "employment_comp_drift_conflict_pct",
+        "employment_partial_coverage_min",
+    ]
+
+    async def _attach_employment_thresholds(self, base: dict, tenant_id: str) -> None:
+        """Resolve the 7 employment_reconciliation boundary thresholds from the
+        catalogue and inject them on the bundle so the persona reads them instead
+        of hardcoding. Best-effort; the persona keeps the literals as fallbacks."""
+        try:
+            from core.catalogue.rule_loader import get_rule
+            traces = {}
+            for gname in self._EMPLOYMENT_THRESHOLDS:
+                r = await get_rule(self.conn, gname, tenant_id, agency="fannie")
+                if r.get("applied") is not None:
+                    base[gname] = float(r["applied"])
+                traces[gname] = self._trace(r, gname)
+            base["employment_threshold_traces"] = traces
+        except Exception:
+            pass
+
     async def evidence_facts(
         self, application_id: str, tenant_id: str,
         decision_id: Optional[str] = None,
@@ -587,6 +614,9 @@ class ContextEnricher:
             "credit_bands":                         None,
             "credit_band_traces":                   None,
             "credit_utilization_high_threshold":    None,
+            # employment_reconciliation thresholds (only for that decision; None
+            # elsewhere so the persona uses its hardcoded constants).
+            "employment_threshold_traces":          None,
         }
 
         # Thresholds + fraud first, so they ride on every return path.
@@ -613,6 +643,8 @@ class ContextEnricher:
             await self._attach_product_eligibility(base, application_id, tenant_id)
         elif decision_id == "credit_assessment":
             await self._attach_credit_bands(base, tenant_id)
+        elif decision_id == "employment_reconciliation":
+            await self._attach_employment_thresholds(base, tenant_id)
 
         try:
             rows = await self.conn.fetch(

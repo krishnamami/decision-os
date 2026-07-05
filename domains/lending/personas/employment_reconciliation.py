@@ -343,15 +343,31 @@ class EmploymentReconciliationAgent(LendingPersona):
         # acceptable too, so this is a flag, not a fail.
         prior_employer_count = max(0, n_windows - 1)
 
+        # Catalogue-driven boundary thresholds (ContextEnricher._attach_employment_
+        # thresholds injects them); fall back to the hardcoded constants below.
+        ev = latest_object(bundle, "evidence") or {}
+
+        def _t(key, default):
+            v = ev.get(key)
+            return default if v is None else float(v)
+
+        coverage_min = _t("employment_continuity_coverage_min", 0.95)
+        max_gap_allowed = _t("employment_max_gap_days_allowed", 30)
+        employer_match_min = _t("employer_match_confidence_min", 0.90)
+        stated_drift_max = _t("employment_stated_drift_max_pct", 0.10)
+        comp_drift_max = _t("employment_comp_drift_max_pct", 0.10)
+        comp_drift_conflict = _t("employment_comp_drift_conflict_pct", 0.15)
+        partial_coverage_min = _t("employment_partial_coverage_min", 0.80)
+
         # ── Status synthesis ────────────────────────────────────────
         if not attempts:
             reconciliation_status = "missing"
-        elif coverage_pct >= 0.95 and max_gap <= 30 \
-                and employer_match_confidence >= 0.90 \
-                and stated_drift <= 0.10 \
-                and comp_drift_pct <= 0.10:
+        elif coverage_pct >= coverage_min and max_gap <= max_gap_allowed \
+                and employer_match_confidence >= employer_match_min \
+                and stated_drift <= stated_drift_max \
+                and comp_drift_pct <= comp_drift_max:
             reconciliation_status = "auto_verified"
-        elif comp_drift_pct > 0.15:
+        elif comp_drift_pct > comp_drift_conflict:
             reconciliation_status = "conflict"
         else:
             reconciliation_status = "partial"
@@ -363,7 +379,7 @@ class EmploymentReconciliationAgent(LendingPersona):
         if reconciliation_status == "auto_verified":
             outcome = DecisionOutcome.ALLOW
             confidence = 0.92
-        elif reconciliation_status == "partial" and coverage_pct >= 0.80:
+        elif reconciliation_status == "partial" and coverage_pct >= partial_coverage_min:
             outcome = DecisionOutcome.RECOMMEND
             confidence = 0.7
         elif reconciliation_status == "conflict":
@@ -390,9 +406,9 @@ class EmploymentReconciliationAgent(LendingPersona):
                 coverage_pct,
                 direction=(
                     SignalDirection.SUPPORTS
-                    if coverage_pct >= 0.95
+                    if coverage_pct >= coverage_min
                     else SignalDirection.CONTRADICTS
-                    if coverage_pct < 0.80
+                    if coverage_pct < partial_coverage_min
                     else SignalDirection.NEUTRAL
                 ),
                 source="reconciliation",
@@ -402,7 +418,7 @@ class EmploymentReconciliationAgent(LendingPersona):
                 max_gap,
                 direction=(
                     SignalDirection.CONTRADICTS
-                    if max_gap > 30
+                    if max_gap > max_gap_allowed
                     else SignalDirection.SUPPORTS
                 ),
                 source="reconciliation",
@@ -412,7 +428,7 @@ class EmploymentReconciliationAgent(LendingPersona):
                 employer_match_confidence,
                 direction=(
                     SignalDirection.SUPPORTS
-                    if employer_match_confidence >= 0.90
+                    if employer_match_confidence >= employer_match_min
                     else SignalDirection.CONTRADICTS
                 ),
                 source="reconciliation",
@@ -422,7 +438,7 @@ class EmploymentReconciliationAgent(LendingPersona):
                 comp_drift_pct,
                 direction=(
                     SignalDirection.CONTRADICTS
-                    if comp_drift_pct > 0.10
+                    if comp_drift_pct > comp_drift_max
                     else SignalDirection.NEUTRAL
                 ),
                 source="reconciliation",
@@ -432,7 +448,7 @@ class EmploymentReconciliationAgent(LendingPersona):
                 stated_drift,
                 direction=(
                     SignalDirection.CONTRADICTS
-                    if stated_drift > 0.10
+                    if stated_drift > stated_drift_max
                     else SignalDirection.NEUTRAL
                 ),
                 source="reconciliation",
@@ -472,9 +488,9 @@ class EmploymentReconciliationAgent(LendingPersona):
             reconciliation_status in ("partial", "conflict", "missing")
             and prior_employer_count == 0
         )
-        gap_letter_required = max_gap > 30
+        gap_letter_required = max_gap > max_gap_allowed
         tax_transcript_required = (
-            coverage_pct < 0.80 and prior_employer_count == 0
+            coverage_pct < partial_coverage_min and prior_employer_count == 0
         )
 
         # ── RA-PERSONA-C: evidence quality (advisory, OUTCOME-NEUTRAL) ────
@@ -483,7 +499,7 @@ class EmploymentReconciliationAgent(LendingPersona):
         # holds. Threshold is the catalogue documentation-confidence floor
         # (income_documentation_confidence_min, Fannie B3-3.1-01, governed_by=
         # agency); the constant is a catalogue-unreachable safety net only.
-        ev = latest_object(bundle, "evidence") or {}
+        # (ev was resolved above for the boundary thresholds.)
         evidence_populated = bool(ev.get("evidence_populated"))
         ev_emp_conf = ev.get("ev_employment_confidence")
         ev_emp_conflicts = bool(ev.get("ev_employment_conflicts"))
