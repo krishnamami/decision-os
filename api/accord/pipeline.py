@@ -641,7 +641,19 @@ async def my_queue(
             """,
             UUID(str(target_uid)),
         )
-        attn = {r["application_id"]: dict(r) for r in attn_rows}
+        # One internal-request card per loan. When a loan has several open requests
+        # to this user, prefer a plain (non-senior-uw) internal request so it is not
+        # shadowed by a senior_uw_feedback / uw_recommendation request — those render
+        # as their own card variants and must still surface when they stand alone.
+        _SENIOR_UW_SOURCES = ("senior_uw_feedback", "uw_recommendation")
+        attn: dict = {}
+        for _r in attn_rows:
+            _app = _r["application_id"]
+            _cur = attn.get(_app)
+            if _cur is None or (
+                _cur["source"] in _SENIOR_UW_SOURCES and _r["source"] not in _SENIOR_UW_SOURCES
+            ):
+                attn[_app] = dict(_r)
         comm_rows = await conn.fetch(
             """
             SELECT DISTINCT ON (c.application_id) c.application_id, c.items_requested, c.due_date,
