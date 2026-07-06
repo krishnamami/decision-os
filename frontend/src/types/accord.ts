@@ -125,6 +125,8 @@ export interface InternalRequest {
   request_id: string
   from: string
   from_user_id: string
+  to?: string | null            // recipient name (resolved via 3-table join)
+  addressed_to_me?: boolean     // false when visible only via loan assignment
   message: string
   priority: string
   category: string | null

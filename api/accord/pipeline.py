@@ -2000,16 +2000,31 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
             """,
             application_id, tenant_id,
         )
-        # Pending internal review requests directed AT the caller (banner source).
+        # Open internal requests visible to the caller on this loan: either
+        # addressed to them (to_user_id) OR on a loan they own (loan_assignments.
+        # assigned_to). The 3-table join resolves both the recipient and the
+        # assignee so the approve guard fires for the assigned UW even when the
+        # request was addressed to someone else. addressed_to_me gates whether the
+        # banner shows resolve/reply actions (only the recipient may resolve).
         internal_req_rows = await conn.fetch(
             """
-            SELECT ar.request_id, ar.message, ar.priority, ar.created_at, ar.from_user_id,
-                   ar.category, ar.source, COALESCE(uf.name, 'A teammate') AS from_name
-            FROM attention_requests ar
-            LEFT JOIN users uf ON uf.user_id = ar.from_user_id
-            WHERE ar.application_id = $1 AND ar.tenant_id = $2
-              AND ar.to_user_id = $3 AND ar.status = 'open'
-            ORDER BY ar.created_at DESC
+            SELECT * FROM (
+              SELECT DISTINCT ON (ar.request_id)
+                     ar.request_id, ar.message, ar.priority, ar.created_at, ar.from_user_id,
+                     ar.category, ar.source,
+                     COALESCE(uf.name, 'A teammate') AS from_name,
+                     ut.name AS to_name,
+                     (ar.to_user_id = $3) AS addressed_to_me
+              FROM attention_requests ar
+              LEFT JOIN users uf ON uf.user_id = ar.from_user_id
+              LEFT JOIN users ut ON ut.user_id = ar.to_user_id
+              LEFT JOIN loan_assignments la
+                     ON la.application_id = ar.application_id AND la.tenant_id = ar.tenant_id
+              WHERE ar.application_id = $1 AND ar.tenant_id = $2
+                AND ar.status = 'open'
+                AND (ar.to_user_id = $3 OR la.assigned_to = $3)
+              ORDER BY ar.request_id, ar.created_at DESC
+            ) t ORDER BY t.created_at DESC
             """,
             application_id, tenant_id, UUID(str(user["user_id"])),
         )
@@ -2246,6 +2261,8 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
             "request_id": str(r["request_id"]),
             "from": r["from_name"],
             "from_user_id": str(r["from_user_id"]),
+            "to": r["to_name"],
+            "addressed_to_me": bool(r["addressed_to_me"]),
             "message": r["message"],
             "priority": r["priority"],
             "category": r["category"],

@@ -610,10 +610,14 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
             {r.category && <div className="mt-0.5 text-[12px] capitalize text-amber-900"><span className="font-semibold">Category:</span> {r.category}</div>}
             <p className="mt-1 text-sm text-slate-700">"{r.message}"</p>
             <div className="mt-1 text-[11px] text-amber-700">Received: {timeAgo(r.created_at)}</div>
-            <div className="mt-3 flex gap-2">
-              <button onClick={() => reEscalate(r)} className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-500">Re-escalate after addressing</button>
-              <button onClick={() => resolveRequest(r)} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100">Mark resolved</button>
-            </div>
+            {r.addressed_to_me === false ? (
+              <div className="mt-2 text-[11px] italic text-amber-700">Directed at {r.to ?? 'a teammate'} — shown because you own this loan</div>
+            ) : (
+              <div className="mt-3 flex gap-2">
+                <button onClick={() => reEscalate(r)} className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-500">Re-escalate after addressing</button>
+                <button onClick={() => resolveRequest(r)} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100">Mark resolved</button>
+              </div>
+            )}
           </div>
         ) : (
           <div key={r.request_id} className="mx-5 mt-4 rounded-lg border border-blue-200 border-l-4 border-l-blue-500 bg-blue-50 p-4">
@@ -622,10 +626,14 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
             <div className="mt-1 text-[11px] text-slate-500">
               Priority: <span className="capitalize">{r.priority}</span> · Received: {timeAgo(r.created_at)}
             </div>
-            <div className="mt-3 flex gap-2">
-              <button onClick={() => resolveRequest(r)} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-500">Mark resolved</button>
-              <button onClick={() => setReplyReq(r)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Reply</button>
-            </div>
+            {r.addressed_to_me === false ? (
+              <div className="mt-2 text-[11px] italic text-slate-500">Directed at {r.to ?? 'a teammate'} — shown because you own this loan</div>
+            ) : (
+              <div className="mt-3 flex gap-2">
+                <button onClick={() => resolveRequest(r)} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-500">Mark resolved</button>
+                <button onClick={() => setReplyReq(r)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Reply</button>
+              </div>
+            )}
           </div>
         ))}
 
@@ -1119,7 +1127,8 @@ function ApproveGuardModal({ request, onCancel, onProceed }: {
       <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="text-base font-bold text-amber-800">⚠ Open internal request</div>
         <p className="mt-2 text-sm text-slate-700">
-          You have an open internal request from <span className="font-semibold">{request.from}</span>. Respond before approving?
+          This loan has an open internal request from <span className="font-semibold">{request.from}</span>
+          {request.addressed_to_me === false && request.to ? <> (directed at {request.to})</> : null}. Respond before approving?
         </p>
         <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[13px] italic text-slate-600">"{request.message}"</div>
         <div className="mt-4 flex justify-end gap-2">
