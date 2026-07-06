@@ -228,6 +228,60 @@
       "definition": "Registry of currently-offered loan products with their guidelines.",
       "data_type": "object",
       "owner_team": "product_ops"
+    },
+    "reconciliation_status": {
+      "canonical": "reconciliation_status",
+      "synonyms": ["employment_reconciliation_status", "recon_status"],
+      "definition": "Employment reconciliation result from multi-source payroll comparison.",
+      "data_type": "string",
+      "allowed_values": ["auto_verified", "partial", "conflict", "missing"],
+      "owner_team": "underwriting"
+    },
+    "continuity_coverage_pct": {
+      "canonical": "continuity_coverage_pct",
+      "synonyms": ["employment_continuity_coverage", "coverage_pct"],
+      "definition": "Percentage of 24-month employment history covered by verified records.",
+      "data_type": "float",
+      "range": [0.0, 1.0],
+      "owner_team": "underwriting"
+    },
+    "comp_drift_pct": {
+      "canonical": "comp_drift_pct",
+      "synonyms": ["compensation_drift", "comp_variance_pct"],
+      "definition": "Compensation variance between verification sources.",
+      "data_type": "float",
+      "range": [0.0, 1.0],
+      "owner_team": "underwriting"
+    },
+    "title_disposition": {
+      "canonical": "title_disposition",
+      "synonyms": ["title_outcome", "title_result"],
+      "definition": "Final title assessment outcome from lien and encumbrance analysis.",
+      "data_type": "string",
+      "allowed_values": ["clear", "conditions", "block", "fatal_block"],
+      "owner_team": "title_ops"
+    },
+    "adverse_action_reasons": {
+      "canonical": "adverse_action_reasons",
+      "synonyms": ["aan_reasons", "denial_reasons", "principal_reasons"],
+      "definition": "ECOA/FCRA §615 principal reasons for credit denial — required on adverse action notices within 30 days.",
+      "data_type": "list<string>",
+      "owner_team": "compliance"
+    },
+    "va_entitlement_remaining": {
+      "canonical": "va_entitlement_remaining",
+      "synonyms": ["va_remaining_entitlement", "remaining_va_entitlement"],
+      "definition": "Remaining VA loan entitlement amount after prior VA loan usage.",
+      "data_type": "float",
+      "owner_team": "product_ops"
+    },
+    "exception_score": {
+      "canonical": "exception_score",
+      "synonyms": ["compensating_factor_score", "guideline_exception_score"],
+      "definition": "Compensating factor score for guideline exception requests — higher score = stronger compensating factors.",
+      "data_type": "integer",
+      "range": [0, 20],
+      "owner_team": "underwriting"
     }
   },
 
@@ -853,6 +907,41 @@
       "label": "Purchase agreement",
       "feeds_decisions": ["ltv_assessment", "underwriting_decision", "closing_readiness"],
       "claims": ["purchase_price", "earnest_money", "closing_date_target", "seller_concessions"]
+    },
+    "purchase_agreement": {
+      "label": "Executed purchase contract between buyer and seller",
+      "feeds_decisions": ["ltv_assessment", "product_eligibility"],
+      "claims": ["purchase_price", "seller_concessions", "closing_date", "earnest_money_amount"]
+    },
+    "ssa_award_letter": {
+      "label": "Social Security Administration benefit award letter",
+      "feeds_decisions": ["income_verification"],
+      "claims": ["monthly_benefit", "is_non_taxable", "award_date", "cola_adjustment_pct"]
+    },
+    "pension_letter": {
+      "label": "Pension or retirement income verification letter",
+      "feeds_decisions": ["income_verification"],
+      "claims": ["monthly_pension", "start_date", "continuance_guaranteed", "survivor_benefit_pct"]
+    },
+    "rate_lock_agreement": {
+      "label": "Rate lock confirmation from lender",
+      "feeds_decisions": ["rate_pricing", "closing_readiness"],
+      "claims": ["locked_rate", "lock_expiry_date", "lock_period_days", "float_down_option"]
+    },
+    "hoa_certificate": {
+      "label": "HOA financial and insurance certification for condo/PUD properties",
+      "feeds_decisions": ["title_assessment", "closing_readiness"],
+      "claims": ["monthly_dues", "is_delinquent", "master_policy_active", "special_assessment_pending"]
+    },
+    "condo_questionnaire": {
+      "label": "Fannie/Freddie condo project eligibility questionnaire",
+      "feeds_decisions": ["product_eligibility", "title_assessment"],
+      "claims": ["warrantability_status", "owner_occupancy_pct", "pending_litigation", "commercial_space_pct"]
+    },
+    "divorce_decree": {
+      "label": "Court-issued divorce decree establishing alimony and child support obligations",
+      "feeds_decisions": ["income_verification", "compliance_check"],
+      "claims": ["alimony_monthly", "child_support_monthly", "effective_date", "obligation_duration_months"]
     }
   }
 }
