@@ -906,6 +906,99 @@ class EmploymentRecord(ObjectType):
     ])
 
 
+class AUSResult(ObjectType):
+    """Automated Underwriting System result (DU / LP / GUS) for an Application.
+
+    Replaces entity_states.loan_terms.aus_findings JSONB — see aus_results table.
+    Append-only: DU and LP each produce a result, and resubmissions add new rows
+    rather than overwriting the prior one."""
+
+    object_type_id: str = "AUSResult"
+    semantic_definition: str = (
+        "Parsed result from an Automated Underwriting System (Desktop "
+        "Underwriter, Loan Product Advisor, GUS) for an Application — the "
+        "recommendation, risk class, documentation level, findings, and "
+        "feedback conditions. Sourced from the aus_results table; replaces the "
+        "entity_states.loan_terms.aus_findings JSONB blob."
+    )
+    primary_key: str = "aus_result_id"
+    properties: dict[str, str] = Field(default_factory=lambda: {
+        "aus_result_id": "string",
+        "application_id": "string",
+        "loan_id": "string",
+        "system": "enum<du|lp|gus|other>",
+        "recommendation": "enum<approve_eligible|approve_ineligible|refer|refer_with_caution|out_of_scope|error>",
+        "casefile_id": "string",
+        "risk_class": "string",
+        "documentation_level": "string",
+        "findings": "list<object>",
+        "feedback_conditions": "list<string>",
+        "submitted_at": "datetime",
+        "received_at": "datetime",
+    })
+    links: list[Link] = Field(default_factory=lambda: [
+        Link(
+            name="belongs_to_application",
+            target="Application",
+            cardinality=Cardinality.MANY_TO_ONE,
+            direction=LinkDirection.OUTBOUND,
+            semantic_meaning="The application this AUS casefile was submitted for. Many results per application (DU + LP + resubmissions).",
+        ),
+    ])
+    decisions_that_read_it: list[str] = Field(default_factory=lambda: [
+        "product_eligibility",
+        "underwriting_decision",
+        "approval_routing",
+    ])
+
+
+class ExceptionRequest(ObjectType):
+    """EX-A exception framework — advisory only. Does not override hard blocks.
+
+    A guideline-exception request raised when a loan breaches an overlay or
+    agency guideline within the allowable tolerance. Carries the compensating
+    factors, the exception_score, and the approval level required. Advisory:
+    it can route a loan for exception approval, never relax a hard block."""
+
+    object_type_id: str = "ExceptionRequest"
+    semantic_definition: str = (
+        "A guideline-exception request (EX-A framework) raised when a loan "
+        "breaches an overlay/agency guideline within tolerance. Carries the "
+        "breached guideline, the compensating factors, the exception_score, and "
+        "the required approval level. Advisory only — it routes a loan for "
+        "exception review but never overrides a hard block."
+    )
+    primary_key: str = "exception_request_id"
+    properties: dict[str, str] = Field(default_factory=lambda: {
+        "exception_request_id": "string",
+        "application_id": "string",
+        "decision_id": "string",
+        "guideline_breached": "string",
+        "breach_amount_pct": "float",
+        "compensating_factors": "list<string>",
+        "exception_score": "integer",
+        "required_approval_level": "enum<uw|manager|senior>",
+        "status": "enum<pending|approved|denied|withdrawn>",
+        "requested_at": "datetime",
+        "decided_at": "datetime",
+        "decided_by": "string",
+    })
+    links: list[Link] = Field(default_factory=lambda: [
+        Link(
+            name="belongs_to_application",
+            target="Application",
+            cardinality=Cardinality.MANY_TO_ONE,
+            direction=LinkDirection.OUTBOUND,
+            semantic_meaning="The application this exception was requested for.",
+        ),
+    ])
+    decisions_that_read_it: list[str] = Field(default_factory=lambda: [
+        "product_eligibility",
+        "underwriting_decision",
+        "approval_routing",
+    ])
+
+
 LENDING_OBJECT_TYPES: dict[str, ObjectType] = {
     cls().object_type_id: cls()
     for cls in (
@@ -923,5 +1016,7 @@ LENDING_OBJECT_TYPES: dict[str, ObjectType] = {
         Claim,
         VerificationAttempt,
         EmploymentRecord,
+        AUSResult,
+        ExceptionRequest,
     )
 }
