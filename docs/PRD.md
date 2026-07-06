@@ -340,28 +340,32 @@ SOURCE SYSTEMS
 ### 9.2 Object types
 
 ```
-┌──────────────────┬────────────┬──────────────────────────────────────────────────────┐
-│ Object           │ Category   │ Semantic definition                                  │
-├──────────────────┼────────────┼──────────────────────────────────────────────────────┤
-│ Applicant        │ Business   │ WHO. Persists. Root of domain.                       │
-│ Application      │ Business   │ WHAT-NOW. Lifecycle-bound.                           │
-│ Property         │ Business   │ Collateral. Bound to one Application.                │
-│ Loan             │ Business   │ Financing terms requested.                           │
-│ CreditProfile    │ Business   │ Belongs to Applicant. One per bureau pull.           │
-│ IncomeProfile    │ Business   │ Belongs to Applicant. verified_income authoritative. │
-│ FraudProfile     │ Business   │ Belongs to Applicant. Shared across Applications.    │
-│ ComplianceRecord │ Business   │ Belongs to Application. Regulatory artefact.         │
-│ Document         │ Knowledge  │ EDMS-sourced artifact. Type-2 status (unverified →   │
-│                  │            │ ocr_extracted → human_corrected → verified).         │
-│ Claim            │ Knowledge  │ Structured fact extracted from a Document with       │
-│                  │            │ provenance (source_page, verifier, status).          │
-│ Policy           │ Policy     │ Named rule that gates a decision (agency, scope).    │
-│ PolicyVersion    │ Policy     │ Type-2 versioned: valid_from / valid_to + boundary   │
-│                  │            │ clauses. Replay correctness depends on this.         │
-│ Decision         │ System     │ Runtime output per decision type per Application.    │
-│ DecisionTrace    │ System     │ Work journal. Append-only. policy_version_id stamped.│
-│ AgentLearning    │ System     │ Lesson from human override. Replayed to same agent.  │
-└──────────────────┴────────────┴──────────────────────────────────────────────────────┘
+┌─────────────────────┬───────────┬───────────────────────────────────────────────────────┐
+│ Object              │ Category  │ Semantic definition                                   │
+├─────────────────────┼───────────┼───────────────────────────────────────────────────────┤
+│ Applicant           │ Business  │ WHO. Persists. Root of domain.                        │
+│ Application         │ Business  │ WHAT-NOW. Lifecycle-bound.                            │
+│ Property            │ Business  │ Collateral. Bound to one Application.                 │
+│ Loan                │ Business  │ Financing terms requested.                            │
+│ CreditProfile       │ Business  │ Belongs to Applicant. One per bureau pull.            │
+│ IncomeProfile       │ Business  │ Belongs to Applicant. verified_income authoritative.  │
+│ FraudProfile        │ Business  │ Belongs to Applicant. Shared across Applications.     │
+│ ComplianceRecord    │ Business  │ Belongs to Application. Regulatory artefact.          │
+│ Document            │ Knowledge │ EDMS-sourced artifact. Type-2 status (unverified →    │
+│                     │           │ ocr_extracted → human_corrected → verified).          │
+│ Claim               │ Knowledge │ Structured fact extracted from a Document with        │
+│                     │           │ provenance (source_page, verifier, status).           │
+│ Policy              │ Policy    │ Named rule that gates a decision (agency, scope).     │
+│ PolicyVersion       │ Policy    │ Type-2 versioned: valid_from / valid_to + boundary    │
+│                     │           │ clauses. Replay correctness depends on this.          │
+│ Decision            │ System    │ Runtime output per decision type per Application.     │
+│ DecisionTrace       │ System    │ Work journal. Append-only. policy_version_id stamped. │
+│ AgentLearning       │ System    │ Lesson from human override. Replayed to same agent.   │
+│ VerificationAttempt │ Business  │ Append-only, one row per provider verification call.  │
+│ EmploymentRecord    │ Business  │ Reconciled employer projection (joins attempts).      │
+│ AUSResult           │ Business  │ DU/LP/GUS per run — replaces aus_findings JSONB.      │
+│ ExceptionRequest    │ Business  │ EX-A formal exception — advisory only.                │
+└─────────────────────┴───────────┴───────────────────────────────────────────────────────┘
 ```
 
 ### 9.3 Semantic link map (text)
@@ -374,8 +378,12 @@ SOURCE SYSTEMS
   Applicant  ──co_applies_with──────►  Applicant         (self-referential)
   Application ──secured_by──────────►  Property          (1 → 1)
   Application ──requests────────────►  Loan              (1 → 1)
-  Application ──evaluated_by────────►  Decision          (1 → 12, one per type)
+  Application ──evaluated_by────────►  Decision          (1 → 15, one per type)
   Application ──governed_by─────────►  ComplianceRecord  (1 → 1)
+  Applicant  ──has──────────────────►  VerificationAttempt (1 → many)
+  Applicant  ──has──────────────────►  EmploymentRecord  (1 → many)
+  Application ──has─────────────────►  AUSResult         (1 → many per run)
+  Application ──has─────────────────►  ExceptionRequest  (1 → many)
   Decision    ──depends_on──────────►  Decision          (dependency graph)
   Decision    ──produces────────────►  DecisionTrace     (1 → 1)
   DecisionTrace ──triggers──────────►  AgentLearning     (on human override)
@@ -429,36 +437,40 @@ flowchart TD
 ## 10. ENTITY STORAGE MODEL
 
 ```
-┌──────────────────┬───────────────┬──────────────────────────────────────────────────┐
-│ Entity           │ Storage       │ Notes                                            │
-├──────────────────┼───────────────┼──────────────────────────────────────────────────┤
-│ RawEvent         │ Postgres      │ Immutable. Source of truth for replay.           │
-│ NormalizedEvent  │ Postgres      │ Immutable. Indexed entity_id + event_type.       │
-│ ContextBundle    │ Redis + PG    │ Redis: TTL per decision. PG: snapshot at decision.│
-│ PolicyResult     │ Postgres      │ Every evaluation stored. Compliance artefact.    │
-│ DecisionOutput   │ Postgres      │ Decisions table. WorkJournalEntry as JSONB.      │
-│ DecisionTrace    │ Postgres      │ Append-only. Never deleted. Audit chain.         │
-│ HumanQueueItem   │ Redis + PG    │ Redis: active queue. PG: full history.           │
-│ AgentLearning    │ Postgres      │ 365-day retention. Similarity tags for retrieval.│
-│ Applicant        │ Postgres      │ applicants table. Master record.                 │
-│ Application      │ Redis + PG    │ Redis: active pipeline state. TTL 30 days.       │
-│ CreditProfile    │ Redis + PG    │ Redis: latest score. TTL 90 days.               │
-│ IncomeProfile    │ Redis + PG    │ Redis: verified_income + confidence. App TTL.    │
-│ FraudProfile     │ Redis + PG    │ Redis: fraud_cleared flag. TTL 7 days.          │
-│ Property         │ Postgres      │ No Redis — data changes infrequently.            │
-│ ComplianceRecord │ Postgres      │ Regulatory artefact. Never deleted.              │
-│ Document         │ Postgres + S3 │ PG: metadata + status + Type-2 chain. S3: bytes. │
-│ Claim            │ Postgres      │ Structured fact + provenance. SHARED scope.      │
-│ Policy           │ Postgres      │ SHARED scope. Decision_id + agency + scope.      │
-│ PolicyVersion    │ Postgres      │ Type-2 SCD. Replay reads at decided_at.          │
-│ DecisionConfig   │ YAML file     │ decisions.yaml — seed for lender_overlay policy. │
-│                  │               │ Real connectors (STREAM E2) supersede YAML.      │
-└──────────────────┴───────────────┴──────────────────────────────────────────────────┘
+┌─────────────────────┬───────────────┬────────────────────────────────────────────────────────┐
+│ Entity              │ Storage       │ Notes                                                  │
+├─────────────────────┼───────────────┼────────────────────────────────────────────────────────┤
+│ RawEvent            │ Postgres      │ Immutable. Source of truth for replay.                 │
+│ NormalizedEvent     │ Postgres      │ Immutable. Indexed entity_id + event_type.             │
+│ ContextBundle       │ Redis + PG    │ Redis: TTL per decision. PG: snapshot at decision.     │
+│ PolicyResult        │ Postgres      │ Every evaluation stored. Compliance artefact.          │
+│ DecisionOutput      │ Postgres      │ Decisions table. WorkJournalEntry as JSONB.            │
+│ DecisionTrace       │ Postgres      │ Append-only. Never deleted. Audit chain.               │
+│ HumanQueueItem      │ Redis + PG    │ Redis: active queue. PG: full history.                 │
+│ AgentLearning       │ Postgres      │ 365-day retention. Similarity tags for retrieval.      │
+│ Applicant           │ Postgres      │ applicants table. Master record.                       │
+│ Application         │ Redis + PG    │ Redis: active pipeline state. TTL 30 days.             │
+│ CreditProfile       │ Redis + PG    │ Redis: latest score. TTL 90 days.                      │
+│ IncomeProfile       │ Redis + PG    │ Redis: verified_income + confidence. App TTL.          │
+│ FraudProfile        │ Redis + PG    │ Redis: fraud_cleared flag. TTL 7 days.                 │
+│ Property            │ Postgres      │ No Redis — data changes infrequently.                  │
+│ ComplianceRecord    │ Postgres      │ Regulatory artefact. Never deleted.                    │
+│ Document            │ Postgres + S3 │ PG: metadata + status + Type-2 chain. S3: bytes.       │
+│ Claim               │ Postgres      │ Structured fact + provenance. SHARED scope.            │
+│ Policy              │ Postgres      │ SHARED scope. Decision_id + agency + scope.            │
+│ PolicyVersion       │ Postgres      │ Type-2 SCD. Replay reads at decided_at.                │
+│ VerificationAttempt │ Postgres      │ Append-only, one row per provider call per employer.   │
+│ EmploymentRecord    │ Postgres      │ Reconciled projection, one row per canonical employer. │
+│ AUSResult           │ Postgres      │ aus_results table; is_latest flag for resubmissions.   │
+│ ExceptionRequest    │ Postgres      │ exception_requests table (future).                     │
+│ DecisionConfig      │ YAML file     │ decisions.yaml — seed for lender_overlay policy.       │
+│                     │               │ Real connectors (STREAM E2) supersede YAML.            │
+└─────────────────────┴───────────────┴────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 11. LENDING DOMAIN — 13 DECISIONS
+## 11. LENDING DOMAIN — 15 DECISIONS
 
 ### 11.1 End-to-end pipeline — lead to closing — Mermaid diagram
 
@@ -506,22 +518,25 @@ flowchart TD
 ### 11.2 Decision table
 
 ```
-┌────┬──────────────────────────┬──────────────────────────────────────┬────────┬────────┬─────────────────┐
-│ #  │ Decision                 │ Depends on                           │ Mode   │ Risk   │ Owner           │
-├────┼──────────────────────────┼──────────────────────────────────────┼────────┼────────┼─────────────────┤
-│ 01 │ lead_scoring             │ —                                    │ auto   │ low    │ Growth Ops      │
-│ 02 │ income_verification      │ —                                    │ human  │ medium │ Underwriting    │
-│ 03 │ credit_assessment        │ —                                    │ auto   │ medium │ Credit Risk     │
-│ 04 │ fraud_screening          │ —                                    │ auto   │ HIGH   │ Fraud Ops       │
-│ 05 │ compliance_check         │ —                                    │ human  │ HIGH   │ Compliance      │
-│ 06 │ dti_calculation          │ income_verification                  │ auto   │ low    │ Underwriting    │
-│ 07 │ ltv_assessment           │ credit_assessment                    │ auto   │ low    │ Underwriting    │
-│ 08 │ product_eligibility      │ dti_calculation + ltv_assessment     │ rec    │ medium │ Product Ops     │
-│ 09 │ rate_pricing             │ credit + dti + ltv                   │ auto   │ medium │ Secondary Mkts  │
-│ 10 │ underwriting_decision    │ ALL above                            │ human  │ HIGH   │ Underwriting    │
-│ 11 │ approval_routing         │ underwriting_decision                │ auto   │ low    │ Loan Ops        │
-│ 12 │ closing_readiness        │ underwriting + compliance            │ human  │ HIGH   │ Closing Ops     │
-└────┴──────────────────────────┴──────────────────────────────────────┴────────┴────────┴─────────────────┘
+┌────┬───────────────────────────┬──────────────────────────────────┬────────────┬────────┬──────────────────┐
+│ #  │ Decision                  │ Depends on                       │ Mode       │ Risk   │ Owner            │
+├────┼───────────────────────────┼──────────────────────────────────┼────────────┼────────┼──────────────────┤
+│ 01 │ lead_scoring              │ —                                │ auto       │ low    │ Growth Ops       │
+│ 02 │ income_verification       │ —                                │ human      │ medium │ Underwriting     │
+│ 03 │ credit_assessment         │ —                                │ auto       │ medium │ Credit Risk      │
+│ 04 │ fraud_screening           │ —                                │ auto       │ HIGH   │ Fraud Ops        │
+│ 05 │ compliance_check          │ —                                │ human      │ HIGH   │ Compliance       │
+│ 06 │ dti_calculation           │ income_verification              │ auto       │ low    │ Underwriting     │
+│ 07 │ ltv_assessment            │ credit_assessment                │ auto       │ low    │ Underwriting     │
+│ 08 │ product_eligibility       │ dti_calculation + ltv_assessment │ rec        │ medium │ Product Ops      │
+│ 09 │ rate_pricing              │ credit + dti + ltv               │ auto       │ medium │ Secondary Mkts   │
+│ 10 │ underwriting_decision     │ ALL above                        │ human      │ HIGH   │ Underwriting     │
+│ 11 │ approval_routing          │ underwriting_decision            │ auto       │ low    │ Loan Ops         │
+│ 12 │ closing_readiness         │ underwriting + compliance        │ human      │ HIGH   │ Closing Ops      │
+│ 13 │ title_assessment          │ —                                │ auto/human │ HIGH   │ Title Ops        │
+│ 14 │ asset_verification        │ —                                │ rec        │ medium │ Underwriting Ops │
+│ 15 │ employment_reconciliation │ —                                │ rec        │ low    │ Underwriting     │
+└────┴───────────────────────────┴──────────────────────────────────┴────────────┴────────┴──────────────────┘
 ```
 
 ### 11.3 Hard stops & adverse-decision routing
@@ -818,11 +833,15 @@ decision-os/
 │   │                                          correlation_id / request_id on BaseEvent
 │   ├── ontology/                  ✅ STEP 2 DONE; extended Sessions 9
 │   │   ├── __init__.py            ✅ EXISTS
-│   │   └── object_types.py        ✅ EXISTS — 12 lending object types:
+│   │   └── object_types.py        ✅ EXISTS — 16 concrete object types (19 total
+│   │                                         ontology objects incl. 3 system):
 │   │                                          - 8 business: Applicant, Application,
 │   │                                            Property, Loan, CreditProfile,
 │   │                                            IncomeProfile, FraudProfile,
 │   │                                            ComplianceRecord
+│   │                                          - 4 canonical (Sessions 9+):
+│   │                                            VerificationAttempt, EmploymentRecord,
+│   │                                            AUSResult, ExceptionRequest
 │   │                                          - 2 policy: Policy, PolicyVersion
 │   │                                            (Type-2 versioned)
 │   │                                          - 2 knowledge: Document, Claim
@@ -995,7 +1014,7 @@ decision-os/
 │       │                                       connectors land (STREAM E2)
 │       ├── knowledge_base.json    ✅ EXISTS — vocabulary, ontology, dep graph,
 │       │                                       Session 9: document_types matrix
-│       │                                       (14 doc types → feeds_decisions +
+│       │                                       (21 doc types + 7 new vocab terms → feeds_decisions +
 │       │                                       claim field names)
 │       ├── personas/              ✅ STEP 9 DONE
 │       │   ├── __init__.py        ✅ EXISTS — LENDING_PERSONA_CLASSES +
@@ -1026,7 +1045,9 @@ decision-os/
 │       │   ├── rate_pricing.py            ✅ PricingAgent
 │       │   ├── underwriting_decision.py   ✅ SeniorUnderwritingAgent
 │       │   ├── approval_routing.py        ✅ WorkflowRoutingAgent
-│       │   └── closing_readiness.py       ✅ ClosingAgent
+│       │   ├── closing_readiness.py       ✅ ClosingAgent
+│       │   ├── asset_verification.py      ✅ Session 11 — AssetVerificationAgent
+│       │   └── title_assessment.py        ✅ Session 11 — TitleAssessmentAgent
 │       └── seed_events/           ✅ STEP 10 DONE; Session 9 added Doc+Claim seeds
 │           ├── __init__.py        ✅ EXISTS — SCENARIOS manifest +
 │           │                                  csv_connector / http_connector loaders
@@ -1147,6 +1168,11 @@ decision-os/
 │   ├── smoke_fha_scenario.py      ✅ Session 9 — STREAM B: FHA scenario produces
 │   │                                              2-entry policy_chain on ltv;
 │   │                                              jumbo/va also exercise the chain
+│   ├── migrations/                ✅ EXISTS — schema + catalogue migrations
+│   │                                              (QA-C RLS, conditions_library, rules/
+│   │                                              versioning, aus_responses, credit/income/
+│   │                                              asset/title entities, exception tables).
+│   │                                              Applied to prod RDS via one-off Fargate.
 │   └── run_tests.py               ✅ Session 9 — TIER 1 unittest runner.
 │                                                  350 tests across 20 modules,
 │                                                  ~6s. Stdlib-only. Add new
@@ -1361,6 +1387,16 @@ decision-os/
   ─────────────────────────────────────────────────────────────────
 
   TIER 1 — FOUNDATION (350/350 tests landed; this tier substantially complete)
+        Track 1 — persona de-hardcode → catalogue   ✅ DONE (this session).
+            All 8 persona hardcodes moved to catalogue: rate_pricing, ltv
+            per-band caps, product_eligibility, credit bands, employment
+            thresholds, income confidence, uw risk thresholds; + block_if /
+            escalate_if → OR. Enricher-injected; offline = fallback =
+            byte-identical (suite stays green).
+        Canonical schema milestones                 ✅ DONE (this session).
+            entity_states v4.7 (reserves_months, hcltv, qualifying_rate);
+            Zone D translation layer; aus_results table; credit_tradelines +
+            credit_findings mirrored; declarations table.
     14  tests/  ✅ DONE                350 tests across 20 modules:
                                        - core (context_store, policy_engine,
                                          decision_agents, trace, knowledge,
@@ -1437,6 +1473,16 @@ decision-os/
                                      LOS). The missing return path —
                                      decisions today don't flow back to
                                      the LOS.
+        Section VIII extractor       Declarations extractor — populate the
+                                     declarations table from URLA Section VIII.
+        aus_results resubmission     is_latest supersession + prior-run
+          history                    retention for DU / LP / GUS re-runs.
+        Fix 8B — collateral →        Wire inline collateral builders to
+          conditions_library         conditions_library via COLLATERAL_* →
+                                     PROPERTY_* alias map (Phase A rows seeded).
+        Platform Studio UI           Basic Platform Studio surface (rule /
+                                     overlay authoring UI).
+        Capital Loans onboarding     First design-partner tenant onboarding.
 
   TIER 2.5 — STREAM E2 (Knowledge Context Layer real ingestion)
         EDMS adapter                 Encompass / DocuTech / iManage —
