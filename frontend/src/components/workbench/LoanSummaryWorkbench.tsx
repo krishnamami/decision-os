@@ -207,6 +207,7 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
   const focusRequestId = searchParams.get('request_id')
   const [resolvedReqs, setResolvedReqs] = useState<Set<string>>(new Set())
   const [replyReq, setReplyReq] = useState<InternalRequest | null>(null)
+  const [approveGuardReq, setApproveGuardReq] = useState<InternalRequest | null>(null)
   const [docsDismissed, setDocsDismissed] = useState<Set<string>>(new Set())
   const [returnOpen, setReturnOpen] = useState(false)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
@@ -272,6 +273,13 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
       setToast('Could not resolve the request — please try again.')
     }
     setTimeout(() => setToast(null), 2500)
+  }
+  // Approve guard: if an internal request directed at me is still open on this
+  // loan, confirm before approving (prevents the accidental-approve foot-gun).
+  function onApproveClick() {
+    const open = (loan?.internal_requests ?? []).filter((r) => !resolvedReqs.has(r.request_id))
+    if (open.length > 0) { setApproveGuardReq(open[0]); return }
+    setDecideModal('approve')
   }
   // ── Concurrent doc-request + escalation (Pattern A) ────────────────────────
   async function waitForDocs() {
@@ -446,7 +454,7 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
           {canOverride && (
             <>
               <button onClick={() => setDecideModal('override')} className="rounded-md bg-white/15 px-3 py-1 text-xs font-semibold hover:bg-white/25">Override</button>
-              <button onClick={() => setDecideModal('approve')} className="rounded-md bg-green-600 px-3 py-1 text-xs font-semibold text-white hover:bg-green-500">Approve</button>
+              <button onClick={onApproveClick} className="rounded-md bg-green-600 px-3 py-1 text-xs font-semibold text-white hover:bg-green-500">Approve</button>
               <button onClick={() => setDecideModal('deny')} className="rounded-md bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-500">Deny</button>
             </>
           )}
@@ -621,6 +629,17 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
           </div>
         ))}
 
+      {/* ── INTERNAL REQUEST REPLIES (answers to requests I sent) ──────────── */}
+      {(loan.internal_request_replies ?? []).map((r) => (
+        <div key={r.request_id} className="mx-5 mt-4 rounded-lg border border-green-300 border-l-4 border-l-green-500 bg-green-50 p-4">
+          <div className="inline-flex items-center gap-1 rounded-full bg-green-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">✓ Response received</div>
+          <div className="mt-2 text-sm font-bold text-green-900">{r.to} replied to your request</div>
+          <div className="mt-0.5 text-[12px] italic text-slate-500">You asked: "{r.message}"</div>
+          <p className="mt-1 text-sm text-slate-700">"{r.response}"</p>
+          <div className="mt-1 text-[11px] text-green-700">{timeAgo(r.resolved_at)}</div>
+        </div>
+      ))}
+
       {/* ── SECTION 5 — AI SUMMARY BANNER ───────────────────────────────── */}
       {aiDecision && (
         <div className="mx-5 mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4">
@@ -777,6 +796,13 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
           request={replyReq}
           onClose={() => setReplyReq(null)}
           onSend={(reply) => resolveRequest(replyReq, reply)}
+        />
+      )}
+      {approveGuardReq && (
+        <ApproveGuardModal
+          request={approveGuardReq}
+          onCancel={() => setApproveGuardReq(null)}
+          onProceed={() => { setApproveGuardReq(null); setDecideModal('approve') }}
         />
       )}
       {returnOpen && (
@@ -1079,6 +1105,26 @@ function RequestReplyModal({ request, onClose, onSend }: {
           >
             {busy ? 'Sending…' : 'Send reply & resolve'}
           </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ApproveGuardModal({ request, onCancel, onProceed }: {
+  request: InternalRequest; onCancel: () => void; onProceed: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCancel}>
+      <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="text-base font-bold text-amber-800">⚠ Open internal request</div>
+        <p className="mt-2 text-sm text-slate-700">
+          You have an open internal request from <span className="font-semibold">{request.from}</span>. Respond before approving?
+        </p>
+        <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[13px] italic text-slate-600">"{request.message}"</div>
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onCancel} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+          <button onClick={onProceed} className="rounded-lg bg-green-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-green-500">Approve anyway</button>
         </div>
       </div>
     </div>

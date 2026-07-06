@@ -132,6 +132,14 @@ export interface InternalRequest {
   created_at: string | null
 }
 
+export interface InternalRequestReply {
+  request_id: string
+  to: string            // teammate who replied
+  message: string       // my original ask
+  response: string      // their reply
+  resolved_at: string | null
+}
+
 export type EscalationAction =
   | 'escalated'
   | 'returned_feedback'
@@ -201,6 +209,7 @@ export interface LoanDetail {
   escalation_category?: string | null
   direct_assignment?: boolean
   internal_requests?: InternalRequest[]
+  internal_request_replies?: InternalRequestReply[]
   pending_doc_requests?: PendingDocRequest[]
   escalation_thread?: EscalationThreadItem[]
   decisions: DecisionDetail[]

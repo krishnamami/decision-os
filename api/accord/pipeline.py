@@ -695,6 +695,26 @@ async def my_queue(
             """,
             UUID(str(target_uid)), tenant_id,
         )
+        # Replies to MY internal requests, resolved in the last 24h — surfaced in
+        # the queue's "Recently resolved" section so the requester sees the answer.
+        reply_rows = await conn.fetch(
+            """
+            SELECT ar.request_id, ar.application_id, ar.message, ar.response,
+                   ar.completed_at, ut.name AS from_name,
+                   COALESCE(ap.full_name, es.application_id) AS borrower_name,
+                   a.loan_type, es.loan_amount
+            FROM attention_requests ar
+            JOIN entity_states es ON es.application_id = ar.application_id
+            LEFT JOIN applications a ON a.application_id = ar.application_id
+            LEFT JOIN applicants ap ON ap.applicant_id = a.applicant_id
+            LEFT JOIN users ut ON ut.user_id = ar.to_user_id
+            WHERE ar.from_user_id = $1 AND ar.tenant_id = $2
+              AND ar.status = 'resolved' AND ar.response IS NOT NULL
+              AND ar.completed_at >= NOW() - INTERVAL '24 hours'
+            ORDER BY ar.completed_at DESC
+            """,
+            UUID(str(target_uid)), tenant_id,
+        )
 
     active, pending, decided = [], [], []
     for r in rows:
@@ -784,12 +804,23 @@ async def my_queue(
         })
 
     active.sort(key=lambda c: (0 if c["urgency"] == "urgent" else 1, -(c["days_in_queue"] or 0)))
+    recently_resolved = [
+        {
+            "request_id": str(r["request_id"]), "application_id": r["application_id"],
+            "borrower_name": r["borrower_name"], "loan_amount": _f(r["loan_amount"]),
+            "loan_type": r["loan_type"], "from": r["from_name"],
+            "message": r["message"], "response": r["response"],
+            "resolved_at": r["completed_at"].isoformat() if r["completed_at"] else None,
+        }
+        for r in reply_rows
+    ]
     return {
         "user": {"name": urow["name"], "role": urow["role"]},
         "counts": {"active": len(active), "pending": len(pending), "decided": len(decided)},
         "active": active,
         "pending": pending,
         "decided": decided,
+        "recently_resolved": recently_resolved,
     }
 
 
@@ -1982,6 +2013,22 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
             """,
             application_id, tenant_id, UUID(str(user["user_id"])),
         )
+        # Replies to internal requests THIS caller made on this loan (resolved with
+        # a response, last 24h) — so the requester sees the answer in the banner.
+        my_reply_rows = await conn.fetch(
+            """
+            SELECT ar.request_id, ar.message, ar.response, ar.completed_at,
+                   COALESCE(ut.name, 'A teammate') AS to_name
+            FROM attention_requests ar
+            LEFT JOIN users ut ON ut.user_id = ar.to_user_id
+            WHERE ar.application_id = $1 AND ar.tenant_id = $2
+              AND ar.from_user_id = $3 AND ar.status = 'resolved'
+              AND ar.response IS NOT NULL
+              AND ar.completed_at >= NOW() - INTERVAL '24 hours'
+            ORDER BY ar.completed_at DESC
+            """,
+            application_id, tenant_id, UUID(str(user["user_id"])),
+        )
         # Open (unfulfilled) document requests on this loan — so a senior UW who
         # owns it via escalation still sees the pending borrower-doc context.
         pending_doc_rows = await conn.fetch(
@@ -2207,6 +2254,14 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
         }
         for r in internal_req_rows
     ]
+    internal_request_replies = [
+        {
+            "request_id": str(r["request_id"]), "to": r["to_name"],
+            "message": r["message"], "response": r["response"],
+            "resolved_at": r["completed_at"].isoformat() if r["completed_at"] else None,
+        }
+        for r in my_reply_rows
+    ]
 
     # Merge the escalation history into one chronological thread. The first
     # escalation reads 'escalated'; every later one 're_escalated'.
@@ -2280,6 +2335,7 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
         "metrics": metrics_out,
         **escalation_ctx,
         "internal_requests": internal_requests,
+        "internal_request_replies": internal_request_replies,
         "pending_doc_requests": pending_doc_requests,
         "escalation_thread": escalation_thread,
         "qm": _qm_status(e, loan_terms),

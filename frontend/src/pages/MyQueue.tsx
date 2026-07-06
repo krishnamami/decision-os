@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchMyQueue, simulateResponse, type MyQueueResponse, type QueueCard } from '../api/client'
+import { fetchMyQueue, simulateResponse, type MyQueueResponse, type QueueCard, type ResolvedReply } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import Modal from '../components/Modal'
 import RequestDocsModal from '../components/modals/RequestDocsModal'
@@ -198,6 +198,18 @@ export default function MyQueue({
               ))}
               {data.pending.length === 0 && <p className="text-sm text-slate-400">Nothing pending right now.</p>}
             </div>
+          )}
+
+          {/* RECENTLY RESOLVED — replies to my requests, last 24h */}
+          {(data.recently_resolved?.length ?? 0) > 0 && (
+            <>
+              <SectionHeader label="Recently resolved" n={data.recently_resolved!.length} />
+              <div className="mb-8 space-y-2">
+                {data.recently_resolved!.map((r) => (
+                  <ResolvedCard key={r.request_id} r={r} onView={() => navigate(`/pipeline/${r.application_id}`)} />
+                ))}
+              </div>
+            </>
           )}
 
           {/* DECIDED THIS WEEK (collapsible) */}
@@ -412,6 +424,24 @@ function DecidedRow({ c, onClick }: { c: QueueCard; onClick: () => void }) {
       <span className="text-slate-600">{money(c.loan_amount)}</span>
       <span className="ml-auto capitalize text-slate-400">{c.status}</span>
     </button>
+  )
+}
+
+function ResolvedCard({ r, onView }: { r: ResolvedReply; onView: () => void }) {
+  return (
+    <div className="rounded-lg border border-slate-200 border-l-4 border-l-green-500 bg-white px-4 py-3 text-sm">
+      <div className="flex flex-wrap items-center gap-x-2">
+        <span className="inline-flex items-center gap-1 rounded-full bg-green-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">✓ Response received</span>
+        <span className="font-semibold text-slate-900">{r.borrower_name}</span>
+        <span className="text-slate-400">·</span>
+        <span className="text-slate-700">{money(r.loan_amount)}</span>
+      </div>
+      <div className="mt-1 text-xs text-slate-500">{r.from} replied to your request</div>
+      <div className="mt-1 rounded-lg bg-green-50 px-3 py-2 text-slate-700">"{r.response}"</div>
+      <div className="mt-2">
+        <button onClick={onView} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">View response →</button>
+      </div>
+    </div>
   )
 }
 

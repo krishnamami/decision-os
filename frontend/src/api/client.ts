@@ -175,12 +175,24 @@ export interface QueueCard {
   senior_name?: string | null
   requested_by_name?: string | null
 }
+export interface ResolvedReply {
+  request_id: string
+  application_id: string
+  borrower_name: string
+  loan_amount: number | null
+  loan_type: string | null
+  from: string
+  message: string
+  response: string
+  resolved_at: string | null
+}
 export interface MyQueueResponse {
   user: { name: string; role: string }
   counts: { active: number; pending: number; decided: number }
   active: QueueCard[]
   pending: QueueCard[]
   decided: QueueCard[]
+  recently_resolved?: ResolvedReply[]
 }
 export interface TeamMember {
   user_id: string
