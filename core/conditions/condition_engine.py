@@ -42,7 +42,7 @@ class ConditionEngine:
         condition_text: str,
         category: str = 'other',
         prior_to: str = 'docs',
-        blocks_closing: bool = False,
+        blocks_closing: Optional[bool] = None,
         generated_by: str = '',
         decision_id: Optional[str] = None,
         template_vars: dict = None,
@@ -90,6 +90,11 @@ class ConditionEngine:
             citation = None
             auto_sat = False
 
+        # blocks_closing unspecified -> derive from the template: a condition that
+        # must clear before closing (prior_to='closing') blocks closing.
+        if blocks_closing is None:
+            blocks_closing = (prior == 'closing')
+
         # Compute due date
         due_date = datetime.now(timezone.utc) + \
             timedelta(hours=sla)
@@ -127,6 +132,40 @@ class ConditionEngine:
                 if decision_id else None,
         )
         return str(result) if result else None
+
+    async def auto_generate_conditions(
+        self,
+        application_id: str,
+        tenant_id: str,
+        decision_id: str,
+        outcome: str,
+        boundary_rule: Optional[str] = None,
+        signals: Optional[dict] = None,
+        decision_uuid: Optional[str] = None,
+        generated_by: str = 'auto_block',
+    ) -> list:
+        """When a persona BLOCKs/ESCALATEs, create the actionable condition instance.
+        Maps persona + signals -> conditions_library code (persona_map), then
+        create_condition() (idempotent; template-driven; blocks_closing derived from
+        the template's prior_to). Returns created code(s); [] if excluded persona,
+        no code, or the row already exists. `decision_uuid` links the condition to the
+        decision_outputs row. Never raises -- must not fail the decision write."""
+        if outcome not in ('block', 'escalate'):
+            return []
+        from core.conditions.persona_map import select_condition_code
+        code = select_condition_code(decision_id, boundary_rule, signals)
+        if not code:
+            return []
+        cid = await self.create_condition(
+            application_id=application_id,
+            tenant_id=tenant_id,
+            condition_code=code,
+            condition_text='',        # filled from the library template
+            blocks_closing=None,      # derived from template.prior_to
+            generated_by=generated_by,
+            decision_id=decision_uuid,   # decision_outputs.id (UUID) or None
+        )
+        return [code] if cid else []
 
     async def create_from_resolver_output(
         self,

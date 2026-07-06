@@ -1668,7 +1668,8 @@ def _sig(decision: dict, key: str) -> str:
     return ""
 
 
-def _conversational_summary(decisions: list[dict], m: dict, name: str) -> dict:
+def _conversational_summary(decisions: list[dict], m: dict, name: str,
+                            conditions: Optional[list] = None) -> dict:
     """Plain-English, senior-underwriter-voice summary built from the decisions.
     Handles a clean file or N blocking issues (root cause = lowest wave, with a
     hard block beating an escalate at the same wave)."""
@@ -1751,6 +1752,18 @@ def _conversational_summary(decisions: list[dict], m: dict, name: str) -> dict:
     if len(blockers) > 1:
         summary += (f" Heads up: {len(blockers)} checks need attention here — "
                     + ", ".join(PERSONA_FRIENDLY.get(b["decision_id"], b["decision_id"]) for b in blockers) + ".")
+    # When auto-generated condition instances exist, make next_step name the
+    # specific actionable items instead of the generic per-persona line.
+    open_conds = [c for c in (conditions or [])
+                  if c.get("status") in ("open", "submitted", "in_review")]
+    if open_conds:
+        top = open_conds[:2]
+        items = "; ".join(
+            (c.get("condition_text") or c.get("condition_code") or "").strip().split(".")[0][:90]
+            for c in top)
+        more = f" (+{len(open_conds) - 2} more)" if len(open_conds) > 2 else ""
+        plural = "s" if len(open_conds) != 1 else ""
+        next_step = f"Clear {len(open_conds)} open condition{plural}: {items}{more}"
     return {"summary": summary, "issue": issue, "whats_good": whats_good,
             "next_step": next_step, "headline": headline, "tone": tone}
 
@@ -2096,6 +2109,16 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
             """,
             application_id,
         )
+        lci_rows = await conn.fetch(
+            """
+            SELECT condition_code, condition_text, status, blocks_closing
+            FROM loan_condition_instances
+            WHERE application_id = $1 AND tenant_id = $2
+              AND status IN ('open', 'submitted', 'in_review')
+            ORDER BY blocks_closing DESC, created_at ASC
+            """,
+            application_id, tenant_id,
+        )
         action_rows = await conn.fetch(
             "SELECT performed_by, reason_text FROM loan_actions WHERE application_id = $1 AND tenant_id = $2",
             application_id, tenant_id,
@@ -2370,7 +2393,9 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
         "qm": _qm_status(e, loan_terms),
         "examiner_readiness": compute_examiner_readiness(decisions, action_rows),
         "rain_check": rain_check,
-        "conversational_summary": _conversational_summary(decisions, metrics_out, full_name.split()[0]),
+        "conversational_summary": _conversational_summary(
+            decisions, metrics_out, full_name.split()[0],
+            conditions=[dict(r) for r in lci_rows]),
         "status": status,
         "urgency": urgency,
         "blocking_persona": blocking,

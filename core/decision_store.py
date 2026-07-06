@@ -204,6 +204,23 @@ class DecisionStore:
                     json.dumps(governed_by, default=str) if governed_by else None,
                 )
 
+                # Auto-generate an actionable condition on BLOCK/ESCALATE so blocked
+                # loans always carry a clearable next step. Same transaction (atomic),
+                # idempotent (ON CONFLICT), and failure-isolated so condition-gen can
+                # never fail the decision write.
+                if outcome in ("block", "escalate"):
+                    try:
+                        from core.conditions.condition_engine import ConditionEngine
+                        _sig = reasoning.get("signals") if isinstance(reasoning, dict) else None
+                        await ConditionEngine(conn).auto_generate_conditions(
+                            application_id=application_id, tenant_id=tenant_id,
+                            decision_id=decision_id, outcome=outcome,
+                            boundary_rule=boundary_rule, signals=_sig,
+                            decision_uuid=str(decision_uuid),
+                        )
+                    except Exception:
+                        pass
+
                 prev = await conn.fetchrow(
                     """
                     SELECT to_state, transition_at
