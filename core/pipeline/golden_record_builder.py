@@ -477,6 +477,59 @@ def extract_tradelines(doc_map: dict) -> list:
     return tl if isinstance(tl, list) else []
 
 
+# ── v4.9 — amortization / lien position / HMDA lien status ──
+_AMORT_MAP = {
+    'fixed': 'fixed', 'fixed rate': 'fixed', 'fixed-rate': 'fixed',
+    'arm': 'arm', 'adjustable': 'arm', 'adjustable rate': 'arm', 'adjustable-rate': 'arm',
+    'balloon': 'balloon',
+    'interest only': 'interest_only', 'interest-only': 'interest_only', 'io': 'interest_only',
+}
+_LIEN_MAP = {
+    'first': 'first', '1': 'first', 'first lien': 'first', 'primary': 'first',
+    'second': 'second', '2': 'second', 'second lien': 'second', 'subordinate': 'second',
+    'third': 'third', '3': 'third',
+}
+# HMDA LAR lien status — NO default: unknown lien_position -> None (the HMDA
+# reporter fills it in), never a false 'not_secured_by_lien' on a mortgage.
+_LIEN_HMDA = {
+    'first':  'secured_by_first_lien',
+    'second': 'secured_by_subordinate_lien',
+    'third':  'secured_by_subordinate_lien',
+}
+
+
+def extract_amortization_type(doc_map: dict) -> Optional[str]:
+    """Amortization type from the URLA — fixed / arm / balloon / interest_only.
+    Source: URLA_1003 extracted_fields (MISMO LoanAmortizationType). Encompass 1041."""
+    if 'URLA_1003' not in doc_map:
+        return None
+    raw = first_val(get_fields(doc_map['URLA_1003']),
+                    ['amortization_type', 'loan_amortization_type',
+                     'amortization', 'LoanAmortizationType'])
+    if not raw:
+        return None
+    n = str(raw).lower().strip()
+    return _AMORT_MAP.get(n, next((v for k, v in _AMORT_MAP.items() if k in n), n))
+
+
+def extract_lien_position(doc_map: dict) -> Optional[str]:
+    """Lien position from the URLA — first / second / third. Encompass 420."""
+    if 'URLA_1003' not in doc_map:
+        return None
+    raw = first_val(get_fields(doc_map['URLA_1003']),
+                    ['lien_position', 'lien', 'lien_priority'])
+    if raw is None or str(raw).strip() == '':
+        return None
+    n = str(raw).lower().strip()
+    return _LIEN_MAP.get(n, next((v for k, v in _LIEN_MAP.items() if k in n), n))
+
+
+def hmda_lien_status(lien_position: Optional[str]) -> Optional[str]:
+    """HMDA LAR lien status derived from lien_position. Returns None when the
+    position is unknown (NOT 'not_secured_by_lien' — see _LIEN_HMDA)."""
+    return _LIEN_HMDA.get((lien_position or '').lower())
+
+
 # ── Aggregator — RA-EX-B ─────────────────────
 # Property-type can come from the appraisal OR the URLA; the appraisal extractor
 # (extract_property_type) only reads APPRAISAL_URAR, so the aggregator falls
@@ -555,6 +608,10 @@ def build_golden_record(
         'occupancy_type':     extract_occupancy_type(doc_map),
         'loan_purpose':       extract_loan_purpose(doc_map),
         'loan_type':          first_val(urla, ['loan_type']),
+        # v4.9 — doc-derived canonical columns (Capital Loans onboarding).
+        'amortization_type':  extract_amortization_type(doc_map),
+        'lien_position':      (_lien := extract_lien_position(doc_map)),
+        'lien_status_hmda':   hmda_lien_status(_lien),
         'monthly_obligations': obligations['total_monthly_obligations'] or None,
         'obligations_breakdown': obligations,
         # RA-EX-C — the three closed gaps (empty/None until extraction provides
@@ -790,8 +847,27 @@ def _unit_test():
     assert gr['close_date'] == '2026-07-15' and gr['earnest_money'] == 12000.0
     print(f'  ✅ build_golden_record RA-EX-C fields present')
 
+    # Test 22: amortization_type normalization (v4.9)
+    doc_arm = {'URLA_1003': {'extracted_fields': {'amortization_type': 'Adjustable Rate'}}}
+    assert extract_amortization_type(doc_arm) == 'arm', 'amortization_type'
+    assert extract_amortization_type({}) is None, 'amortization_type no-doc -> None'
+    print(f'  ✅ Amortization type: arm')
+
+    # Test 23: lien_position normalization (v4.9)
+    doc_lien = {'URLA_1003': {'extracted_fields': {'lien_position': 'First'}}}
+    assert extract_lien_position(doc_lien) == 'first', 'lien_position'
+    print(f'  ✅ Lien position: first')
+
+    # Test 24: hmda_lien_status maps from lien_position; unknown -> None (v4.9)
+    assert hmda_lien_status('first') == 'secured_by_first_lien'
+    assert hmda_lien_status('second') == 'secured_by_subordinate_lien'
+    assert hmda_lien_status(None) is None, 'unknown lien -> None (not not_secured)'
+    gr49 = build_golden_record(doc_arm)
+    assert gr49['amortization_type'] == 'arm' and gr49['lien_status_hmda'] is None
+    print(f'  ✅ HMDA lien status (unknown -> None)')
+
     print(f'\n✅ All unit tests passed.')
-    print(f'   21/21 assertions correct.')
+    print(f'   24/24 assertions correct.')
     return True
 
 

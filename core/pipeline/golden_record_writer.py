@@ -76,6 +76,122 @@ def _num(v: Any) -> Optional[float]:
         return None
 
 
+def _int(v: Any) -> Optional[int]:
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return None
+
+
+def _inq_last_90(inquiries: Any) -> Optional[int]:
+    """Count credit inquiries within the last 90 days. Defensive: the inquiry
+    date lives under a few possible keys; if none parse, fall back to the total
+    array length. Returns None only when the input isn't a list."""
+    from datetime import datetime, timedelta, timezone
+    if not isinstance(inquiries, list):
+        return None
+    cutoff = datetime.now(timezone.utc).date() - timedelta(days=90)
+    recent, parsed_any = 0, False
+    for it in inquiries:
+        d = it.get('date') or it.get('inquiry_date') or it.get('pulled_at') if isinstance(it, dict) else None
+        if not d:
+            continue
+        try:
+            dt = datetime.fromisoformat(str(d)[:10]).date()
+            parsed_any = True
+            if dt >= cutoff:
+                recent += 1
+        except (ValueError, TypeError):
+            continue
+    return recent if parsed_any else len(inquiries)
+
+
+# v4.9 canonical columns written additively by the golden-record path. Strings/
+# dates/ints/bools — the numeric _COLUMN_MAP diff path above only covers floats.
+_V49_COLUMNS = (
+    "amortization_type", "lien_position", "lien_status_hmda", "credit_report_date",
+    "public_records_count", "inquiries_last_90", "residual_income", "action_taken",
+    "aus_submission_count", "manual_review_required",
+)
+
+
+async def _derive_v49_columns(
+    conn, application_id: str, tenant_id: str, golden: dict, cur: dict,
+) -> dict:
+    """Compute the 10 v4.9 canonical columns (RA-2B / Capital Loans). Three come
+    from the pure golden record (doc-derived); seven are queried from
+    credit_profiles / aus_results / decision_outputs / entity_states. Returns
+    {col: value}; None where no source exists (never invents a value)."""
+    out: dict[str, Any] = {
+        "amortization_type":    golden.get("amortization_type"),
+        "lien_position":        golden.get("lien_position"),
+        "lien_status_hmda":     golden.get("lien_status_hmda"),
+        "credit_report_date":   None,
+        "public_records_count": None,
+        "inquiries_last_90":    None,
+        "residual_income":      None,
+        "action_taken":         "application_received",   # default for a new loan
+        "aus_submission_count": 0,
+        "manual_review_required": False,
+    }
+
+    # credit_profiles — joined by applicant_id (NOT application_id); JSONB is
+    # profile_data (NOT credit_data). Empty for summit today -> stays None.
+    applicant_id = (cur or {}).get("applicant_id")
+    if applicant_id:
+        cp = await conn.fetchrow(
+            """SELECT report_date, profile_data FROM credit_profiles
+               WHERE applicant_id=$1 AND tenant_id=$2 AND is_current=true
+               ORDER BY report_date DESC NULLS LAST LIMIT 1""",
+            applicant_id, tenant_id,
+        )
+        if cp:
+            out["credit_report_date"] = cp["report_date"]
+            pd = cp["profile_data"]
+            if isinstance(pd, str):
+                try:
+                    pd = json.loads(pd)
+                except Exception:  # noqa: BLE001
+                    pd = {}
+            pd = pd or {}
+            pr = pd.get("public_records")
+            out["public_records_count"] = (
+                len(pr) if isinstance(pr, list) else _int(pd.get("public_records_count")))
+            inq = pd.get("inquiries")
+            out["inquiries_last_90"] = (
+                _inq_last_90(inq) if isinstance(inq, list) else _int(pd.get("inquiries_last_90")))
+
+    # residual_income = qualifying_monthly - obligations - (appraised * 0.0014).
+    # NULL when qualifying_monthly is NULL.
+    qm = (cur or {}).get("qualifying_monthly")
+    if qm is not None:
+        oblig = _num(golden.get("monthly_obligations")) or _num((cur or {}).get("monthly_obligations")) or 0.0
+        appr = _num(golden.get("appraised_value")) or _num((cur or {}).get("appraised_value")) or 0.0
+        out["residual_income"] = round(float(qm) - oblig - appr * 0.0014, 2)
+
+    # action_taken — from the human-reviewed underwriting decision.
+    ha = await conn.fetchval(
+        """SELECT human_action FROM decision_outputs
+           WHERE application_id=$1 AND tenant_id=$2 AND decision_id='underwriting_decision'
+             AND human_action IS NOT NULL ORDER BY version DESC LIMIT 1""",
+        application_id, tenant_id,
+    )
+    if ha == "approved":
+        out["action_taken"] = "loan_originated"
+    elif ha == "denied":
+        out["action_taken"] = "application_denied"
+
+    # aus_results — submission count + manual-review (refer) downgrade flag.
+    out["aus_submission_count"] = await conn.fetchval(
+        "SELECT COUNT(*) FROM aus_results WHERE application_id=$1 AND tenant_id=$2",
+        application_id, tenant_id) or 0
+    out["manual_review_required"] = await conn.fetchval(
+        """SELECT EXISTS(SELECT 1 FROM aus_results WHERE application_id=$1 AND tenant_id=$2
+             AND recommendation ILIKE '%refer%' AND COALESCE(system,'') <> 'MANUAL')""",
+        application_id, tenant_id) or False
+    return out
+
+
 async def _write_w2_income_source(
     conn, application_id: str, tenant_id: str,
 ) -> bool:
@@ -165,13 +281,17 @@ async def apply_golden_record(
     current_row = await conn.fetchrow(
         """
         SELECT mid_credit_score, ltv, appraised_value, purchase_price,
-               loan_amount, monthly_obligations
+               loan_amount, monthly_obligations, qualifying_monthly,
+               borrower ->> 'applicant_id' AS applicant_id
         FROM entity_states
         WHERE application_id = $1 AND tenant_id = $2
         """,
         application_id, tenant_id,
     )
     current = dict(current_row) if current_row else {}
+
+    # v4.9 — 10 canonical columns (3 doc-derived from `golden`, 7 from DB).
+    v49 = await _derive_v49_columns(conn, application_id, tenant_id, golden, current)
 
     diff: dict[str, dict] = {}
     for gk, col in _COLUMN_MAP.items():
@@ -197,6 +317,23 @@ async def apply_golden_record(
         written = True
         logger.info("golden_record: wrote %s for %s", list(diff), application_id)
 
+    # v4.9: write the 10 canonical columns additively (only non-None values, so a
+    # missing source never nulls a seeded value). Same write/meridian guard.
+    v49_written: list[str] = []
+    if write:
+        cols = [(c, v49[c]) for c in _V49_COLUMNS if v49.get(c) is not None]
+        if cols:
+            sets = [f"{c} = ${i}" for i, (c, _) in enumerate(cols, start=1)]
+            vals = [v for _, v in cols]
+            vals.extend([application_id, tenant_id])
+            await conn.execute(
+                f"UPDATE entity_states SET {', '.join(sets)} "
+                f"WHERE application_id = ${len(vals) - 1} AND tenant_id = ${len(vals)}",
+                *vals,
+            )
+            v49_written = [c for c, _ in cols]
+            logger.info("golden_record v4.9: wrote %s for %s", v49_written, application_id)
+
     # INC-A: also populate income_sources (additive; W2 stream). Only on the real
     # write path — meridian raised above, dry-run leaves the model alone.
     income_written = False
@@ -205,7 +342,8 @@ async def apply_golden_record(
             conn, application_id, tenant_id)
 
     return {"golden": golden, "current": current, "diff": diff,
-            "written": written, "income_written": income_written}
+            "written": written, "income_written": income_written,
+            "v49": v49, "v49_written": v49_written}
 
 
 __all__ = ["apply_golden_record", "load_doc_map", "build_golden_record"]
