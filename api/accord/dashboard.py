@@ -62,26 +62,34 @@ async def summary(user: dict = Depends(get_current_user)) -> dict:
             f"AND status = ANY($2::text[])",
             tid, list(ACTIVE_STATUSES))
 
-        # Condition-derived metrics from the proven aggregate view.
+        # Condition-derived metrics from the proven aggregate view. Every count is
+        # scoped to loans that actually exist in entity_states (the real active
+        # universe) — the aggregate view can hold orphan condition rows with no
+        # entity_states row (e.g. APP-SC30-004), which would otherwise inflate the
+        # KPIs past active_files.
+        _EX = ("AND EXISTS (SELECT 1 FROM entity_states es "
+               "WHERE es.application_id = v.application_id AND es.tenant_id = v.tenant_id)")
         needs_attention = await _scalar(
             conn,
-            "SELECT COUNT(*) FROM vw_loan_conditions_aggregate "
-            "WHERE tenant_id=$1 AND (blocking_conditions > 0 OR overdue_conditions > 0)",
+            "SELECT COUNT(*) FROM vw_loan_conditions_aggregate v "
+            f"WHERE v.tenant_id=$1 AND (v.blocking_conditions > 0 OR v.overdue_conditions > 0) {_EX}",
             tid)
         ready_to_decide = await _scalar(
             conn,
-            "SELECT COUNT(*) FROM vw_loan_conditions_aggregate "
-            "WHERE tenant_id=$1 AND total_conditions > 0 AND open_conditions = 0",
+            "SELECT COUNT(*) FROM vw_loan_conditions_aggregate v "
+            f"WHERE v.tenant_id=$1 AND v.total_conditions > 0 AND v.open_conditions = 0 {_EX}",
             tid)
         sla_breaches = await _scalar(
             conn,
-            "SELECT COUNT(*) FROM vw_loan_conditions_aggregate "
-            "WHERE tenant_id=$1 AND overdue_conditions > 0",
+            "SELECT COUNT(*) FROM vw_loan_conditions_aggregate v "
+            f"WHERE v.tenant_id=$1 AND v.overdue_conditions > 0 {_EX}",
             tid)
         pending_customer = await _scalar(
             conn,
-            "SELECT COUNT(DISTINCT application_id) FROM loan_condition_instances "
-            "WHERE tenant_id=$1 AND assignee='borrower' AND status='open'",
+            "SELECT COUNT(DISTINCT lci.application_id) FROM loan_condition_instances lci "
+            "WHERE lci.tenant_id=$1 AND lci.assignee='borrower' AND lci.status='open' "
+            "AND EXISTS (SELECT 1 FROM entity_states es "
+            "WHERE es.application_id = lci.application_id AND es.tenant_id = lci.tenant_id)",
             tid)
 
         # Avg decision time: days from the loan's first decision to its
@@ -171,8 +179,26 @@ async def team_performance(user: dict = Depends(get_current_user)) -> dict:
     members: list[dict] = []
     async with pool.acquire() as conn:
         try:
+            # avg_decision_days = real per-member decision turnaround: engine time
+            # from a loan's first decision to its (human-reviewed) underwriting
+            # decision, averaged over that member's loans. NOT NOW()-assigned_at
+            # (queue age) — in this data assigned_at can post-date decided_at, so
+            # that would go negative. NULL when the member has no decided loan
+            # (frontend renders "—"). All assignment counts are scoped to loans
+            # present in entity_states so the orphan (APP-SC30-004) drops out.
             rows = await conn.fetch(
                 """
+                WITH uw AS (
+                    SELECT DISTINCT ON (application_id) application_id, decided_at, human_action
+                    FROM decision_outputs
+                    WHERE tenant_id=$1 AND decision_id='underwriting_decision' AND decided_at IS NOT NULL
+                    ORDER BY application_id, version DESC
+                ),
+                firstd AS (
+                    SELECT application_id, MIN(decided_at) AS started
+                    FROM decision_outputs WHERE tenant_id=$1 AND decided_at IS NOT NULL
+                    GROUP BY application_id
+                )
                 SELECT u.user_id, u.name, u.role,
                        COUNT(la.application_id) FILTER (WHERE la.status='active') AS active,
                        COUNT(la.application_id) FILTER (WHERE la.status IN ('decided','funded')) AS decided,
@@ -184,13 +210,18 @@ async def team_performance(user: dict = Depends(get_current_user)) -> dict:
                        COUNT(la.application_id) FILTER (
                            WHERE la.status='active'
                            AND agg.total_conditions > 0 AND agg.open_conditions = 0) AS ready_to_decide,
-                       AVG(EXTRACT(EPOCH FROM (NOW() - la.assigned_at)) / 86400.0)
-                           FILTER (WHERE la.status='active') AS avg_days
+                       ROUND(AVG(EXTRACT(EPOCH FROM (uw.decided_at - firstd.started)) / 86400.0)
+                           FILTER (WHERE uw.human_action IS NOT NULL
+                                   AND uw.decided_at >= firstd.started)::numeric, 1) AS avg_decision_days
                 FROM users u
                 LEFT JOIN loan_assignments la
                        ON la.assigned_to = u.user_id AND la.tenant_id = $1
+                      AND EXISTS (SELECT 1 FROM entity_states es
+                                  WHERE es.application_id = la.application_id AND es.tenant_id = la.tenant_id)
                 LEFT JOIN vw_loan_conditions_aggregate agg
                        ON agg.application_id = la.application_id AND agg.tenant_id = $1
+                LEFT JOIN uw ON uw.application_id = la.application_id
+                LEFT JOIN firstd ON firstd.application_id = la.application_id
                 WHERE u.tenant_id = $1
                   AND u.role IN ('processor','underwriter','senior_uw','closer')
                 GROUP BY u.user_id, u.name, u.role
@@ -212,7 +243,7 @@ async def team_performance(user: dict = Depends(get_current_user)) -> dict:
                     "pending": 0,  # placeholder — no per-assignment borrower-doc source
                     "ready_to_decide": int(r["ready_to_decide"] or 0),
                     "decided": int(r["decided"] or 0),
-                    "avg_decision_days": round(float(r["avg_days"]), 1) if r["avg_days"] is not None else None,
+                    "avg_decision_days": round(float(r["avg_decision_days"]), 1) if r["avg_decision_days"] is not None else None,
                     "avg_decision_delta": None,  # no snapshot history
                     "sla_breaches": int(r["sla_breaches"] or 0),
                     "capacity_pct": min(100, round(active * 100 / CAPACITY_TARGET)) if active else 0,
@@ -237,8 +268,10 @@ async def attention(user: dict = Depends(get_current_user),
         try:
             total = int(await _scalar(
                 conn,
-                "SELECT COUNT(*) FROM vw_loan_conditions_aggregate "
-                "WHERE tenant_id=$1 AND (blocking_conditions > 0 OR overdue_conditions > 0)", tid))
+                "SELECT COUNT(*) FROM vw_loan_conditions_aggregate v "
+                "WHERE v.tenant_id=$1 AND (v.blocking_conditions > 0 OR v.overdue_conditions > 0) "
+                "AND EXISTS (SELECT 1 FROM entity_states es "
+                "WHERE es.application_id = v.application_id AND es.tenant_id = v.tenant_id)", tid))
             rows = await conn.fetch(
                 """
                 SELECT agg.application_id,
@@ -253,7 +286,7 @@ async def attention(user: dict = Depends(get_current_user),
                            AND lci.status NOT IN ('approved','waived')
                          ORDER BY lci.blocks_closing DESC, lci.due_date ASC NULLS LAST LIMIT 1) AS issue
                 FROM vw_loan_conditions_aggregate agg
-                LEFT JOIN entity_states es ON es.application_id = agg.application_id AND es.tenant_id = $1
+                JOIN entity_states es ON es.application_id = agg.application_id AND es.tenant_id = $1
                 LEFT JOIN applications app ON app.application_id = agg.application_id
                 LEFT JOIN applicants ap ON ap.applicant_id = app.applicant_id
                 LEFT JOIN loan_assignments la ON la.application_id = agg.application_id
