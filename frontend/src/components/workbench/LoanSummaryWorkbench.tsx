@@ -481,7 +481,7 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
           <Field label="DTI" value={pct(nonZero(loan.metrics?.dti) ?? signalNumber(loan, 'dti_calculation', ['dti']))} />
           <Field label="FICO" value={nonZero(loan.metrics?.credit_score) ?? signalNumber(loan, 'credit_assessment', ['credit', 'fico', 'score']) ?? DASH} />
           <Field label="Loan Program" value={loanProgram(loanType, loan.metrics?.loan_amount)} />
-          <Field label="AUS Result" value={(loan as any).aus_result ?? (loan as any).metrics?.aus_result ?? DASH} />
+          <Field label="AUS Result" value={(loan as any).aus_result?.display ?? (loan as any).aus_result?.recommendation ?? DASH} />
           <Field
             label="Rate Lock Expires"
             value={lockDays == null ? DASH : `${lockDays} days`}
@@ -825,7 +825,7 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
           creditScore={nonZero(loan.metrics?.credit_score) ?? DASH}
           ltv={pct(loan.metrics?.ltv)}
           dti={pct(nonZero(loan.metrics?.dti) ?? signalNumber(loan, 'dti_calculation', ['dti']))}
-          ausResult={(loan as any).aus_result ?? DASH}
+          ausResult={(loan as any).aus_result?.display ?? (loan as any).aus_result?.recommendation ?? DASH}
           onClose={() => setRecommendOpen(false)}
           onSend={(notes) => sendRecommendation(notes)}
         />

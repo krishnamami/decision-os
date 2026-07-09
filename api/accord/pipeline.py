@@ -1954,9 +1954,16 @@ async def resolve_applicable_rules(conn, tenant_id: str, application_id: str, at
 # AUS recommendation (loan_terms.aus_findings.recommendation) -> display label.
 _AUS_RESULT_LABELS = {
     "approve_eligible":   "Approve/Eligible",
+    "approve/eligible":   "Approve/Eligible",
     "refer_with_caution": "Refer with Caution",
+    "refer":              "Refer",
+    "accept":             "Accept",
+    "ineligible":         "Ineligible",
+    "eligible":           "Eligible",
     "out_of_scope":       "Out of Scope",
+    "approve":            "Approve",
     "approve_ineligible": "Approve/Ineligible",
+    "caution":            "Caution",
 }
 
 
@@ -2119,6 +2126,15 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
             WHERE application_id = $1 AND tenant_id = $2
               AND status IN ('open', 'submitted', 'in_review')
             ORDER BY blocks_closing DESC, created_at ASC
+            """,
+            application_id, tenant_id,
+        )
+        aus_row = await conn.fetchrow(
+            """
+            SELECT system, recommendation, risk_class, run_date, case_id, findings_summary
+            FROM aus_results
+            WHERE application_id = $1 AND tenant_id = $2 AND is_latest = true
+            LIMIT 1
             """,
             application_id, tenant_id,
         )
@@ -2291,10 +2307,21 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
     # loan_purpose lives in loan_terms.urla (applications.loan_purpose is often
     # NULL); the AUS recommendation lives in loan_terms.aus_findings.
     loan_purpose = (loan_terms.get("urla") or {}).get("loan_purpose") or ap.get("loan_purpose")
-    _aus_rec = (loan_terms.get("aus_findings") or {}).get("recommendation")
+    # AUS result: aus_results table (primary) -> loan_terms.aus_findings (fallback).
+    _aus_findings = loan_terms.get("aus_findings") or {}
+    _aus_sys = (aus_row["system"] if aus_row else None) or _aus_findings.get("system")
+    _aus_rec = (aus_row["recommendation"] if aus_row else None) or _aus_findings.get("recommendation")
     aus_result = None
     if _aus_rec:
-        aus_result = _AUS_RESULT_LABELS.get(_aus_rec) or _aus_rec.replace("_", " ").title()
+        _rec_disp = _AUS_RESULT_LABELS.get(str(_aus_rec).lower()) or str(_aus_rec).replace("_", " ").title()
+        _sys = str(_aus_sys).upper() if _aus_sys else None
+        aus_result = {
+            "system": _sys,
+            "recommendation": _rec_disp,
+            "run_date": aus_row["run_date"].isoformat() if (aus_row and aus_row["run_date"]) else None,
+            "case_id": aus_row["case_id"] if aus_row else None,
+            "display": f"{_sys}: {_rec_disp}" if _sys else _rec_disp,
+        }
 
     internal_requests = [
         {

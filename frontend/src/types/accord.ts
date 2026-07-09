@@ -166,6 +166,13 @@ export interface LoanDetail {
   application_id: string
   borrower_email?: string | null
   loan_number?: string | null
+  aus_result?: {
+    system: string | null
+    recommendation: string | null
+    run_date: string | null
+    case_id: string | null
+    display: string | null
+  } | null
   borrower: {
     name: string
     employer: string | null
