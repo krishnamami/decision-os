@@ -402,6 +402,26 @@ export function fetchLoan(appId: string): Promise<LoanDetail> {
   return getJSON<LoanDetail>(`/api/accord/loans/${encodeURIComponent(appId)}`)
 }
 
+// Exam-ready PDF export (CN-EX). Fetches the PDF blob with the Bearer header
+// (a plain <a href> can't carry it) and triggers a browser download.
+export async function exportExamReady(appId: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/accord/loans/${encodeURIComponent(appId)}/export/exam-ready`,
+    { method: 'POST', headers: authHeaders() },
+  )
+  if (res.status === 401) handle401('/export/exam-ready')
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText} — export failed`)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `exam-ready-${appId}.pdf`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 export function fetchConditions(appId: string) {
   return getJSON<any[]>(
     `/api/accord/conditions/${encodeURIComponent(appId)}`

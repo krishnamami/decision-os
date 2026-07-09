@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext'
 import {
   fetchLoan, fetchConditions, fetchConditionsSummary,
   fetchSimilarCases, fetchLoanActions, decideLoan, resolveAttentionRequest, createLoanAction,
+  exportExamReady,
   type LoanAction, type SimilarCase,
 } from '../../api/client'
 
@@ -274,6 +275,20 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
     }
     setTimeout(() => setToast(null), 2500)
   }
+  // Exam-ready PDF export (CN-EX) — visible to all roles.
+  const [exporting, setExporting] = useState(false)
+  async function handleExport() {
+    if (exporting) return
+    setExporting(true)
+    try {
+      await exportExamReady(applicationId)
+    } catch {
+      setToast('Export failed — please try again.')
+      setTimeout(() => setToast(null), 2500)
+    } finally {
+      setExporting(false)
+    }
+  }
   // Approve guard: if an internal request directed at me is still open on this
   // loan, confirm before approving (prevents the accidental-approve foot-gun).
   function onApproveClick() {
@@ -474,6 +489,11 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
               <button onClick={() => setDecideModal('deny')} className="rounded-md bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-500">Deny</button>
             </>
           )}
+          <button
+            onClick={handleExport}
+            disabled={exporting}
+            className="rounded-md bg-white/15 px-3 py-1 text-xs font-semibold hover:bg-white/25 disabled:opacity-60"
+          >{exporting ? 'Exporting…' : 'Exam-ready export'}</button>
           <button
             onClick={() => navigate(`/pipeline/${encodeURIComponent(applicationId)}?view=full`)}
             className="rounded-md bg-white/15 px-3 py-1 text-xs font-semibold hover:bg-white/25"
