@@ -64,3 +64,20 @@ smallest blast radius). None block the QA-C fix.
   isolated). Rollback: revert service to `accord-api:80`.
 
 - No other changes needed for QA-C.
+
+## Exam-ready PDF export (CN-EX, 8684ae3)
+
+- [ ] **`loan_condition_instances.cleared_by` column.** The exam-ready PDF (Page 3,
+  Conditions Lifecycle) wants a "Cleared By" attribution per condition, but the table
+  has `cleared_at` and no per-user `cleared_by`, so the column currently renders "—"
+  (the page carries a caption saying so). To attribute clearances, add the column and
+  populate it wherever a condition transitions to approved/waived (the
+  `mark_condition_received`/clear paths + any backfill from `activity_log` actor):
+
+  ```sql
+  ALTER TABLE loan_condition_instances
+    ADD COLUMN IF NOT EXISTS cleared_by VARCHAR;
+  ```
+
+  Prod RDS `edms` — **not run yet** (standing rule: show-before-run). Additive/nullable,
+  so it's backward-safe; the PDF builder already tolerates its absence.
