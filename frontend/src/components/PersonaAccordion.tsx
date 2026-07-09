@@ -34,12 +34,18 @@ function matchDoc(name: string, docs: DocItem[]): DocItem | undefined {
 
 // The 5 lifecycle stages, keyed by the `wave` each decision already carries.
 const STAGES = [
-  { wave: 1, label: 'VERIFY' },
-  { wave: 2, label: 'UNDERWRITE' },
-  { wave: 3, label: 'ELIGIBILITY' },
-  { wave: 4, label: 'DECIDE' },
-  { wave: 5, label: 'CLOSE' },
+  { wave: 1, label: 'Verify' },
+  { wave: 2, label: 'Qualify' },
+  { wave: 3, label: 'Eligibility' },
+  { wave: 4, label: 'Decide' },
+  { wave: 5, label: 'Close' },
 ]
+
+// Agency code -> examiner-facing display name for citations.
+const AGENCY_DISPLAY: Record<string, string> = {
+  fannie: 'Fannie Mae', fha: 'FHA / HUD', va: 'VA', cfpb: 'CFPB',
+  ffiec: 'FFIEC', state: 'State Regulatory',
+}
 
 function overall(ds: DecisionDetail[]): { label: string; cls: string } {
   if (!ds.length) return { label: 'Pending', cls: 'bg-gray-100 text-gray-400' }
@@ -78,8 +84,10 @@ export default function PersonaAccordion({ decisions, applicationId, actions = [
             <div key={stage.wave} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
               <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-5 py-3">
                 <div className="flex items-baseline gap-2">
-                  <span className="text-sm font-bold tracking-wide text-slate-800">{stage.label}</span>
-                  <span className="text-xs text-slate-400">Wave {stage.wave}</span>
+                  <span className="text-sm font-bold tracking-wide text-slate-800">Wave {stage.wave} — {stage.label}</span>
+                  {ds.length > 0 && (
+                    <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-600">{ds.length} decision{ds.length === 1 ? '' : 's'}</span>
+                  )}
                 </div>
                 <span className="flex items-center gap-1.5 text-xs text-slate-500">
                   Overall:
@@ -221,7 +229,13 @@ function DecisionRow({ d, docs, notes = [], open, onToggle }: { d: DecisionDetai
                                 return (
                                   <p key={i} className="flex flex-wrap items-center gap-1 text-[11px] text-slate-400">
                                     <span aria-hidden="true" style={{ color: '#0F4D37' }}>📖</span>
-                                    {g.citation && <strong className="text-slate-500">{g.citation}</strong>}
+                                    {g.citation && (() => {
+                                      const ad = g.agency ? (AGENCY_DISPLAY[g.agency.toLowerCase()] ?? g.agency) : ''
+                                      const text = `${ad ? ad + ' ' : ''}${g.citation}`
+                                      return g.source_url
+                                        ? <a href={g.source_url} target="_blank" rel="noopener" className="font-semibold text-slate-600 underline hover:text-slate-800">{text}</a>
+                                        : <strong className="text-slate-500">{text}</strong>
+                                    })()}
                                     <span>· {label}{g.effective_value != null ? ` · ${g.effective_value}` : ''}</span>
                                     {g.floor_enforced && <span style={{ color: '#854f0b' }}>· floor enforced</span>}
                                   </p>

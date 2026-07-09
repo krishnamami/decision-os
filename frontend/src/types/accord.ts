@@ -93,6 +93,7 @@ export interface GovernedBy {
   threshold_field?: string
   effective_value?: number | string
   source?: string
+  source_url?: string | null
   floor_enforced?: boolean
   note?: string
   expression?: string
