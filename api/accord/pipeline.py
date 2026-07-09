@@ -1675,7 +1675,7 @@ def _conversational_summary(decisions: list[dict], m: dict, name: str,
     hard block beating an escalate at the same wave)."""
     blockers = sorted(
         [d for d in decisions if d.get("outcome") in ("block", "escalate")],
-        key=lambda d: (PERSONAS.get(d["decision_id"], {}).get("wave", 9), 0 if d["outcome"] == "block" else 1),
+        key=lambda d: (0 if d["outcome"] == "block" else 1, PERSONAS.get(d["decision_id"], {}).get("wave", 9)),
     )
     passed = [d for d in decisions if d.get("outcome") not in ("block", "escalate")]
     has_block = any(d.get("outcome") == "block" for d in decisions)
@@ -2102,12 +2102,15 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
         )
         cond_rows = await conn.fetch(
             """
-            SELECT condition_id, decision_id, category, description, status,
-                   severity, created_by, created_at, cleared_by, cleared_at
-            FROM conditions WHERE application_id = $1
-            ORDER BY created_at DESC
+            SELECT id, condition_code, condition_text, category, status,
+                   blocks_closing, due_date, assignee, recommended_action,
+                   review_area, governed_by, agency_citation, library_citation,
+                   is_overdue, days_until_due, opened_at
+            FROM vw_loan_condition_summary
+            WHERE application_id = $1 AND tenant_id = $2
+            ORDER BY blocks_closing DESC, due_date ASC NULLS LAST
             """,
-            application_id,
+            application_id, tenant_id,
         )
         lci_rows = await conn.fetch(
             """
@@ -2274,7 +2277,9 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
         "loan_amount": _f(e.get("loan_amount")),
         "credit_score": int(e["mid_credit_score"]) if e.get("mid_credit_score") else None,
         "ltv": _pct(e.get("ltv")),
-        "dti": _pct(e.get("dti_back")),
+        "dti": _pct(e.get("dti_back")) or None,
+        "dti_back": _pct(e.get("dti_back")) or None,
+        "dti_front": _pct(e.get("dti_front")) or None,
         "interest_rate": _pct(e.get("interest_rate")),
         "lock_days_remaining": lock_days,
         "income_stated": _f((borrower.get("income") or {}).get("stated_income_annual")),
@@ -2412,11 +2417,16 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
         ],
         "conditions": [
             {
-                "condition_id": str(r["condition_id"]), "decision_id": r["decision_id"],
-                "category": r["category"], "description": r["description"],
-                "status": r["status"], "severity": r["severity"],
-                "created_by": r["created_by"],
-                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                "id": str(r["id"]), "condition_id": str(r["id"]),
+                "condition_code": r["condition_code"], "condition_text": r["condition_text"],
+                "description": r["condition_text"], "category": r["category"],
+                "status": r["status"], "blocks_closing": r["blocks_closing"],
+                "due_date": r["due_date"].isoformat() if r["due_date"] else None,
+                "assignee": r["assignee"], "recommended_action": r["recommended_action"],
+                "review_area": r["review_area"], "governed_by": r["governed_by"],
+                "agency_citation": r["agency_citation"], "library_citation": r["library_citation"],
+                "is_overdue": r["is_overdue"], "days_until_due": r["days_until_due"],
+                "created_at": r["opened_at"].isoformat() if r["opened_at"] else None,
             }
             for r in cond_rows
         ],

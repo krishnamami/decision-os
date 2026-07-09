@@ -177,6 +177,8 @@ export interface LoanDetail {
     credit_score: number | null
     ltv: number | null
     dti: number | null
+    dti_back?: number | null
+    dti_front?: number | null
     interest_rate: number | null
     lock_days_remaining: number | null
     income_stated?: number | null

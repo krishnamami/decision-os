@@ -2,6 +2,27 @@
 
 Tracked so they're not lost. Add new items at the top of the relevant section.
 
+## Conditions (CN-B, from auto-condition-generation session 2026-07-08)
+
+- [ ] **Dashboard aggregate views → `loan_condition_instances`.** `api/accord/dashboard.py`
+  reads pre-aggregated `blocking_conditions`/`open_conditions`/`overdue_conditions` from an
+  aggregate table/view (not the live `vw_loan_conditions_aggregate`). The portfolio dashboard
+  counts won't reflect the 45,554 auto-generated conditions until that agg source is repointed.
+  (Loan-detail panel + Decision-Readiness donut already read the CN-C views correctly.)
+- [ ] **~5 `${ltv}` conditions** still show a literal placeholder — their linked decision had no
+  parseable `ltv` in the boundary_rule. Low priority.
+
+## DTI surfacing (from 2026-07-08 session)
+
+- [ ] **`entity_states.dti_back` backfill deferred (data quality).** The upstream
+  `dti_calculation` `context.dti` is an **obligations-only ratio**
+  (`monthly_obligations / monthly_income`) that **excludes the proposed PITI**, so it reads far
+  too low (APP-SC10-004: 5.9% vs a real back-end DTI ~33%) and is inconsistent with existing
+  `dti_back` values (32–88%). Backfilling would surface misleading DTIs, so we show `—` instead.
+  8,742/8,912 loans have NULL/0 `dti_back` (root cause: synthetic `verified_income = 0` →
+  `dti = inf`). Revisit when Capital Loans real data flows: persist
+  `(PITI + monthly_obligations) / qualifying_monthly_income` to `entity_states.dti_back`.
+
 ## Security (from QA-C — RLS tenant isolation, closed 2026-06-30)
 
 QA-C itself is **complete**: `/api/accord/*` now enforces RLS via the non-bypass

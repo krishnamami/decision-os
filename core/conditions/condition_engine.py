@@ -156,6 +156,13 @@ class ConditionEngine:
         code = select_condition_code(decision_id, boundary_rule, signals)
         if not code:
             return []
+        # Resolve ${ltv} from the boundary_rule (fraction -> percent) so the
+        # condition text renders a real number, not a literal placeholder.
+        import re as _re
+        template_vars: dict = {}
+        _m = _re.search(r"ltv\s*[=>]?\s*([0-9]*\.?[0-9]+)", (boundary_rule or "").lower())
+        if _m:
+            template_vars["ltv"] = round(float(_m.group(1)) * 100, 1)
         cid = await self.create_condition(
             application_id=application_id,
             tenant_id=tenant_id,
@@ -164,6 +171,7 @@ class ConditionEngine:
             blocks_closing=None,      # derived from template.prior_to
             generated_by=generated_by,
             decision_id=decision_uuid,   # decision_outputs.id (UUID) or None
+            template_vars=template_vars or None,
         )
         return [code] if cid else []
 
