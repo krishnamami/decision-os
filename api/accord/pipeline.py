@@ -758,6 +758,7 @@ async def my_queue(
             "borrower_name": r["borrower_name"],
             "loan_amount": _f(r["loan_amount"]),
             "loan_type": r["loan_type"],
+            "loan_program": _resolve_loan_program(r["loan_type"], _f(r["loan_amount"])),
             "status": st,
             "stage": r["stage"],
             "queue_type": queue_type,
@@ -1966,6 +1967,26 @@ _AUS_RESULT_LABELS = {
     "caution":            "Caution",
 }
 
+# Loan program display. 3-tier: explicit loan_terms.loan_program -> loan_type map ->
+# conforming/jumbo by amount. (product_eligibility is NOT used — its eligible list is
+# uniform synthetic noise in the current data.)
+_LOAN_PROGRAM_MAP = {
+    "fha": "FHA 30yr", "va": "VA 30yr", "usda": "USDA Rural",
+    "non_qm": "Non-QM", "jumbo": "Jumbo 30yr", "government": "Government 30yr",
+}
+_CONFORMING_LIMIT = 766550
+
+
+def _resolve_loan_program(loan_type, loan_amount, explicit=None):
+    if explicit:
+        return explicit
+    lt = str(loan_type or "").lower()
+    if lt in _LOAN_PROGRAM_MAP:
+        return _LOAN_PROGRAM_MAP[lt]
+    if loan_amount is not None:
+        return "Jumbo 30yr" if loan_amount > _CONFORMING_LIMIT else "Conforming 30yr"
+    return None
+
 
 @router.get("/loans/{application_id}")
 async def loan_detail(application_id: str, user: dict = Depends(get_current_user)) -> dict:
@@ -2307,6 +2328,8 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
     # loan_purpose lives in loan_terms.urla (applications.loan_purpose is often
     # NULL); the AUS recommendation lives in loan_terms.aus_findings.
     loan_purpose = (loan_terms.get("urla") or {}).get("loan_purpose") or ap.get("loan_purpose")
+    loan_program = _resolve_loan_program(
+        loan_terms.get("loan_type"), e.get("loan_amount"), explicit=loan_terms.get("loan_program"))
     # AUS result: aus_results table (primary) -> loan_terms.aus_findings (fallback).
     _aus_findings = loan_terms.get("aus_findings") or {}
     _aus_sys = (aus_row["system"] if aus_row else None) or _aus_findings.get("system")
@@ -2415,6 +2438,7 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
         "borrower_email": ap.get("email"),
         "loan_number": ap.get("loan_number"),
         "loan_purpose": loan_purpose,
+        "loan_program": loan_program,
         "aus_result": aus_result,
         "metrics": metrics_out,
         **escalation_ctx,

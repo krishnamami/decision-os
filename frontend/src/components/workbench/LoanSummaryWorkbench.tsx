@@ -384,6 +384,7 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
     [conditions, blockingConds],
   )
   const loanType = similar?.based_on?.loan_type ?? null
+  const program = (loan as any)?.loan_program ?? loanProgram(loanType, loan?.metrics?.loan_amount)
   const lockDays = loan?.metrics?.lock_days_remaining ?? null
   const docCount = loan?.documents?.length ?? null
   // Prefer the decision that actually drove the outcome — fraud first — so a
@@ -439,8 +440,8 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
           <span>{loan.borrower?.name ?? DASH}</span>
           <span className="text-white/30">·</span>
           <span>{money(loan.metrics?.loan_amount)}</span>
-          {loanProgram(loanType, loan.metrics?.loan_amount) !== DASH && (
-            <><span className="text-white/30">·</span><span>{loanProgram(loanType, loan.metrics?.loan_amount)}</span></>
+          {program !== DASH && (
+            <><span className="text-white/30">·</span><span>{program}</span></>
           )}
         </div>
         <div className="flex items-center gap-2">
@@ -480,7 +481,7 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
           <Field label="LTV / CLTV" value={pct(loan.metrics?.ltv)} className={loan.metrics?.ltv != null && loan.metrics.ltv > 80 ? 'text-amber-600' : ''} />
           <Field label="DTI" value={pct(nonZero(loan.metrics?.dti) ?? signalNumber(loan, 'dti_calculation', ['dti']))} />
           <Field label="FICO" value={nonZero(loan.metrics?.credit_score) ?? signalNumber(loan, 'credit_assessment', ['credit', 'fico', 'score']) ?? DASH} />
-          <Field label="Loan Program" value={loanProgram(loanType, loan.metrics?.loan_amount)} />
+          <Field label="Loan Program" value={program} />
           <Field label="AUS Result" value={(loan as any).aus_result?.display ?? (loan as any).aus_result?.recommendation ?? DASH} />
           <Field
             label="Rate Lock Expires"

@@ -153,6 +153,7 @@ export interface QueueCard {
   borrower_name: string
   loan_amount: number | null
   loan_type: string | null
+  loan_program?: string | null
   status: string
   stage: string
   queue_type: 'action_needed' | 'internal_request' | 'returned' | 'escalated' | 'direct_assignment'

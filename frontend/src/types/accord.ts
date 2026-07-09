@@ -166,6 +166,7 @@ export interface LoanDetail {
   application_id: string
   borrower_email?: string | null
   loan_number?: string | null
+  loan_program?: string | null
   aus_result?: {
     system: string | null
     recommendation: string | null
