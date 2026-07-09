@@ -1976,10 +1976,20 @@ _LOAN_PROGRAM_MAP = {
 }
 _CONFORMING_LIMIT = 766550
 
+# Raw loan_program codes -> human labels. Unknown codes pass through as-is.
+_LOAN_PROGRAM_NORMALIZE = {
+    "FHA_203B": "FHA 30yr", "FHA_203K": "FHA 203(k)", "FHA_STREAMLINE": "FHA Streamline",
+    "VA_30": "VA 30yr", "VA_IRRRL": "VA IRRRL", "VA_CASH_OUT": "VA Cash-Out",
+    "USDA_RD": "USDA Rural", "USDA_STREAMLINE": "USDA Streamline",
+    "CONV_30": "Conforming 30yr", "CONV_15": "Conforming 15yr",
+    "JUMBO_30": "Jumbo 30yr", "JUMBO_ARM": "Jumbo ARM",
+    "NON_QM_30": "Non-QM 30yr", "NON_QM_IO": "Non-QM Interest Only",
+}
+
 
 def _resolve_loan_program(loan_type, loan_amount, explicit=None):
     if explicit:
-        return explicit
+        return _LOAN_PROGRAM_NORMALIZE.get(explicit, explicit)
     lt = str(loan_type or "").lower()
     if lt in _LOAN_PROGRAM_MAP:
         return _LOAN_PROGRAM_MAP[lt]
