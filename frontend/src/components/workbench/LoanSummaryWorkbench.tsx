@@ -281,6 +281,21 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
     if (open.length > 0) { setApproveGuardReq(open[0]); return }
     setDecideModal('approve')
   }
+  // Processor doc-collection actions.
+  async function markConditionReceived(conditionId: string) {
+    try {
+      await decideLoan(applicationId, { action: 'mark_condition_received', condition_id: conditionId })
+      setToast('Document marked received'); setReload((r) => r + 1)
+    } catch { setToast('Could not mark received — try again.') }
+    setTimeout(() => setToast(null), 2500)
+  }
+  async function advanceToUnderwriting() {
+    try {
+      const res = await decideLoan(applicationId, { action: 'advance_to_underwriting' })
+      setToast(res.title || 'Advanced to underwriting'); setReload((r) => r + 1)
+    } catch (e) { setToast(e instanceof Error ? e.message : 'Cannot advance — documents outstanding') }
+    setTimeout(() => setToast(null), 3000)
+  }
   // ── Concurrent doc-request + escalation (Pattern A) ────────────────────────
   async function waitForDocs() {
     try {
@@ -648,6 +663,11 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
           <div className="mt-1 text-[11px] text-green-700">{timeAgo(r.resolved_at)}</div>
         </div>
       ))}
+
+      {role === ROLES.PROCESSOR && (
+        <ProcessorChecklist items={loan.processor_checklist ?? []}
+          onMarkReceived={markConditionReceived} onAdvance={advanceToUnderwriting} />
+      )}
 
       {/* ── SECTION 5 — AI SUMMARY BANNER ───────────────────────────────── */}
       {aiDecision && (
@@ -1136,6 +1156,40 @@ function ApproveGuardModal({ request, onCancel, onProceed }: {
           <button onClick={onCancel} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
           <button onClick={onProceed} className="rounded-lg bg-green-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-green-500">Approve anyway</button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function ProcessorChecklist({ items, onMarkReceived, onAdvance }: {
+  items: any[]; onMarkReceived: (id: string) => void; onAdvance: () => void
+}) {
+  const openLeft = items.filter((i) => i.status === 'open' || i.status === 'in_review').length
+  return (
+    <div className="mx-5 mt-4 rounded-lg border border-slate-300 bg-white p-4">
+      <div className="text-sm font-bold text-slate-900">Outstanding Documents ({items.length})</div>
+      <div className="mt-3 space-y-2">
+        {items.length === 0 ? (
+          <div className="text-sm text-slate-500">All documents collected — ready to advance.</div>
+        ) : items.map((i) => (
+          <div key={i.condition_id} className="flex items-center gap-2 text-sm">
+            <span>{i.status === 'submitted' ? '☑' : '☐'}</span>
+            <span className="flex-1 text-slate-700">{String(i.condition_text).slice(0, 80)}</span>
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] capitalize">{i.assignee}</span>
+            <span className="text-[11px] text-slate-500">{i.status}{i.days_outstanding ? ` · ${i.days_outstanding}d` : ''}</span>
+            {(i.status === 'open' || i.status === 'in_review') && (
+              <button onClick={() => onMarkReceived(i.condition_id)}
+                className="rounded bg-green-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-green-500">Mark received</button>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 flex items-center gap-2">
+        <button disabled={openLeft > 0} onClick={onAdvance}
+          className={`rounded-lg px-3 py-1.5 text-sm font-semibold text-white ${openLeft > 0 ? 'cursor-not-allowed bg-slate-300' : 'bg-[#14532d] hover:bg-[#0f3d22]'}`}>
+          Advance to Underwriting
+        </button>
+        {openLeft > 0 && <span className="text-[11px] text-slate-500">{openLeft} document(s) still outstanding</span>}
       </div>
     </div>
   )

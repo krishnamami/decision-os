@@ -162,6 +162,16 @@ export interface EscalationThreadItem {
   time_ago: string
 }
 
+export interface ProcessorChecklistItem {
+  condition_id: string
+  condition_code: string
+  condition_text: string
+  assignee: string
+  status: string
+  blocks_closing: boolean
+  days_outstanding: number
+}
+
 export interface LoanDetail {
   application_id: string
   borrower_email?: string | null
@@ -222,6 +232,7 @@ export interface LoanDetail {
   direct_assignment?: boolean
   internal_requests?: InternalRequest[]
   internal_request_replies?: InternalRequestReply[]
+  processor_checklist?: ProcessorChecklistItem[]
   pending_doc_requests?: PendingDocRequest[]
   escalation_thread?: EscalationThreadItem[]
   decisions: DecisionDetail[]

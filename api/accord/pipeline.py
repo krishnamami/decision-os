@@ -727,6 +727,16 @@ async def my_queue(
             """,
             UUID(str(target_uid)), tenant_id,
         )
+        # Processor doc-collection view: outstanding borrower/title/lender conditions per loan.
+        proc_cond_rows = await conn.fetch(
+            "SELECT application_id, "
+            "count(*) FILTER (WHERE status IN ('open','in_review')) AS open_c, "
+            "count(*) FILTER (WHERE status = 'submitted')          AS received_c, "
+            "count(*) FILTER (WHERE status NOT IN ('approved','waived')) AS outstanding_c "
+            "FROM loan_condition_instances WHERE application_id = ANY($1) AND tenant_id = $2 "
+            "AND assignee IN ('borrower','title','lender') GROUP BY application_id",
+            app_ids, tenant_id,
+        ) if (urow["role"] == "processor" and app_ids) else []
 
     active, pending, decided = [], [], []
     for r in rows:
@@ -827,6 +837,28 @@ async def my_queue(
         }
         for r in reply_rows
     ]
+    processor_queue = None
+    if urow["role"] == "processor":
+        _cmap = {r["application_id"]: r for r in proc_cond_rows}
+        needs, waiting, ready = [], [], []
+        for r in rows:                       # r = the processor's verify-stage loans
+            c = _cmap.get(r["application_id"])
+            outstanding = int(c["outstanding_c"]) if c else 0
+            received = int(c["received_c"]) if c else 0
+            pcard = {"application_id": r["application_id"], "borrower_name": r["borrower_name"],
+                     "loan_amount": _f(r["loan_amount"]),
+                     "loan_program": _resolve_loan_program(r["loan_type"], _f(r["loan_amount"])),
+                     "outstanding_count": outstanding, "received_count": received,
+                     "days_in_verify": _days_since(r["assigned_at"])}
+            if outstanding == 0:
+                pcard["status_pill"] = "READY"; ready.append(pcard)
+            elif received > 0:
+                pcard["status_pill"] = "DOCS RECEIVED"; needs.append(pcard)
+            elif r["assign_status"] == "pending_borrower":
+                pcard["status_pill"] = "WAITING ON BORROWER"; waiting.append(pcard)
+            else:
+                pcard["status_pill"] = "DOCS RECEIVED"; needs.append(pcard)
+        processor_queue = {"needs_action": needs, "waiting_on_borrower": waiting, "ready_to_advance": ready}
     return {
         "user": {"name": urow["name"], "role": urow["role"]},
         "counts": {"active": len(active), "pending": len(pending), "decided": len(decided)},
@@ -834,6 +866,7 @@ async def my_queue(
         "pending": pending,
         "decided": decided,
         "recently_resolved": recently_resolved,
+        "processor_queue": processor_queue,
     }
 
 
@@ -967,6 +1000,7 @@ class DecideBody(BaseModel):
     denial_reason: Optional[str] = None    # deny: detailed reason
     feedback_message: Optional[str] = None   # request_more_info: senior-UW feedback (>=25)
     feedback_category: Optional[str] = None  # request_more_info: documentation|income|...
+    condition_id: Optional[str] = None       # mark_condition_received: loan_condition_instances.id
 
 
 @router.post("/pipeline/decide")
@@ -1004,6 +1038,50 @@ async def decide(body: DecideBody, user: dict = Depends(get_current_user)) -> di
             await conn.execute("UPDATE loan_assignments SET status='denied', completed_at=NOW() WHERE application_id=$1 AND tenant_id=$2 AND assigned_to=$3", app, tid, uid)
             await conn.execute("UPDATE entity_states SET loan_status='denied' WHERE application_id=$1 AND tenant_id=$2", app, tid)
             title = "Loan denied — adverse-action notice queued"
+        elif body.action == "mark_condition_received":
+            if not body.condition_id:
+                raise HTTPException(422, "condition_id is required")
+            try:
+                _cid = UUID(body.condition_id)
+            except ValueError:
+                raise HTTPException(400, "Invalid condition_id")
+            _who = user.get("name") or user.get("email") or str(uid)
+            res = await conn.execute(
+                "UPDATE loan_condition_instances SET status='submitted', submitted_at=NOW(), "
+                "notes=CONCAT(COALESCE(notes,''), $4::text), updated_at=NOW() "
+                "WHERE id=$1 AND application_id=$2 AND tenant_id=$3 AND status NOT IN ('approved','waived')",
+                _cid, app, tid, (f"\n[received by {_who}]: {body.note}" if body.note else ""))
+            if not (res.startswith("UPDATE") and int(res.split()[-1]) > 0):
+                raise HTTPException(404, "Condition not found or already cleared")
+            try:
+                await conn.execute(
+                    "INSERT INTO activity_log (tenant_id, application_id, actor, action, target, detail) "
+                    "VALUES ($1,$2,$3,'condition_received',$4,$5::jsonb)",
+                    tid, app, _who, body.condition_id, json.dumps({"note": body.note}))
+            except Exception:  # noqa: BLE001 — best-effort
+                pass
+            return {"ok": True, "title": "Document marked received"}
+        elif body.action == "advance_to_underwriting":
+            open_left = await conn.fetchval(
+                "SELECT count(*) FROM loan_condition_instances WHERE application_id=$1 AND tenant_id=$2 "
+                "AND assignee IN ('borrower','title','lender') AND status IN ('open','in_review')",
+                app, tid) or 0
+            if open_left > 0:
+                raise HTTPException(409, f"{open_left} document condition(s) still outstanding — cannot advance")
+            _who = user.get("name") or user.get("email") or str(uid)
+            await conn.execute(
+                "UPDATE loan_assignments SET stage='underwrite', status='active', assigned_at=NOW() "
+                "WHERE application_id=$1 AND tenant_id=$2", app, tid)
+            await conn.execute(
+                "UPDATE entity_states SET current_stage='underwrite' WHERE application_id=$1 AND tenant_id=$2", app, tid)
+            try:
+                await conn.execute(
+                    "INSERT INTO activity_log (tenant_id, application_id, actor, action, target, detail) "
+                    "VALUES ($1,$2,$3,'advanced_to_underwriting',NULL,$4::jsonb)",
+                    tid, app, _who, json.dumps({"note": body.note}))
+            except Exception:  # noqa: BLE001
+                pass
+            return {"ok": True, "title": "Advanced to underwriting"}
         elif body.action == "override":
             if not body.decision_id:
                 raise HTTPException(422, "decision_id is required to override")
@@ -2198,6 +2276,18 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
             """,
             application_id, tenant_id,
         )
+        processor_checklist_rows = await conn.fetch(
+            """
+            SELECT id, condition_code, condition_text, assignee, status, blocks_closing,
+                   GREATEST(0, EXTRACT(DAY FROM (NOW() - opened_at))::int) AS days_outstanding
+            FROM loan_condition_instances
+            WHERE application_id = $1 AND tenant_id = $2
+              AND assignee IN ('borrower', 'title', 'lender')
+              AND status NOT IN ('approved', 'waived')
+            ORDER BY blocks_closing DESC, opened_at ASC
+            """,
+            application_id, tenant_id,
+        )
         action_rows = await conn.fetch(
             "SELECT performed_by, reason_text FROM loan_actions WHERE application_id = $1 AND tenant_id = $2",
             application_id, tenant_id,
@@ -2495,6 +2585,13 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
         **escalation_ctx,
         "internal_requests": internal_requests,
         "internal_request_replies": internal_request_replies,
+        "processor_checklist": [
+            {"condition_id": str(r["id"]), "condition_code": r["condition_code"],
+             "condition_text": r["condition_text"], "assignee": r["assignee"],
+             "status": r["status"], "blocks_closing": r["blocks_closing"],
+             "days_outstanding": r["days_outstanding"]}
+            for r in processor_checklist_rows
+        ],
         "pending_doc_requests": pending_doc_requests,
         "escalation_thread": escalation_thread,
         "qm": _qm_status(e, loan_terms),

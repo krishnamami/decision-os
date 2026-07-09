@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchMyQueue, simulateResponse, type MyQueueResponse, type QueueCard, type ResolvedReply } from '../api/client'
+import { fetchMyQueue, simulateResponse, type MyQueueResponse, type QueueCard, type ResolvedReply, type ProcessorQueue } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import Modal from '../components/Modal'
 import RequestDocsModal from '../components/modals/RequestDocsModal'
@@ -97,6 +97,11 @@ export default function MyQueue({
   if (loading) return <div className="p-12 text-center text-slate-400">Loading queue…</div>
   if (error) return <div className="p-12 text-center text-red-600">{error}</div>
   if (!data) return null
+
+  if (data.processor_queue) {
+    return <ProcessorQueueView pq={data.processor_queue} name={data.user.name}
+             onOpen={(app) => navigate(`/pipeline/${app}`)} />
+  }
 
   const canAct = !readOnly && me?.role !== 'viewer'
 
@@ -240,6 +245,49 @@ export default function MyQueue({
           onDone={() => { setDocsCard(null); act('Document request sent — moved to Pending Response'); setReloadKey((k) => k + 1) }}
         />
       )}
+    </div>
+  )
+}
+
+function ProcessorQueueView({ pq, name, onOpen }: {
+  pq: ProcessorQueue; name: string; onOpen: (app: string) => void
+}) {
+  const stats = [
+    { label: 'Needs action', n: pq.needs_action.length, accent: 'text-red-600', rows: pq.needs_action },
+    { label: 'Waiting on borrower', n: pq.waiting_on_borrower.length, accent: 'text-amber-600', rows: pq.waiting_on_borrower },
+    { label: 'Ready to advance', n: pq.ready_to_advance.length, accent: 'text-green-600', rows: pq.ready_to_advance },
+  ]
+  const pill = (p: string) => p === 'WAITING ON BORROWER' ? 'bg-amber-50 text-amber-700'
+    : p === 'READY' ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'
+  return (
+    <div className="mx-auto max-w-4xl px-6 py-6">
+      <h1 className="mb-1 text-2xl font-semibold text-slate-900">{greeting()}, {firstName(name)}</h1>
+      <p className="mb-5 text-sm text-slate-500">Document collection · verify stage</p>
+      <div className="mb-6 grid grid-cols-3 gap-3">
+        {stats.map((s) => (
+          <div key={s.label} className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{s.label}</div>
+            <div className={`mt-1 text-3xl font-semibold ${s.accent}`}>{s.n}</div>
+          </div>
+        ))}
+      </div>
+      {stats.map((s) => s.rows.length > 0 && (
+        <div key={s.label} className="mb-6">
+          <SectionHeader label={s.label} n={s.rows.length} />
+          <div className="space-y-2">
+            {s.rows.map((c) => (
+              <button key={c.application_id} onClick={() => onOpen(c.application_id)}
+                className="flex w-full flex-wrap items-center gap-x-2 rounded-xl border border-slate-200 bg-white p-4 text-left text-sm hover:bg-slate-50">
+                <span className="font-semibold text-slate-900">{c.borrower_name}</span>
+                <span className="text-slate-400">·</span><span className="text-slate-700">{money(c.loan_amount)}</span>
+                {c.loan_program && <><span className="text-slate-400">·</span><span className="text-slate-500">{c.loan_program}</span></>}
+                <span className={`ml-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${pill(c.status_pill)}`}>{c.status_pill}</span>
+                <span className="ml-auto text-xs text-slate-500">{c.outstanding_count} doc{c.outstanding_count === 1 ? '' : 's'} pending · {c.days_in_verify ?? 0}d in verify</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   )
 }

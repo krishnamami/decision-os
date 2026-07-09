@@ -132,6 +132,7 @@ export async function fetchMe(): Promise<{ user: AuthUser; tenant: AuthTenant; p
 
 export interface DecideInput {
   action: 'approve' | 'deny' | 'override' | 'escalate' | 'snooze_pending_docs' | 'return_to_uw' | 'request_more_info' | 'recommend_approval'
+    | 'mark_condition_received' | 'advance_to_underwriting'
   decision_id?: string
   override_reason?: string
   override_outcome?: 'approve' | 'deny' | 'clear_block' | 'waive_condition'
@@ -142,6 +143,7 @@ export interface DecideInput {
   denial_code?: string
   denial_reason?: string
   note?: string
+  condition_id?: string
 }
 export function decideLoan(appId: string, body: DecideInput): Promise<{ ok: boolean; title: string }> {
   return postJSON('/api/accord/pipeline/decide', { application_id: appId, ...body })
@@ -187,6 +189,21 @@ export interface ResolvedReply {
   response: string
   resolved_at: string | null
 }
+export interface ProcessorCard {
+  application_id: string
+  borrower_name: string
+  loan_amount: number | null
+  loan_program?: string | null
+  outstanding_count: number
+  received_count: number
+  days_in_verify: number | null
+  status_pill: string
+}
+export interface ProcessorQueue {
+  needs_action: ProcessorCard[]
+  waiting_on_borrower: ProcessorCard[]
+  ready_to_advance: ProcessorCard[]
+}
 export interface MyQueueResponse {
   user: { name: string; role: string }
   counts: { active: number; pending: number; decided: number }
@@ -194,6 +211,7 @@ export interface MyQueueResponse {
   pending: QueueCard[]
   decided: QueueCard[]
   recently_resolved?: ResolvedReply[]
+  processor_queue?: ProcessorQueue | null
 }
 export interface TeamMember {
   user_id: string
