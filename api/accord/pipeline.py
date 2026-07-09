@@ -1670,7 +1670,8 @@ def _sig(decision: dict, key: str) -> str:
 
 
 def _conversational_summary(decisions: list[dict], m: dict, name: str,
-                            conditions: Optional[list] = None) -> dict:
+                            conditions: Optional[list] = None,
+                            ltv_ctx: Optional[dict] = None) -> dict:
     """Plain-English, senior-underwriter-voice summary built from the decisions.
     Handles a clean file or N blocking issues (root cause = lowest wave, with a
     hard block beating an escalate at the same wave)."""
@@ -1743,6 +1744,26 @@ def _conversational_summary(decisions: list[dict], m: dict, name: str,
                    "have the borrower bring more money in. The rest of the file is otherwise clean.")
         issue = "Collateral / LTV above guideline"
         next_step = "Order a review appraisal or increase the down payment"
+        # LTV-specific detail with exact amounts when the signals are present;
+        # falls back to the generic summary above if anything is missing.
+        _lc = ltv_ctx or {}
+        _ltv = _lc.get("ltv_ratio") if _lc.get("ltv_ratio") is not None else _lc.get("ltv")
+        _maxltv, _band = _lc.get("max_allowable_ltv"), _lc.get("credit_band")
+        _loan, _appr = _lc.get("loan_amount"), _lc.get("appraised_value")
+        try:
+            if all(v is not None for v in (_ltv, _maxltv, _band, _loan, _appr)):
+                cur_pct = float(_ltv) * 100 if float(_ltv) <= 1.5 else float(_ltv)
+                max_pct = float(_maxltv) * 100 if float(_maxltv) <= 1.5 else float(_maxltv)
+                down = float(_loan) - float(_appr) * (max_pct / 100)
+                if down > 0:
+                    band_disp = str(_band).replace("_", "-")
+                    summary = (f"LTV {cur_pct:.1f}% exceeds the {max_pct:.1f}% maximum for {band_disp} credit. "
+                               f"Options: (1) increase down payment by ${down:,.0f} to reach {max_pct:.1f}% LTV, "
+                               f"or (2) order a review appraisal.")
+                    issue = f"LTV {cur_pct:.1f}% > {max_pct:.1f}% max ({band_disp})"
+                    next_step = f"Increase down payment by ${down:,.0f} or order a review appraisal"
+        except (TypeError, ValueError):
+            pass
     else:
         friendly = PERSONA_FRIENDLY.get(did, did.replace("_", " "))
         summary = (f"{primary.get('explanation', '')} {len(passed)} of {len(decisions)} checks passed — "
@@ -2169,6 +2190,14 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
             """,
             application_id, tenant_id,
         )
+        ltv_dec = await conn.fetchrow(
+            """
+            SELECT reasoning, context_snapshot FROM decision_outputs
+            WHERE application_id = $1 AND tenant_id = $2 AND decision_id = 'ltv_assessment'
+            ORDER BY version DESC LIMIT 1
+            """,
+            application_id, tenant_id,
+        )
         action_rows = await conn.fetch(
             "SELECT performed_by, reason_text FROM loan_actions WHERE application_id = $1 AND tenant_id = $2",
             application_id, tenant_id,
@@ -2340,6 +2369,18 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
     loan_purpose = (loan_terms.get("urla") or {}).get("loan_purpose") or ap.get("loan_purpose")
     loan_program = _resolve_loan_program(
         loan_terms.get("loan_type"), e.get("loan_amount"), explicit=loan_terms.get("loan_program"))
+    # Raw ltv_assessment signals (name/value) + context for the LTV-specific summary.
+    ltv_ctx: dict = {}
+    if ltv_dec is not None:
+        _ltv_r = _J(ltv_dec["reasoning"]) if ltv_dec["reasoning"] else {}
+        if isinstance(_ltv_r, dict):
+            for _s in _ltv_r.get("signals") or []:
+                if isinstance(_s, dict) and _s.get("name") is not None:
+                    ltv_ctx[_s["name"]] = _s.get("value")
+        _ltv_cs = _J(ltv_dec["context_snapshot"]) if ltv_dec["context_snapshot"] else {}
+        if isinstance(_ltv_cs, dict):
+            for _k in ("ltv", "ltv_ratio", "max_allowable_ltv", "credit_band", "loan_amount", "appraised_value"):
+                ltv_ctx.setdefault(_k, _ltv_cs.get(_k))
     # AUS result: aus_results table (primary) -> loan_terms.aus_findings (fallback).
     _aus_findings = loan_terms.get("aus_findings") or {}
     _aus_sys = (aus_row["system"] if aus_row else None) or _aus_findings.get("system")
@@ -2461,7 +2502,7 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
         "rain_check": rain_check,
         "conversational_summary": _conversational_summary(
             decisions, metrics_out, full_name.split()[0],
-            conditions=[dict(r) for r in lci_rows]),
+            conditions=[dict(r) for r in lci_rows], ltv_ctx=ltv_ctx),
         "status": status,
         "urgency": urgency,
         "blocking_persona": blocking,
