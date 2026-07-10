@@ -726,3 +726,96 @@ async def products_update(tenant_id: str, product_id: str, body: ProductPatch,
 
 
 __all__ = ["router"]
+
+
+# ── P19: Onboarding Summary / Go-Live / Import Test ──────────────────────────
+
+class _ImportRow(BaseModel):
+    raw: dict  # arbitrary key/value pairs from the source LOS
+
+
+@router.get("/tenants/{tenant_id}/onboarding-summary")
+async def onboarding_summary(tenant_id: str, user: dict = Depends(get_current_user)) -> dict:
+    """Return completion status for all 4 Platform Studio sections."""
+    _studio_tenant_guard(user, tenant_id)
+    async with _admin_conn() as conn:
+        tenant = await conn.fetchrow(
+            "SELECT name, plan, is_active, settings FROM tenants WHERE tenant_id=$1", tenant_id)
+        if not tenant:
+            raise HTTPException(404, "Tenant not found")
+        mapping_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM field_mapping_registry WHERE tenant_id=$1 AND is_active=true", tenant_id)
+        rule_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM overlay_rules WHERE tenant_id=$1", tenant_id)
+        product_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM products WHERE tenant_id=$1 AND is_active=true", tenant_id)
+
+    s1_done = bool(tenant["name"] and tenant["plan"])
+    s2_done = mapping_count > 0
+    s3_done = rule_count > 0
+    s4_done = product_count > 0
+
+    return {
+        "tenant_id": tenant_id,
+        "is_active": tenant["is_active"],
+        "ready_for_go_live": s1_done and s2_done and s3_done and s4_done,
+        "sections": {
+            "tenant_setup":   {"complete": s1_done, "detail": f"Plan: {tenant['plan']}"},
+            "field_mapper":   {"complete": s2_done, "detail": f"{mapping_count} active mappings"},
+            "policy_rules":   {"complete": s3_done, "detail": f"{rule_count} overlay rules"},
+            "product_config": {"complete": s4_done, "detail": f"{product_count} active products"},
+        },
+    }
+
+
+@router.post("/tenants/{tenant_id}/go-live")
+async def go_live(tenant_id: str, user: dict = Depends(get_current_user)) -> dict:
+    """Mark tenant as onboarded / active."""
+    _studio_tenant_guard(user, tenant_id)
+    async with _admin_conn() as conn:
+        res = await conn.execute(
+            "UPDATE tenants SET is_active=true, settings = settings || $2::jsonb "
+            "WHERE tenant_id=$1",
+            tenant_id, json.dumps({"onboarded_at": _utcnow()}))
+    if res.split()[-1] == "0":
+        raise HTTPException(404, "Tenant not found")
+    return {"tenant_id": tenant_id, "status": "live"}
+
+
+@router.post("/tenants/{tenant_id}/import-test")
+async def import_test(tenant_id: str, body: _ImportRow,
+                      user: dict = Depends(get_current_user)) -> dict:
+    """Dry-run: map a raw LOS JSON row through field_mapping_registry."""
+    _studio_tenant_guard(user, tenant_id)
+    async with _admin_conn() as conn:
+        mappings = await conn.fetch(
+            "SELECT source_field, canonical_entity, canonical_column, transform_rule "
+            "FROM field_mapping_registry WHERE tenant_id=$1 AND is_active=true", tenant_id)
+
+    mapped, unmatched = {}, []
+    mapping_index = {r["source_field"].lower(): r for r in mappings}
+
+    for raw_key, raw_val in body.raw.items():
+        hit = mapping_index.get(raw_key.lower())
+        if hit:
+            canonical = f"{hit['canonical_entity']}.{hit['canonical_column']}"
+            mapped[canonical] = {
+                "value": raw_val,
+                "source_field": raw_key,
+                "transform_rule": hit["transform_rule"],
+            }
+        else:
+            unmatched.append(raw_key)
+
+    return {
+        "tenant_id": tenant_id,
+        "mapped_count": len(mapped),
+        "unmatched_count": len(unmatched),
+        "mapped": mapped,
+        "unmatched": unmatched,
+    }
+
+
+def _utcnow() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
