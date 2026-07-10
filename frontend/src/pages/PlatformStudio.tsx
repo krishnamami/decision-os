@@ -240,15 +240,15 @@ function TenantDetail({ tenantId, onConfigureMapping, onConfigurePolicy, onConfi
             <button
               onClick={() => onConfigureProducts(detail.tenant_id, detail.name)}
               className="rounded-lg border border-[#14532d] px-3 py-1.5 text-xs font-semibold text-[#14532d] hover:bg-[#14532d]/5"
-            >Configure Products →</button>
+            >Loan Products →</button>
             <button
               onClick={() => onConfigurePolicy(detail.tenant_id, detail.name)}
               className="rounded-lg border border-[#14532d] px-3 py-1.5 text-xs font-semibold text-[#14532d] hover:bg-[#14532d]/5"
-            >Configure Policy Rules →</button>
+            >Credit Policy →</button>
             <button
               onClick={() => onConfigureMapping(detail.tenant_id, detail.name)}
               className="rounded-lg bg-[#14532d] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#0f3d22]"
-            >Configure Field Mapping →</button>
+            >Map Your Fields →</button>
             <button
               onClick={() => onGoLive(detail.tenant_id, detail.name)}
               className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700"
@@ -380,7 +380,7 @@ function CreateTenantWizard({ onClose, onCreated }: {
             <h3 className="mt-2 text-xl font-bold text-slate-900">{done.name} is now live!</h3>
             {done.admin && <p className="mt-1 text-sm text-slate-500">{done.admin} has been created</p>}
             <div className="mt-6 flex justify-center gap-3">
-              <button onClick={() => onCreated(done.id, done.admin, true)} className="rounded-lg bg-[#14532d] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0f3d22]">Configure Field Mapping →</button>
+              <button onClick={() => onCreated(done.id, done.admin, true)} className="rounded-lg bg-[#14532d] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0f3d22]">Map Your Fields →</button>
             </div>
           </div>
         ) : (<>
@@ -563,7 +563,7 @@ function FieldMapper({ tenantId, tenantName, onBack }: { tenantId: string; tenan
   return (
     <div>
       <button onClick={onBack} className="mb-3 text-sm text-slate-500 hover:text-slate-800">← Back to tenants</button>
-      <h1 className="text-2xl font-semibold text-slate-900">Field Mapping — {tenantName}</h1>
+      <h1 className="text-2xl font-semibold text-slate-900">Map Your Fields — {tenantName}</h1>
       <p className="mb-4 text-sm text-slate-500">Map your LOS fields to canonical mortgage fields</p>
 
       {saved ? (
@@ -762,7 +762,7 @@ function PolicyRules({ tenantId, tenantName, onBack }: { tenantId: string; tenan
   return (
     <div className="pb-24">
       <button onClick={onBack} className="mb-3 text-sm text-slate-500 hover:text-slate-800">← Back to tenants</button>
-      <h1 className="text-2xl font-semibold text-slate-900">Policy Rules — {tenantName}</h1>
+      <h1 className="text-2xl font-semibold text-slate-900">Credit Policy — {tenantName}</h1>
       <p className="mb-4 text-sm text-slate-500">Set tenant overlays against agency defaults. Stricter overlays tighten eligibility.</p>
 
       <div className="mb-4 inline-flex rounded-lg border border-slate-200 bg-white p-1">
@@ -831,7 +831,7 @@ function PolicyRules({ tenantId, tenantName, onBack }: { tenantId: string; tenan
       {err && <div className="mb-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">{err}</div>}
       <div className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white px-6 py-3 shadow-[0_-2px_8px_rgba(0,0,0,0.05)]">
         <div className="mx-auto flex max-w-5xl justify-end">
-          <button onClick={save} disabled={saving} className="rounded-lg bg-[#14532d] px-5 py-2 text-sm font-semibold text-white hover:bg-[#0f3d22] disabled:opacity-50">{saving ? 'Saving…' : 'Save Policy Rules'}</button>
+          <button onClick={save} disabled={saving} className="rounded-lg bg-[#14532d] px-5 py-2 text-sm font-semibold text-white hover:bg-[#0f3d22] disabled:opacity-50">{saving ? 'Saving…' : 'Save Credit Policy'}</button>
         </div>
       </div>
       </>) : (<>
@@ -1143,8 +1143,8 @@ function OnboardingConfirmation({ tenantId, tenantName, onBack }: { tenantId: st
 
   const SECTION_LABELS: Record<string, string> = {
     tenant_setup: '1 · Tenant Setup',
-    field_mapper: '2 · Field Mapper',
-    policy_rules: '3 · Policy Rules',
+    field_mapper: '2 · Map Your Fields',
+    policy_rules: '3 · Credit Policy',
     product_config: '4 · Product Config',
   }
 
