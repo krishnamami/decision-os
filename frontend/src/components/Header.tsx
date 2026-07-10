@@ -23,6 +23,7 @@ const TABS = [
   { to: '/analytics', product: 'analytics', label: 'Analytics' },
   { to: '/simulation', product: 'simulation', label: 'Simulation' },
   { to: '/audit', product: 'audit', label: 'Audit' },
+  { to: '/platform-studio', product: 'platform_studio', label: 'Platform Studio' },
   { to: '/data-health', product: 'data_health', label: 'Data Health' },
   { to: '/settings/rules', product: 'data_health', label: 'Policy Rules' },
 ]
@@ -38,8 +39,8 @@ const ROLE_NAV: Record<string, string[]> = {
   senior_uw: ['Pipeline', 'Analytics'],
   manager: ['Pipeline', 'Analytics', 'Simulation'],
   compliance: ['Pipeline', 'Audit', 'Data Health', 'Policy Rules'],
-  admin: ['Pipeline', 'Analytics', 'Simulation', 'Audit', 'Data Health', 'Policy Rules'],
-  super_admin: ['Pipeline', 'Analytics', 'Simulation', 'Audit', 'Data Health', 'Policy Rules'],
+  admin: ['Pipeline', 'Analytics', 'Simulation', 'Audit', 'Data Health', 'Policy Rules', 'Platform Studio'],
+  super_admin: ['Pipeline', 'Analytics', 'Simulation', 'Audit', 'Data Health', 'Policy Rules', 'Platform Studio'],
 }
 // Upgrade prompt when the tenant's plan lacks a product.
 const UPGRADE: Record<string, string> = {
