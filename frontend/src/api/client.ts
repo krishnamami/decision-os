@@ -480,6 +480,25 @@ export function saveFieldMappings(id: string, body: { source_system: string; map
   return postJSON(`/api/accord/platform-studio/tenants/${encodeURIComponent(id)}/field-mapper/save`, body)
 }
 
+// ── Policy Rules (Section 3A) ────────────────────────────────────────
+export interface PolicyRule {
+  rule_key: string; category: string; label: string
+  overlay_value: number | null; agency_default: number | null
+  agency_name: string; citation: string; description: string; is_stricter: boolean
+}
+export interface AssignmentRule {
+  rule_id: string; rule_name: string; priority: number
+  min_loan_amount: number | null; max_loan_amount: number | null; loan_type: string | null
+  min_fraud_score: number | null; min_ltv: number | null; assign_to_role: string; is_active: boolean
+}
+export interface PolicyRulesData { rules: PolicyRule[]; assignment_rules: AssignmentRule[] }
+export function fetchPolicyRules(id: string): Promise<PolicyRulesData> {
+  return getJSON(`/api/accord/platform-studio/tenants/${encodeURIComponent(id)}/policy-rules`)
+}
+export function savePolicyRules(id: string, body: { rules: Array<{ rule_key: string; rule_type: string; overlay_value: number | null; direction: string }> }): Promise<{ saved_rules: number }> {
+  return postJSON(`/api/accord/platform-studio/tenants/${encodeURIComponent(id)}/policy-rules`, body)
+}
+
 // Exam-ready PDF export (CN-EX). Fetches the PDF blob with the Bearer header
 // (a plain <a href> can't carry it) and triggers a browser download.
 export async function exportExamReady(appId: string): Promise<void> {

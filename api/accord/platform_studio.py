@@ -28,7 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from api.accord.auth import get_current_user
-from api.accord.pipeline import _get_pool, _require_db, _J
+from api.accord.pipeline import _get_pool, _require_db, _J, _f
 from core.auth.security import hash_password
 from core.db.tenant_pool import ACCORD_ADMIN, reset_tenant, set_tenant
 
@@ -448,6 +448,97 @@ async def field_mapper_save(tenant_id: str, body: SaveBody,
                     tenant_id, body.source_system, m.source_field, m.canonical_entity,
                     m.canonical_column, tr, m.notes)
     return {"saved": len(rows), "skipped": len(body.mappings) - len(rows)}
+
+
+# ── Policy Rules (CN-PS Mode A): overlay thresholds vs agency defaults ──
+# rule_key, category, agency_default, agency, citation, description
+KNOWN_RULES = [
+    ('dti_back_max', 'dti', 50.0, 'fannie', 'Fannie Mae Selling Guide B3-6-02', 'Max back-end DTI'),
+    ('credit_min_score', 'credit', 620.0, 'fannie', 'Fannie Mae Selling Guide B3-5.1-01', 'Minimum credit score'),
+    ('ltv_max_purchase', 'ltv', 97.0, 'fannie', 'Fannie Mae Selling Guide B2-1.2-01', 'Max LTV — purchase'),
+    ('ltv_max_cashout', 'ltv', 80.0, 'fannie', 'Fannie Mae Selling Guide B2-1.3-01', 'Max LTV — cash-out refi'),
+    ('ltv_max_investment', 'ltv', 75.0, 'fannie', 'Fannie Mae Selling Guide B2-1.2-01', 'Max LTV — investment property'),
+    ('fraud_score_threshold', 'fraud', 0.75, 'platform', 'Accord platform default', 'Fraud score block threshold'),
+    ('income_min_confidence', 'income', 0.75, 'platform', 'Accord platform default', 'Income confidence minimum'),
+    ('reserves_months_required', 'reserves', 2.0, 'fannie', 'Fannie Mae Selling Guide B3-4.4-01', 'Min reserves (months)'),
+    ('reserves_months_jumbo', 'reserves', 6.0, 'fannie', 'Fannie Mae jumbo guidelines', 'Min reserves — jumbo (months)'),
+    ('high_dti_senior_review', 'dti', None, 'platform', 'Accord platform default', 'DTI above this → Senior UW auto-route'),
+]
+# Rules where a HIGHER overlay is stricter; all others: LOWER is stricter.
+_HIGHER_IS_STRICTER = {'credit_min_score', 'reserves_months_required', 'reserves_months_jumbo', 'income_min_confidence'}
+_AGENCY_NAME = {'fannie': 'Fannie Mae', 'platform': 'Accord Platform', 'fha': 'FHA / HUD', 'va': 'VA'}
+
+
+def _is_stricter(rule_key: str, overlay: Optional[float], default: Optional[float]) -> bool:
+    if overlay is None or default is None:
+        return False
+    return overlay > default if rule_key in _HIGHER_IS_STRICTER else overlay < default
+
+
+class PolicyRuleIn(BaseModel):
+    rule_key: str
+    rule_type: str
+    overlay_value: Optional[float] = None
+    direction: str = "stricter"
+
+
+class PolicyRulesBody(BaseModel):
+    rules: list[PolicyRuleIn] = []
+
+
+@router.get("/tenants/{tenant_id}/policy-rules")
+async def policy_rules_get(tenant_id: str, user: dict = Depends(get_current_user)) -> dict:
+    """Tenant overlay thresholds (loan_type-agnostic) vs agency defaults, plus
+    read-only routing rules."""
+    _studio_tenant_guard(user, tenant_id)
+    async with _admin_conn() as conn:
+        ov_rows = await conn.fetch(
+            "SELECT rule_type, overlay_value, direction FROM overlay_rules "
+            "WHERE tenant_id=$1 AND loan_type IS NULL", tenant_id)
+        ov = {r["rule_type"]: r for r in ov_rows}
+        assigns = await conn.fetch(
+            "SELECT rule_id, rule_name, priority, min_loan_amount, max_loan_amount, loan_type, "
+            "min_fraud_score, min_ltv, assign_to_role, is_active FROM assignment_rules "
+            "WHERE tenant_id=$1 ORDER BY priority, rule_name", tenant_id)
+    rules = []
+    for rk, cat, default, agency, citation, desc in KNOWN_RULES:
+        o = ov.get(rk)
+        oval = float(o["overlay_value"]) if o and o["overlay_value"] is not None else None
+        rules.append({
+            "rule_key": rk, "category": cat, "label": desc,
+            "overlay_value": oval, "agency_default": default,
+            "agency_name": _AGENCY_NAME.get(agency, agency), "citation": citation,
+            "description": desc, "is_stricter": _is_stricter(rk, oval, default)})
+    return {"rules": rules, "assignment_rules": [
+        {"rule_id": str(a["rule_id"]), "rule_name": a["rule_name"], "priority": a["priority"],
+         "min_loan_amount": _f(a["min_loan_amount"]), "max_loan_amount": _f(a["max_loan_amount"]),
+         "loan_type": a["loan_type"], "min_fraud_score": _f(a["min_fraud_score"]),
+         "min_ltv": _f(a["min_ltv"]), "assign_to_role": a["assign_to_role"], "is_active": a["is_active"]}
+        for a in assigns]}
+
+
+@router.post("/tenants/{tenant_id}/policy-rules")
+async def policy_rules_save(tenant_id: str, body: PolicyRulesBody,
+                            user: dict = Depends(get_current_user)) -> dict:
+    """Upsert the tenant-level (loan_type IS NULL) overlay for each rule. Manual
+    upsert — overlay_rules has no unique on (tenant_id, rule_type)."""
+    _studio_tenant_guard(user, tenant_id)
+    saved = 0
+    async with _admin_conn() as conn:
+        async with conn.transaction():
+            for r in body.rules:
+                if r.overlay_value is None:      # skip un-set rules (e.g. high_dti_senior_review)
+                    continue
+                res = await conn.execute(
+                    "UPDATE overlay_rules SET overlay_value=$3, direction=$4, is_active=true "
+                    "WHERE tenant_id=$1 AND rule_type=$2 AND loan_type IS NULL",
+                    tenant_id, r.rule_type, r.overlay_value, r.direction)
+                if res.split()[-1] == "0":       # no tenant-level row yet -> insert
+                    await conn.execute(
+                        "INSERT INTO overlay_rules (tenant_id, rule_type, overlay_value, direction, is_active) "
+                        "VALUES ($1,$2,$3,$4,true)", tenant_id, r.rule_type, r.overlay_value, r.direction)
+                saved += 1
+    return {"saved_rules": saved}
 
 
 __all__ = ["router"]
