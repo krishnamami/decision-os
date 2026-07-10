@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Optional
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -26,10 +27,28 @@ from pydantic import BaseModel
 from api.accord.auth import get_current_user
 from api.accord.pipeline import _get_pool, _require_db, _J
 from core.auth.security import hash_password
+from core.db.tenant_pool import ACCORD_ADMIN, reset_tenant, set_tenant
 
 router = APIRouter(prefix="/api/accord/platform-studio", tags=["accord-platform-studio"])
 
 _STUDIO_ROLES = ("admin", "super_admin")
+
+
+@asynccontextmanager
+async def _admin_conn() -> AsyncIterator[Any]:
+    """Acquire a DB connection under the accord_admin RLS sentinel. Platform
+    Studio is a cross-tenant admin console — super_admin reads/writes ANY tenant,
+    admin reads its own — so it must NOT be scoped to the caller's JWT tenant
+    (which would make every write for a new tenant_id fail the RLS WITH CHECK and
+    every cross-tenant read return zero rows). The app-layer role checks already
+    enforce who may see/create what."""
+    token = set_tenant(ACCORD_ADMIN)
+    try:
+        pool = await _get_pool()
+        async with pool.acquire() as conn:
+            yield conn
+    finally:
+        reset_tenant(token)
 
 
 def _require_studio(user: dict) -> None:
@@ -87,8 +106,7 @@ async def list_tenants(user: dict = Depends(get_current_user)) -> dict:
     """super_admin: every tenant. admin: only its own tenant."""
     _require_studio(user)
     _require_db()
-    pool = await _get_pool()
-    async with pool.acquire() as conn:
+    async with _admin_conn() as conn:
         if _is_super(user):
             rows = await conn.fetch(_LIST_SQL.format(where=""))
         else:
@@ -108,8 +126,7 @@ async def tenant_detail(tenant_id: str, user: dict = Depends(get_current_user)) 
     _require_db()
     if not _is_super(user) and tenant_id != user["tenant_id"]:
         raise HTTPException(403, "You may only view your own tenant")
-    pool = await _get_pool()
-    async with pool.acquire() as conn:
+    async with _admin_conn() as conn:
         t = await conn.fetchrow(
             "SELECT tenant_id, name, plan, is_active, products, settings, created_at "
             "FROM tenants WHERE tenant_id = $1", tenant_id)
@@ -181,8 +198,7 @@ async def create_tenant(body: CreateTenantBody, user: dict = Depends(get_current
         "channels": body.channels,
         "contact_email": body.contact_email,
     }
-    pool = await _get_pool()
-    async with pool.acquire() as conn:
+    async with _admin_conn() as conn:
         async with conn.transaction():
             if await conn.fetchval("SELECT 1 FROM tenants WHERE tenant_id = $1", slug):
                 raise HTTPException(409, "Tenant already exists")
