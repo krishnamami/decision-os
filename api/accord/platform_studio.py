@@ -212,22 +212,19 @@ async def create_tenant(body: CreateTenantBody, user: dict = Depends(get_current
                 slug, body.los_type)
 
             # tenant_rules v1 active — versioned table needs version + status.
+            # (Direct VALUES: the tenant is guaranteed new — a 409 fired above —
+            # so no NOT EXISTS guard, which also avoids an $1 type ambiguity.)
             tr = await conn.fetchval(
                 "INSERT INTO tenant_rules (tenant_id, version, status, rules, programs) "
-                "SELECT $1, 1, 'active', $2::jsonb, $3::jsonb "
-                "WHERE NOT EXISTS (SELECT 1 FROM tenant_rules WHERE tenant_id = $1) "
-                "RETURNING rule_version_id",
+                "VALUES ($1, 1, 'active', $2::jsonb, $3::jsonb) RETURNING rule_version_id",
                 slug, json.dumps(_DEFAULT_RULES),
                 json.dumps([p.lower() for p in body.programs]))
 
             # overlay_rules defaults (real columns: rule_type / overlay_value / direction).
             ov = await conn.execute(
                 "INSERT INTO overlay_rules (tenant_id, rule_type, overlay_value, direction, is_active) "
-                "SELECT $1, v.rt, v.val, 'stricter', true "
-                "FROM (VALUES ('uw_auto_approve_risk_max', 0.25), "
-                "             ('uw_escalate_risk_min', 0.60)) AS v(rt, val) "
-                "WHERE NOT EXISTS (SELECT 1 FROM overlay_rules o "
-                "                  WHERE o.tenant_id = $1 AND o.rule_type = v.rt)",
+                "VALUES ($1, 'uw_auto_approve_risk_max', 0.25, 'stricter', true), "
+                "       ($1, 'uw_escalate_risk_min', 0.60, 'stricter', true)",
                 slug)
     return {
         "ok": True,
