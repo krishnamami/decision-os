@@ -227,6 +227,7 @@ export default function Header() {
               🔄 Comparison
             </NavLink>
           )}
+        </nav>
       </div>
     </header>
   )
