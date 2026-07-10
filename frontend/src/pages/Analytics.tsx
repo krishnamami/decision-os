@@ -128,7 +128,7 @@ export default function Analytics() {
   const decisionWave = funnel?.find((f) => f.wave === 4)
   const fallout = decisionWave ? (100 - decisionWave.pass_rate * 100).toFixed(1) : '—'
   const primaryBlocker = funnel
-    ? funnel.reduce((a, b) => (b.blocked > a.blocked ? b : a))
+    ? (funnel.length ? funnel.reduce((a, b) => (b.blocked > a.blocked ? b : a)) : null)
     : null
 
   const highOverride = (agents ?? []).filter((a) => a.override_pct > 5)
