@@ -241,9 +241,9 @@ function TenantDetail({ tenantId, onConfigureMapping, onConfigurePolicy, onConfi
           <div className="flex shrink-0 flex-wrap justify-end gap-2">
             <button
               onClick={() => onConfigureProducts(detail.tenant_id, detail.name)}
-              className="rounded-lg border border-[#14532d] px-3 py-1.5 text-xs font-semibold text-[#14532d] hover:bg-[#14532d]/5"
-            <button onClick={() => onEdit(detail)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">Edit Tenant</button>
+            className="rounded-lg border border-[#14532d] px-3 py-1.5 text-xs font-semibold text-[#14532d] hover:bg-[#14532d]/5"
             >Loan Products →</button>
+            <button onClick={() => onEdit(detail)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">Edit Tenant</button>
             <button
               onClick={() => onConfigurePolicy(detail.tenant_id, detail.name)}
               className="rounded-lg border border-[#14532d] px-3 py-1.5 text-xs font-semibold text-[#14532d] hover:bg-[#14532d]/5"
@@ -1252,7 +1252,7 @@ function OnboardingConfirmation({ tenantId, tenantName, onBack }: { tenantId: st
 
 // ── Edit Tenant Modal ─────────────────────────────────────────────────────────
 const PLANS = ['starter', 'growth', 'business', 'enterprise']
-const LOS_TYPES = ['encompass', 'bytepro', 'openclose', 'custom']
+const LOS_TYPE_IDS = ['encompass', 'bytepro', 'openclose', 'custom']
 const ALL_PROGRAMS = ['CONVENTIONAL', 'FHA', 'VA', 'JUMBO', 'NON_QM']
 const ALL_CHANNELS = ['retail', 'wholesale', 'correspondent', 'consumer_direct']
 const ALL_STATES = [
@@ -1356,7 +1356,7 @@ function EditTenantModal({ detail, onClose, onSaved }: {
               <label className="text-xs font-semibold text-slate-600">LOS Type</label>
               <select value={form.los_type} onChange={(e) => set({ los_type: e.target.value })}
                 className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#14532d]/30">
-                {LOS_TYPES.map((l) => <option key={l} value={l}>{l.charAt(0).toUpperCase() + l.slice(1)}</option>)}
+                {LOS_TYPE_IDS.map((l) => <option key={l} value={l}>{l.charAt(0).toUpperCase() + l.slice(1)}</option>)}
               </select>
             </div>
           </div>
