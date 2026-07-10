@@ -649,4 +649,80 @@ async def policy_rules_nlp_extract(tenant_id: str, body: NlpExtractBody,
     return {"extracted": _enrich_extraction(_heuristic_extract(text)), "method": "heuristic", "model": "regex"}
 
 
+# ── Product Configurator (CN-PS Section 4): add/edit loan products ──
+class ProductBody(BaseModel):
+    product_name: str
+    loan_type: str                      # Conventional / FHA / VA / Jumbo / NonQM (Title-Case, matches data)
+    loan_purpose: Optional[str] = None  # purchase / refinance / cash_out_refinance
+    max_loan_amount: Optional[float] = None
+    min_credit_score: Optional[int] = None
+    max_dti: Optional[float] = None
+    max_ltv: Optional[float] = None
+    is_active: bool = True
+
+
+class ProductPatch(BaseModel):   # partial update — only non-None fields are written
+    product_name: Optional[str] = None
+    loan_type: Optional[str] = None
+    loan_purpose: Optional[str] = None
+    max_loan_amount: Optional[float] = None
+    min_credit_score: Optional[int] = None
+    max_dti: Optional[float] = None
+    max_ltv: Optional[float] = None
+    is_active: Optional[bool] = None
+
+
+@router.get("/tenants/{tenant_id}/products")
+async def products_get(tenant_id: str, user: dict = Depends(get_current_user)) -> dict:
+    _studio_tenant_guard(user, tenant_id)
+    async with _admin_conn() as conn:
+        rows = await conn.fetch(
+            "SELECT product_id, product_name, loan_type, loan_purpose, max_loan_amount, "
+            "min_credit_score, max_dti, max_ltv, is_active, created_at FROM products "
+            "WHERE tenant_id=$1 ORDER BY is_active DESC, product_name", tenant_id)
+    return {"products": [
+        {"product_id": r["product_id"], "product_name": r["product_name"], "loan_type": r["loan_type"],
+         "loan_purpose": r["loan_purpose"], "max_loan_amount": _f(r["max_loan_amount"]),
+         "min_credit_score": r["min_credit_score"], "max_dti": _f(r["max_dti"]), "max_ltv": _f(r["max_ltv"]),
+         "is_active": r["is_active"], "created_at": r["created_at"].isoformat() if r["created_at"] else None}
+        for r in rows]}
+
+
+@router.post("/tenants/{tenant_id}/products")
+async def products_create(tenant_id: str, body: ProductBody,
+                          user: dict = Depends(get_current_user)) -> dict:
+    _studio_tenant_guard(user, tenant_id)
+    if not body.product_name.strip() or not body.loan_type.strip():
+        raise HTTPException(400, "product_name and loan_type are required")
+    async with _admin_conn() as conn:
+        pid = await conn.fetchval(
+            "INSERT INTO products (tenant_id, product_id, product_name, loan_type, loan_purpose, "
+            "max_loan_amount, min_credit_score, max_dti, max_ltv, is_active) "
+            "VALUES ($1, gen_random_uuid()::text, $2,$3,$4,$5,$6,$7,$8,$9) RETURNING product_id",
+            tenant_id, body.product_name.strip(), body.loan_type, body.loan_purpose,
+            body.max_loan_amount, body.min_credit_score, body.max_dti, body.max_ltv, body.is_active)
+    return {"product_id": pid, "status": "created"}
+
+
+@router.patch("/tenants/{tenant_id}/products/{product_id}")
+async def products_update(tenant_id: str, product_id: str, body: ProductPatch,
+                          user: dict = Depends(get_current_user)) -> dict:
+    _studio_tenant_guard(user, tenant_id)
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not fields:
+        raise HTTPException(400, "No fields to update")
+    # SAFE f-string: the column names come from ProductPatch's fixed Pydantic
+    # fields (a closed allow-list) — NOT user input. Only the VALUES are
+    # parameterised ($n). No SQL injection surface.
+    sets = [f"{k} = ${i}" for i, k in enumerate(fields, start=1)]
+    vals = list(fields.values()) + [product_id, tenant_id]
+    async with _admin_conn() as conn:
+        res = await conn.execute(
+            f"UPDATE products SET {', '.join(sets)} "
+            f"WHERE product_id = ${len(vals) - 1} AND tenant_id = ${len(vals)}", *vals)
+    if res.split()[-1] == "0":
+        raise HTTPException(404, "Product not found")
+    return {"product_id": product_id, "status": "updated"}
+
+
 __all__ = ["router"]

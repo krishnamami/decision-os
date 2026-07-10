@@ -508,6 +508,27 @@ export function nlpExtractPolicy(id: string, policy_text: string): Promise<NlpEx
   return postJSON(`/api/accord/platform-studio/tenants/${encodeURIComponent(id)}/policy-rules/nlp-extract`, { policy_text })
 }
 
+// ── Platform Studio Products (Section 4) — distinct from the catalogue Product ──
+export interface PlatformProduct {
+  product_id: string; product_name: string; loan_type: string; loan_purpose: string | null
+  max_loan_amount: number | null; min_credit_score: number | null
+  max_dti: number | null; max_ltv: number | null; is_active: boolean; created_at: string | null
+}
+export interface PlatformProductInput {
+  product_name: string; loan_type: string; loan_purpose?: string | null
+  max_loan_amount?: number | null; min_credit_score?: number | null
+  max_dti?: number | null; max_ltv?: number | null; is_active: boolean
+}
+export function fetchPlatformProducts(id: string): Promise<{ products: PlatformProduct[] }> {
+  return getJSON(`/api/accord/platform-studio/tenants/${encodeURIComponent(id)}/products`)
+}
+export function createPlatformProduct(id: string, body: PlatformProductInput): Promise<{ product_id: string; status: string }> {
+  return postJSON(`/api/accord/platform-studio/tenants/${encodeURIComponent(id)}/products`, body)
+}
+export function updatePlatformProduct(id: string, productId: string, body: Partial<PlatformProductInput>): Promise<{ product_id: string; status: string }> {
+  return patchJSON(`/api/accord/platform-studio/tenants/${encodeURIComponent(id)}/products/${encodeURIComponent(productId)}`, body)
+}
+
 // Exam-ready PDF export (CN-EX). Fetches the PDF blob with the Bearer header
 // (a plain <a href> can't carry it) and triggers a browser download.
 export async function exportExamReady(appId: string): Promise<void> {

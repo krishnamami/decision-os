@@ -3,8 +3,10 @@ import {
   fetchPlatformTenants, fetchPlatformTenant, createPlatformTenant,
   fetchFieldMapperCanonical, suggestFieldMappings, saveFieldMappings,
   fetchPolicyRules, savePolicyRules, nlpExtractPolicy,
+  fetchPlatformProducts, createPlatformProduct, updatePlatformProduct,
   type PlatformTenantList, type PlatformTenantDetail, type CreateTenantInput,
   type MappingSuggestion, type PolicyRule, type AssignmentRule, type ExtractedRule,
+  type PlatformProduct, type PlatformProductInput,
 } from '../api/client'
 
 const PLAN_BADGE: Record<string, string> = {
@@ -35,6 +37,7 @@ export default function PlatformStudio() {
   const [showCreate, setShowCreate] = useState(false)
   const [mapperTenant, setMapperTenant] = useState<{ id: string; name: string } | null>(null)
   const [policyTenant, setPolicyTenant] = useState<{ id: string; name: string } | null>(null)
+  const [productsTenant, setProductsTenant] = useState<{ id: string; name: string } | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const notify = (m: string) => { setToast(m); window.setTimeout(() => setToast(null), 2600) }
 
@@ -81,6 +84,18 @@ export default function PlatformStudio() {
           tenantId={policyTenant.id}
           tenantName={policyTenant.name}
           onBack={() => { const id = policyTenant.id; setPolicyTenant(null); load(id) }}
+        />
+      </div>
+    )
+  }
+
+  if (productsTenant) {
+    return (
+      <div className="min-h-screen px-6 py-6" style={{ backgroundColor: '#f8f9fa' }}>
+        <Products
+          tenantId={productsTenant.id}
+          tenantName={productsTenant.name}
+          onBack={() => { const id = productsTenant.id; setProductsTenant(null); load(id) }}
         />
       </div>
     )
@@ -144,7 +159,7 @@ export default function PlatformStudio() {
 
         {/* ── right: tenant detail ── */}
         <div className="min-w-0">
-          {selected ? <TenantDetail tenantId={selected} onConfigureMapping={(id, name) => setMapperTenant({ id, name })} onConfigurePolicy={(id, name) => setPolicyTenant({ id, name })} /> : (
+          {selected ? <TenantDetail tenantId={selected} onConfigureMapping={(id, name) => setMapperTenant({ id, name })} onConfigurePolicy={(id, name) => setPolicyTenant({ id, name })} onConfigureProducts={(id, name) => setProductsTenant({ id, name })} /> : (
             <div className="flex h-full min-h-[40vh] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white text-sm text-slate-400">
               Select a tenant to view details.
             </div>
@@ -172,7 +187,7 @@ export default function PlatformStudio() {
 }
 
 // ── Read-only per-tenant detail panel ──
-function TenantDetail({ tenantId, onConfigureMapping, onConfigurePolicy }: { tenantId: string; onConfigureMapping: (id: string, name: string) => void; onConfigurePolicy: (id: string, name: string) => void }) {
+function TenantDetail({ tenantId, onConfigureMapping, onConfigurePolicy, onConfigureProducts }: { tenantId: string; onConfigureMapping: (id: string, name: string) => void; onConfigurePolicy: (id: string, name: string) => void; onConfigureProducts: (id: string, name: string) => void }) {
   const [detail, setDetail] = useState<PlatformTenantDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
@@ -208,7 +223,11 @@ function TenantDetail({ tenantId, onConfigureMapping, onConfigurePolicy }: { ten
               {detail.created_at ? ` · created ${detail.created_at.slice(0, 10)}` : ''}
             </div>
           </div>
-          <div className="flex shrink-0 gap-2">
+          <div className="flex shrink-0 flex-wrap justify-end gap-2">
+            <button
+              onClick={() => onConfigureProducts(detail.tenant_id, detail.name)}
+              className="rounded-lg border border-[#14532d] px-3 py-1.5 text-xs font-semibold text-[#14532d] hover:bg-[#14532d]/5"
+            >Configure Products →</button>
             <button
               onClick={() => onConfigurePolicy(detail.tenant_id, detail.name)}
               className="rounded-lg border border-[#14532d] px-3 py-1.5 text-xs font-semibold text-[#14532d] hover:bg-[#14532d]/5"
@@ -851,6 +870,142 @@ function PolicyRules({ tenantId, tenantName, onBack }: { tenantId: string; tenan
         )}
       </>)}
       {toast && <div className="fixed bottom-16 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>}
+    </div>
+  )
+}
+
+// ── Products (Section 4) — add/edit loan products ──
+const LOAN_TYPES = ['Conventional', 'FHA', 'VA', 'Jumbo', 'NonQM']
+const LOAN_PURPOSES = ['purchase', 'refinance', 'cash_out_refinance']
+const money = (v: number | null) => v == null ? '—' : `$${Math.round(v / 1000)}k`
+
+function Products({ tenantId, tenantName, onBack }: { tenantId: string; tenantName: string; onBack: () => void }) {
+  const [products, setProducts] = useState<PlatformProduct[] | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState<string | null>(null)
+  const [editing, setEditing] = useState<PlatformProduct | 'new' | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+
+  async function load() {
+    setLoading(true)
+    try { const d = await fetchPlatformProducts(tenantId); setProducts(d.products); setErr(null) }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)) } finally { setLoading(false) }
+  }
+  useEffect(() => { load() }, [tenantId])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (loading) return <div className="p-12 text-center text-slate-400">Loading products…</div>
+  if (err && !products) return <Card><div className="py-8 text-center text-sm text-red-600">{err}</div></Card>
+  if (!products) return null
+
+  return (
+    <div>
+      <button onClick={onBack} className="mb-3 text-sm text-slate-500 hover:text-slate-800">← Back to tenants</button>
+      <div className="mb-4 flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-slate-900">Products — {tenantName}</h1>
+          <p className="text-sm text-slate-500">Add or edit loan products. Changes take effect immediately — no deploy.</p>
+        </div>
+        <button onClick={() => setEditing('new')} className="rounded-lg bg-[#14532d] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0f3d22]">+ Add Product</button>
+      </div>
+      <Card>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-[12px]">
+            <thead><tr className="border-b border-slate-100 text-[9px] uppercase tracking-wide text-slate-400">
+              <th className="px-2 py-2">Product Name</th><th className="px-2 py-2">Type</th><th className="px-2 py-2">Purpose</th>
+              <th className="px-2 py-2">Max Loan</th><th className="px-2 py-2">Max DTI</th><th className="px-2 py-2">Max LTV</th>
+              <th className="px-2 py-2">Min FICO</th><th className="px-2 py-2">Active</th><th className="px-2 py-2"></th>
+            </tr></thead>
+            <tbody>
+              {products.length === 0 && <tr><td colSpan={9} className="px-2 py-6 text-center text-slate-400">No products yet.</td></tr>}
+              {products.map((p) => (
+                <tr key={p.product_id} className={`border-b border-slate-50 ${p.is_active ? '' : 'opacity-50'}`}>
+                  <td className="px-2 py-2 font-medium text-slate-800">{p.product_name}</td>
+                  <td className="px-2 py-2">{p.loan_type}</td>
+                  <td className="px-2 py-2 text-slate-500">{pretty(p.loan_purpose)}</td>
+                  <td className="px-2 py-2">{money(p.max_loan_amount)}</td>
+                  <td className="px-2 py-2">{p.max_dti != null ? `${p.max_dti}%` : '—'}</td>
+                  <td className="px-2 py-2">{p.max_ltv != null ? `${p.max_ltv}%` : '—'}</td>
+                  <td className="px-2 py-2">{p.min_credit_score ?? '—'}</td>
+                  <td className="px-2 py-2">{p.is_active ? <span className="text-emerald-700">✓</span> : <span className="text-slate-400">—</span>}</td>
+                  <td className="px-2 py-2"><button onClick={() => setEditing(p)} className="rounded border border-slate-200 px-2 py-1 text-[10px] font-medium text-slate-600 hover:bg-slate-50">Edit</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+      {editing && <ProductModal tenantId={tenantId} product={editing}
+        onClose={() => setEditing(null)}
+        onSaved={() => { setEditing(null); setToast('Product saved'); window.setTimeout(() => setToast(null), 2400); load() }} />}
+      {toast && <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>}
+    </div>
+  )
+}
+
+function ProductModal({ tenantId, product, onClose, onSaved }: {
+  tenantId: string; product: PlatformProduct | 'new'; onClose: () => void; onSaved: () => void
+}) {
+  const isNew = product === 'new'
+  const [form, setForm] = useState<PlatformProductInput>(isNew
+    ? { product_name: '', loan_type: 'Conventional', loan_purpose: 'purchase', max_loan_amount: null, min_credit_score: null, max_dti: null, max_ltv: null, is_active: true }
+    : { product_name: product.product_name, loan_type: product.loan_type, loan_purpose: product.loan_purpose ?? 'purchase',
+        max_loan_amount: product.max_loan_amount, min_credit_score: product.min_credit_score, max_dti: product.max_dti, max_ltv: product.max_ltv, is_active: product.is_active })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const set = (patch: Partial<PlatformProductInput>) => setForm((f) => ({ ...f, ...patch }))
+  const num = (v: string): number | null => v === '' ? null : parseFloat(v)
+  const valid = form.product_name.trim() !== '' && form.loan_type !== ''
+
+  async function submit() {
+    if (!valid || saving) return
+    setSaving(true); setError(null)
+    try {
+      if (isNew) await createPlatformProduct(tenantId, form)
+      else await updatePlatformProduct(tenantId, product.product_id, form)
+      onSaved()
+    } catch (e) { setError(e instanceof Error ? e.message.replace(/^\d+\s+\w+\s+—\s+/, '') : String(e)) }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-lg font-bold text-slate-900">{isNew ? 'Add Product' : 'Edit Product'}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">✕</button>
+        </div>
+        <div className="space-y-3">
+          <Field label="Product name *"><input value={form.product_name} onChange={(e) => set({ product_name: e.target.value })} placeholder="CL-CONV-30" className={inputCls} /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Loan type *">
+              <select value={form.loan_type} onChange={(e) => set({ loan_type: e.target.value })} className={inputCls}>
+                {LOAN_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </Field>
+            <Field label="Loan purpose">
+              <select value={form.loan_purpose ?? 'purchase'} onChange={(e) => set({ loan_purpose: e.target.value })} className={inputCls}>
+                {LOAN_PURPOSES.map((p) => <option key={p} value={p}>{pretty(p)}</option>)}
+              </select>
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Max loan amount ($)"><input type="number" value={form.max_loan_amount ?? ''} onChange={(e) => set({ max_loan_amount: num(e.target.value) })} step={1000} min={0} className={inputCls} /></Field>
+            <Field label="Min credit score"><input type="number" value={form.min_credit_score ?? ''} onChange={(e) => set({ min_credit_score: num(e.target.value) })} min={500} max={800} step={5} className={inputCls} /></Field>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Max DTI (%)"><input type="number" value={form.max_dti ?? ''} onChange={(e) => set({ max_dti: num(e.target.value) })} min={0} max={57} step={0.5} className={inputCls} /></Field>
+            <Field label="Max LTV (%)"><input type="number" value={form.max_ltv ?? ''} onChange={(e) => set({ max_ltv: num(e.target.value) })} min={0} max={100} step={0.5} className={inputCls} /></Field>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" checked={form.is_active} onChange={(e) => set({ is_active: e.target.checked })} /> Active
+          </label>
+          {error && <div className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>}
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
+          <button onClick={submit} disabled={!valid || saving} className="rounded-lg bg-[#14532d] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0f3d22] disabled:opacity-50">{saving ? 'Saving…' : 'Save'}</button>
+        </div>
+      </div>
     </div>
   )
 }
