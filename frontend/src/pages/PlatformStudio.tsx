@@ -381,7 +381,6 @@ function CreateTenantWizard({ onClose, onCreated }: {
             {done.admin && <p className="mt-1 text-sm text-slate-500">{done.admin} has been created</p>}
             <div className="mt-6 flex justify-center gap-3">
               <button onClick={() => onCreated(done.id, done.admin, true)} className="rounded-lg bg-[#14532d] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0f3d22]">Configure Field Mapping →</button>
-            <button
             </div>
           </div>
         ) : (<>
@@ -1079,6 +1078,8 @@ type ImportResult = {
   unmatched: string[]
 }
 
+const BASE = import.meta.env.VITE_API_URL ?? ""
+
 function OnboardingConfirmation({ tenantId, tenantName, onBack }: { tenantId: string; tenantName: string; onBack: () => void }) {
   const [summary, setSummary] = useState<OnboardingSummary | null>(null)
   const [loading, setLoading] = useState(true)
@@ -1245,4 +1246,3 @@ function OnboardingConfirmation({ tenantId, tenantName, onBack }: { tenantId: st
     </div>
   )
 }
-TSEOFcat >> ~/OneDrive/Documents/decision-os/frontend/src/pages/PlatformStudio.tsx << 'TSEOF'
