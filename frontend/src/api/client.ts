@@ -418,6 +418,11 @@ export interface PlatformTenantList {
   tenants: PlatformTenant[]
 }
 export interface PlatformTenantDetail extends PlatformTenant {
+  los_type: string | null
+  programs: string[]
+  licensed_states: string[]
+  channels: string[]
+  contact_email: string | null
   users: { email: string; name: string; role: string }[]
   mapping_count: number
   loan_count: number
@@ -426,11 +431,24 @@ export interface PlatformTenantDetail extends PlatformTenant {
 export interface CreateTenantInput {
   tenant_id: string
   name: string
+  contact_email: string
+  los_type: string
+  programs: string[]
+  licensed_states: string[]
+  channels: string[]
   plan: string
   products: string[]
   admin_email?: string
   admin_name?: string
   admin_password?: string
+}
+export interface CreateTenantResult {
+  ok: boolean
+  tenant_id: string
+  admin_created: string | null
+  integration_endpoint_created: boolean
+  tenant_rules_seeded: boolean
+  overlay_rules_seeded: number
 }
 export function fetchPlatformTenants(): Promise<PlatformTenantList> {
   return getJSON<PlatformTenantList>('/api/accord/platform-studio/tenants')
@@ -438,7 +456,7 @@ export function fetchPlatformTenants(): Promise<PlatformTenantList> {
 export function fetchPlatformTenant(id: string): Promise<PlatformTenantDetail> {
   return getJSON<PlatformTenantDetail>(`/api/accord/platform-studio/tenants/${encodeURIComponent(id)}`)
 }
-export function createPlatformTenant(body: CreateTenantInput): Promise<{ ok: boolean; tenant_id: string; admin_created: string | null }> {
+export function createPlatformTenant(body: CreateTenantInput): Promise<CreateTenantResult> {
   return postJSON('/api/accord/platform-studio/tenants', body)
 }
 

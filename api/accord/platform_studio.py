@@ -47,10 +47,20 @@ def _products(v: Any) -> list:
 
 
 class CreateTenantBody(BaseModel):
+    # Core identity
     tenant_id: str
     name: str
+    contact_email: str
+    # LOS configuration
+    los_type: str = "encompass"            # encompass / bytepro / openclose / custom
+    # Loan programs + geography + channels (stored in tenants.settings JSONB)
+    programs: list[str] = ["CONVENTIONAL"]  # CONVENTIONAL/FHA/VA/JUMBO/NON_QM/USDA
+    licensed_states: list[str] = []
+    channels: list[str] = ["retail"]        # retail/wholesale/correspondent/consumer_direct
+    # Plan + nav products (tenants.products is NOT NULL)
     plan: str = "starter"
     products: list[str] = ["pipeline"]
+    # First admin user (optional at creation)
     admin_email: Optional[str] = None
     admin_name: Optional[str] = None
     admin_password: Optional[str] = None
@@ -101,7 +111,7 @@ async def tenant_detail(tenant_id: str, user: dict = Depends(get_current_user)) 
     pool = await _get_pool()
     async with pool.acquire() as conn:
         t = await conn.fetchrow(
-            "SELECT tenant_id, name, plan, is_active, products, created_at "
+            "SELECT tenant_id, name, plan, is_active, products, settings, created_at "
             "FROM tenants WHERE tenant_id = $1", tenant_id)
         if not t:
             raise HTTPException(404, "Tenant not found")
@@ -115,10 +125,17 @@ async def tenant_detail(tenant_id: str, user: dict = Depends(get_current_user)) 
         # Global catalogue — shared across tenants, shown for context.
         reg = await conn.fetchval("SELECT COUNT(*) FROM regulatory_rules")
         agency = await conn.fetchval("SELECT COUNT(*) FROM agency_guidelines")
+    s = _J(t["settings"]) if isinstance(_J(t["settings"]), dict) else {}
     return {
         "tenant_id": t["tenant_id"], "name": t["name"], "plan": t["plan"],
         "is_active": t["is_active"], "products": _products(t["products"]),
         "created_at": t["created_at"].isoformat() if t["created_at"] else None,
+        # go-live config from settings JSONB (empty for pre-Section-1 tenants)
+        "los_type": s.get("los_type"),
+        "programs": s.get("programs", []),
+        "licensed_states": s.get("licensed_states", []),
+        "channels": s.get("channels", []),
+        "contact_email": s.get("contact_email"),
         "user_count": len(users),
         "users": [{"email": u["email"], "name": u["name"], "role": u["role"]} for u in users],
         "mapping_count": int(mapping_count or 0),
@@ -128,9 +145,24 @@ async def tenant_detail(tenant_id: str, user: dict = Depends(get_current_user)) 
     }
 
 
+# Default active ruleset seeded at go-live. Uses the REAL tenant_rules shape
+# (percents + engine keys), NOT fractions — tenant_rules is a versioned table
+# (version + status required); dti.review_band is the senior-review zone.
+_DEFAULT_RULES = {
+    "credit": {"min_score": 620, "prime_threshold": 700},
+    "dti": {"back_max": 50, "front_max": 43, "review_band": [43, 50]},
+    "ltv": {"max": 97, "jumbo_max": 85, "no_mi_threshold": 80},
+    "fraud": {"identity_min": 0.85, "watchlist_threshold": 0.25},
+    "income": {"min_confidence": 0.75},
+    "reserves": {"months_required": 2},
+}
+
+
 @router.post("/tenants")
 async def create_tenant(body: CreateTenantBody, user: dict = Depends(get_current_user)) -> dict:
-    """Create a tenant (+ optional first admin). super_admin only."""
+    """Create a tenant (+ optional first admin) and seed go-live config:
+    LOS integration endpoint, an active tenant_rules v1, and default overlay
+    rules. super_admin only."""
     if not _is_super(user):
         raise HTTPException(403, "Only super_admin may create tenants")
     _require_db()
@@ -139,15 +171,27 @@ async def create_tenant(body: CreateTenantBody, user: dict = Depends(get_current
         raise HTTPException(400, "Invalid tenant_id")
     if not (body.name or "").strip():
         raise HTTPException(400, "Tenant name is required")
+    if not (body.contact_email or "").strip():
+        raise HTTPException(400, "Contact email is required")
+
+    settings = {
+        "los_type": body.los_type,
+        "programs": body.programs,
+        "licensed_states": body.licensed_states,
+        "channels": body.channels,
+        "contact_email": body.contact_email,
+    }
     pool = await _get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
             if await conn.fetchval("SELECT 1 FROM tenants WHERE tenant_id = $1", slug):
                 raise HTTPException(409, "Tenant already exists")
             await conn.execute(
-                "INSERT INTO tenants (tenant_id, name, plan, products) VALUES ($1,$2,$3,$4::jsonb)",
+                "INSERT INTO tenants (tenant_id, name, plan, products, settings) "
+                "VALUES ($1,$2,$3,$4::jsonb,$5::jsonb)",
                 slug, body.name.strip(), body.plan or "starter",
-                json.dumps(body.products or ["pipeline"]))
+                json.dumps(body.products or ["pipeline"]), json.dumps(settings))
+
             admin_created = None
             if body.admin_email and body.admin_password:
                 if await conn.fetchval("SELECT 1 FROM users WHERE email = $1", body.admin_email):
@@ -158,7 +202,41 @@ async def create_tenant(body: CreateTenantBody, user: dict = Depends(get_current
                     slug, body.admin_email, hash_password(body.admin_password),
                     body.admin_name or body.admin_email.split("@")[0])
                 admin_created = body.admin_email
-    return {"ok": True, "tenant_id": slug, "admin_created": admin_created}
+
+            # LOS integration endpoint (real columns; UNIQUE(tenant_id, system_name)).
+            await conn.execute(
+                "INSERT INTO integration_endpoint "
+                "(tenant_id, system_name, system_type, source_format, auth_type, is_active) "
+                "VALUES ($1,$2,'los','json','api_key',true) "
+                "ON CONFLICT (tenant_id, system_name) DO NOTHING",
+                slug, body.los_type)
+
+            # tenant_rules v1 active — versioned table needs version + status.
+            tr = await conn.fetchval(
+                "INSERT INTO tenant_rules (tenant_id, version, status, rules, programs) "
+                "SELECT $1, 1, 'active', $2::jsonb, $3::jsonb "
+                "WHERE NOT EXISTS (SELECT 1 FROM tenant_rules WHERE tenant_id = $1) "
+                "RETURNING rule_version_id",
+                slug, json.dumps(_DEFAULT_RULES),
+                json.dumps([p.lower() for p in body.programs]))
+
+            # overlay_rules defaults (real columns: rule_type / overlay_value / direction).
+            ov = await conn.execute(
+                "INSERT INTO overlay_rules (tenant_id, rule_type, overlay_value, direction, is_active) "
+                "SELECT $1, v.rt, v.val, 'stricter', true "
+                "FROM (VALUES ('uw_auto_approve_risk_max', 0.25), "
+                "             ('uw_escalate_risk_min', 0.60)) AS v(rt, val) "
+                "WHERE NOT EXISTS (SELECT 1 FROM overlay_rules o "
+                "                  WHERE o.tenant_id = $1 AND o.rule_type = v.rt)",
+                slug)
+    return {
+        "ok": True,
+        "tenant_id": slug,
+        "admin_created": admin_created,
+        "integration_endpoint_created": True,
+        "tenant_rules_seeded": tr is not None,
+        "overlay_rules_seeded": int(ov.split()[-1]) if ov else 0,
+    }
 
 
 __all__ = ["router"]
