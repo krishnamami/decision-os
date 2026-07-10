@@ -460,6 +460,26 @@ export function createPlatformTenant(body: CreateTenantInput): Promise<CreateTen
   return postJSON('/api/accord/platform-studio/tenants', body)
 }
 
+// ── Field Mapper (Section 2) ─────────────────────────────────────────
+export interface FieldMapperCanonical { entities: Record<string, string[]>; total: number }
+export interface MappingSuggestion {
+  source_field: string
+  canonical_entity: string | null
+  canonical_column: string | null
+  confidence: number
+  reasoning: string
+}
+export interface SuggestResult { suggestions: MappingSuggestion[]; method: 'claude' | 'heuristic'; model: string }
+export function fetchFieldMapperCanonical(id: string): Promise<FieldMapperCanonical> {
+  return getJSON(`/api/accord/platform-studio/tenants/${encodeURIComponent(id)}/field-mapper/canonical`)
+}
+export function suggestFieldMappings(id: string, body: { source_system: string; input_type: string; raw_input: string }): Promise<SuggestResult> {
+  return postJSON(`/api/accord/platform-studio/tenants/${encodeURIComponent(id)}/field-mapper/suggest`, body)
+}
+export function saveFieldMappings(id: string, body: { source_system: string; mappings: Array<{ source_field: string; canonical_entity: string; canonical_column: string; transform_rule: string; notes?: string }> }): Promise<{ saved: number; skipped: number }> {
+  return postJSON(`/api/accord/platform-studio/tenants/${encodeURIComponent(id)}/field-mapper/save`, body)
+}
+
 // Exam-ready PDF export (CN-EX). Fetches the PDF blob with the Bearer header
 // (a plain <a href> can't carry it) and triggers a browser download.
 export async function exportExamReady(appId: string): Promise<void> {

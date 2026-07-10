@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   fetchPlatformTenants, fetchPlatformTenant, createPlatformTenant,
+  fetchFieldMapperCanonical, suggestFieldMappings, saveFieldMappings,
   type PlatformTenantList, type PlatformTenantDetail, type CreateTenantInput,
+  type MappingSuggestion,
 } from '../api/client'
 
 const PLAN_BADGE: Record<string, string> = {
@@ -30,6 +32,7 @@ export default function PlatformStudio() {
   const [err, setErr] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
+  const [mapperTenant, setMapperTenant] = useState<{ id: string; name: string } | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const notify = (m: string) => { setToast(m); window.setTimeout(() => setToast(null), 2600) }
 
@@ -56,6 +59,18 @@ export default function PlatformStudio() {
     </div>
   )
   if (!data) return null
+
+  if (mapperTenant) {
+    return (
+      <div className="min-h-screen px-6 py-6" style={{ backgroundColor: '#f8f9fa' }}>
+        <FieldMapper
+          tenantId={mapperTenant.id}
+          tenantName={mapperTenant.name}
+          onBack={() => { const id = mapperTenant.id; setMapperTenant(null); load(id) }}
+        />
+      </div>
+    )
+  }
 
   const isSuper = data.is_super_admin
 
@@ -115,7 +130,7 @@ export default function PlatformStudio() {
 
         {/* ── right: tenant detail ── */}
         <div className="min-w-0">
-          {selected ? <TenantDetail tenantId={selected} /> : (
+          {selected ? <TenantDetail tenantId={selected} onConfigureMapping={(id, name) => setMapperTenant({ id, name })} /> : (
             <div className="flex h-full min-h-[40vh] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white text-sm text-slate-400">
               Select a tenant to view details.
             </div>
@@ -128,9 +143,8 @@ export default function PlatformStudio() {
           onClose={() => setShowCreate(false)}
           onCreated={(id, adminCreated, goMapping) => {
             setShowCreate(false)
-            notify(goMapping
-              ? 'Field mapping — arriving in Section 2'
-              : (adminCreated ? `Created ${id} + admin ${adminCreated}` : `Created tenant ${id}`))
+            if (goMapping) { setMapperTenant({ id, name: id }); return }
+            notify(adminCreated ? `Created ${id} + admin ${adminCreated}` : `Created tenant ${id}`)
             load(id)
           }}
         />
@@ -144,7 +158,7 @@ export default function PlatformStudio() {
 }
 
 // ── Read-only per-tenant detail panel ──
-function TenantDetail({ tenantId }: { tenantId: string }) {
+function TenantDetail({ tenantId, onConfigureMapping }: { tenantId: string; onConfigureMapping: (id: string, name: string) => void }) {
   const [detail, setDetail] = useState<PlatformTenantDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
@@ -180,6 +194,10 @@ function TenantDetail({ tenantId }: { tenantId: string }) {
               {detail.created_at ? ` · created ${detail.created_at.slice(0, 10)}` : ''}
             </div>
           </div>
+          <button
+            onClick={() => onConfigureMapping(detail.tenant_id, detail.name)}
+            className="shrink-0 rounded-lg bg-[#14532d] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#0f3d22]"
+          >Configure Field Mapping →</button>
         </div>
         <div className="mt-3 flex flex-wrap gap-1.5">
           {detail.products.length === 0 && <span className="text-xs text-slate-400">No products</span>}
@@ -424,6 +442,167 @@ function CreateTenantWizard({ onClose, onCreated }: {
 }
 function Row({ k, v }: { k: string; v: string }) {
   return <div className="mb-1 flex gap-2"><span className="w-16 shrink-0 text-slate-400">{k}</span><span className="text-slate-700">{v || '—'}</span></div>
+}
+
+// ── Field Mapper (Section 2) — NLP source->canonical mapping ──
+const SOURCE_SYSTEMS = ['encompass', 'bytepro', 'openclose', 'custom']
+const TRANSFORMS = ['direct', 'enum', 'date', 'encrypt']
+type MapRow = MappingSuggestion & { keep: boolean; transform_rule: string }
+const confBadge = (c: number) => c > 0.85
+  ? { t: 'High', cls: 'bg-emerald-50 text-emerald-700' }
+  : c >= 0.6 ? { t: 'Medium', cls: 'bg-amber-50 text-amber-700' }
+             : { t: 'Review', cls: 'bg-red-50 text-red-700' }
+
+function FieldMapper({ tenantId, tenantName, onBack }: { tenantId: string; tenantName: string; onBack: () => void }) {
+  const [sourceSystem, setSourceSystem] = useState('encompass')
+  const [tab, setTab] = useState<'upload' | 'paste'>('paste')
+  const [raw, setRaw] = useState('')
+  const [fileType, setFileType] = useState<string | null>(null)
+  const [canonical, setCanonical] = useState<Record<string, string[]>>({})
+  const [rows, setRows] = useState<MapRow[] | null>(null)
+  const [method, setMethod] = useState(''); const [model, setModel] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState<{ saved: number } | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+
+  useEffect(() => { fetchFieldMapperCanonical(tenantId).then((d) => setCanonical(d.entities)).catch(() => {}) }, [tenantId])
+  const options = useMemo(() => Object.entries(canonical).flatMap(([e, cols]) => cols.map((c) => `${e}.${c}`)), [canonical])
+
+  const detectType = (t: string) => fileType ?? (/^\s*[[{]/.test(t) ? 'json_keys' : 'paste')
+  async function onFile(f: File) {
+    setRaw(await f.text())
+    const n = f.name.toLowerCase()
+    setFileType(n.endsWith('.json') ? 'json_keys' : n.endsWith('.csv') ? 'csv_headers' : null)
+  }
+  async function suggest() {
+    if (!raw.trim() || loading) return
+    setLoading(true); setErr(null)
+    try {
+      const res = await suggestFieldMappings(tenantId, { source_system: sourceSystem, input_type: detectType(raw), raw_input: raw })
+      setRows(res.suggestions.map((s) => ({ ...s, keep: !!s.canonical_column, transform_rule: 'direct' })))
+      setMethod(res.method); setModel(res.model)
+    } catch (e) { setErr(e instanceof Error ? e.message.replace(/^\d+\s+\w+\s+—\s+/, '') : String(e)) }
+    finally { setLoading(false) }
+  }
+  const upd = (i: number, patch: Partial<MapRow>) => setRows((rs) => rs!.map((r, k) => k === i ? { ...r, ...patch } : r))
+  const acceptHighConf = () => setRows((rs) => rs!.map((r) => r.confidence > 0.85 && r.canonical_column ? { ...r, keep: true } : r))
+  async function save() {
+    if (!rows || saving) return
+    const keep = rows.filter((r) => r.keep && r.canonical_entity && r.canonical_column)
+    if (!keep.length) { setErr('Nothing to save — keep at least one mapping.'); return }
+    setSaving(true); setErr(null)
+    try {
+      const res = await saveFieldMappings(tenantId, {
+        source_system: sourceSystem,
+        mappings: keep.map((r) => ({ source_field: r.source_field, canonical_entity: r.canonical_entity!, canonical_column: r.canonical_column!, transform_rule: r.transform_rule, notes: r.reasoning })),
+      })
+      setSaved({ saved: res.saved })
+    } catch (e) { setErr(e instanceof Error ? e.message.replace(/^\d+\s+\w+\s+—\s+/, '') : String(e)) }
+    finally { setSaving(false) }
+  }
+
+  const mappedCount = rows?.filter((r) => r.keep && r.canonical_column).length ?? 0
+  const reviewCount = (rows?.length ?? 0) - mappedCount
+
+  return (
+    <div>
+      <button onClick={onBack} className="mb-3 text-sm text-slate-500 hover:text-slate-800">← Back to tenants</button>
+      <h1 className="text-2xl font-semibold text-slate-900">Field Mapping — {tenantName}</h1>
+      <p className="mb-4 text-sm text-slate-500">Map your LOS fields to canonical mortgage fields</p>
+
+      {saved ? (
+        <Card>
+          <div className="py-6 text-center">
+            <div className="text-3xl">✅</div>
+            <h3 className="mt-2 text-lg font-bold text-slate-900">{saved.saved} field mappings saved for {tenantName}</h3>
+            <button onClick={onBack} className="mt-4 text-sm font-medium text-blue-600 hover:underline">View in tenant detail →</button>
+          </div>
+        </Card>
+      ) : !rows ? (
+        <Card>
+          <Field label="Source system">
+            <div className="flex flex-wrap gap-2">
+              {SOURCE_SYSTEMS.map((s) => (
+                <button key={s} onClick={() => setSourceSystem(s)}
+                  className={`rounded-md border px-3 py-1.5 text-xs font-medium ${sourceSystem === s ? 'border-[#14532d] bg-[#14532d]/5 text-[#14532d]' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>{pretty(s)}</button>
+              ))}
+            </div>
+          </Field>
+          <div className="mt-3 flex gap-2 border-b border-slate-100">
+            {(['upload', 'paste'] as const).map((t) => (
+              <button key={t} onClick={() => setTab(t)}
+                className={`border-b-2 px-3 py-2 text-sm font-medium ${tab === t ? 'border-[#14532d] text-[#14532d]' : 'border-transparent text-slate-400'}`}>{t === 'upload' ? 'Upload File' : 'Paste Fields'}</button>
+            ))}
+          </div>
+          {tab === 'upload' ? (
+            <label className="mt-3 flex h-32 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-200 text-sm text-slate-400 hover:bg-slate-50">
+              <input type="file" accept=".csv,.json,text/csv,application/json" className="hidden"
+                onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
+              {raw ? `Loaded ${raw.length} chars${fileType ? ` (${fileType})` : ''}` : 'Drop your Encompass export header row or field list here'}
+            </label>
+          ) : (
+            <textarea value={raw} onChange={(e) => { setRaw(e.target.value); setFileType(null) }} rows={6}
+              placeholder={'Paste field names, one per line or comma-separated\ne.g. loan_amt, fico_score, borrower_name, dti_ratio'}
+              className="mt-3 w-full rounded-md border border-slate-200 p-3 text-sm focus:border-[#14532d] focus:outline-none" />
+          )}
+          {err && <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">{err}</div>}
+          <button onClick={suggest} disabled={!raw.trim() || loading}
+            className="mt-4 rounded-lg bg-[#14532d] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0f3d22] disabled:opacity-50">
+            {loading ? 'Asking Claude…' : 'Suggest Mappings'}
+          </button>
+        </Card>
+      ) : (
+        <Card>
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-sm text-slate-600"><span className="font-semibold text-slate-800">{mappedCount}</span> mapped, <span className="font-semibold text-amber-600">{reviewCount}</span> need review</div>
+            <button onClick={acceptHighConf} className="rounded-md border border-slate-200 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50">Accept All High Confidence</button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-[12px]">
+              <thead><tr className="border-b border-slate-100 text-[9px] uppercase tracking-wide text-slate-400">
+                <th className="px-2 py-2">Source Field</th><th className="px-2 py-2">Suggested Canonical</th>
+                <th className="px-2 py-2">Confidence</th><th className="px-2 py-2">Transform</th><th className="px-2 py-2">Keep</th>
+              </tr></thead>
+              <tbody>
+                {rows.map((r, i) => {
+                  const b = confBadge(r.confidence)
+                  return (
+                    <tr key={r.source_field} className={`border-b border-slate-50 ${r.keep ? '' : 'opacity-50'}`}>
+                      <td className="px-2 py-2"><span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700">{r.source_field}</span></td>
+                      <td className="px-2 py-2">
+                        <select value={r.canonical_entity && r.canonical_column ? `${r.canonical_entity}.${r.canonical_column}` : ''}
+                          onChange={(e) => { const v = e.target.value; const parts = v ? v.split('.') : [null, null]; upd(i, { canonical_entity: parts[0], canonical_column: parts[1], keep: !!v }) }}
+                          className="w-full rounded border border-slate-200 px-1.5 py-1 text-[11px]">
+                          <option value="">— skip —</option>
+                          {options.map((o) => <option key={o} value={o}>{o}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-2 py-2"><span className={`rounded-full px-2 py-0.5 text-[9px] font-semibold ${b.cls}`} title={r.reasoning}>{b.t} {Math.round(r.confidence * 100)}%</span></td>
+                      <td className="px-2 py-2">
+                        <select value={r.transform_rule} onChange={(e) => upd(i, { transform_rule: e.target.value })} className="rounded border border-slate-200 px-1.5 py-1 text-[11px]">
+                          {TRANSFORMS.map((t) => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-2 py-2"><input type="checkbox" checked={r.keep} onChange={(e) => upd(i, { keep: e.target.checked })} /></td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          {err && <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">{err}</div>}
+          <div className="mt-4 flex items-center justify-between">
+            <span className="text-[11px] text-slate-400">{method === 'claude' ? `🤖 Mapped by Claude ${model}` : '🔧 Mapped by fuzzy matching (no AI key)'}</span>
+            <div className="flex gap-2">
+              <button onClick={() => setRows(null)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">← New input</button>
+              <button onClick={save} disabled={saving || mappedCount === 0} className="rounded-lg bg-[#14532d] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0f3d22] disabled:opacity-50">{saving ? 'Saving…' : `Save Field Mappings (${mappedCount})`}</button>
+            </div>
+          </div>
+        </Card>
+      )}
+    </div>
+  )
 }
 
 // ── small components ──

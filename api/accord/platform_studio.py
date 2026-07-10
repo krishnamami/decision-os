@@ -17,8 +17,11 @@ genuinely per-tenant figures are users, field-mapping rows, and loans.
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
 from contextlib import asynccontextmanager
+from difflib import SequenceMatcher
 from typing import Any, AsyncIterator, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -29,6 +32,7 @@ from api.accord.pipeline import _get_pool, _require_db, _J
 from core.auth.security import hash_password
 from core.db.tenant_pool import ACCORD_ADMIN, reset_tenant, set_tenant
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/accord/platform-studio", tags=["accord-platform-studio"])
 
 _STUDIO_ROLES = ("admin", "super_admin")
@@ -250,6 +254,200 @@ async def create_tenant(body: CreateTenantBody, user: dict = Depends(get_current
         "tenant_rules_seeded": tr is not None,
         "overlay_rules_seeded": int(ov.split()[-1]) if ov else 0,
     }
+
+
+# ── Field Mapper (CN-PS Section 2): NLP source->canonical mapping ──
+_VALID_TRANSFORMS = {"direct", "enum", "split", "compute", "encrypt", "date", "discard"}
+_FIELD_MAP_MODEL = "claude-sonnet-4-6"   # matches _ANTHROPIC_DEFAULT_MODEL
+
+
+async def _canonical_vocabulary(conn) -> dict:
+    """Global canonical schema (entity -> [columns]) — NOT tenant-scoped."""
+    rows = await conn.fetch(
+        "SELECT DISTINCT canonical_entity, canonical_column FROM field_mapping_registry "
+        "ORDER BY canonical_entity, canonical_column")
+    ent: dict[str, list] = {}
+    for r in rows:
+        ent.setdefault(r["canonical_entity"], []).append(r["canonical_column"])
+    return ent
+
+
+def _norm(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(s or "").lower())
+
+
+def _parse_source_fields(input_type: str, raw: str) -> list[str]:
+    raw = (raw or "").strip()
+    if not raw:
+        return []
+    fields: list[str] = []
+    if input_type == "json_keys":
+        try:
+            obj = json.loads(raw)
+            if isinstance(obj, list) and obj and isinstance(obj[0], dict):
+                obj = obj[0]
+            if isinstance(obj, dict):
+                fields = [str(k) for k in obj.keys()]
+        except Exception:  # noqa: BLE001
+            fields = []
+    elif input_type == "csv_headers":
+        first = raw.splitlines()[0] if raw.splitlines() else ""
+        fields = [h.strip().strip('"').strip("'") for h in first.split(",")]
+    else:  # paste — split on comma or newline
+        fields = [p.strip() for p in re.split(r"[,\n]", raw)]
+    # dedup (preserve order), drop empties, cap to keep the prompt bounded
+    seen, out = set(), []
+    for f in fields:
+        if f and f not in seen:
+            seen.add(f)
+            out.append(f)
+    return out[:150]
+
+
+def _heuristic_suggest(source_fields: list[str], ent: dict) -> list[dict]:
+    flat = [(e, c) for e, cols in ent.items() for c in cols]
+    out = []
+    for sf in source_fields:
+        n = _norm(sf)
+        best, best_r = None, 0.0
+        for e, c in flat:
+            r = SequenceMatcher(None, n, _norm(c)).ratio()
+            if r > best_r:
+                best_r, best = r, (e, c)
+        if best and best_r > 0.7:
+            out.append({"source_field": sf, "canonical_entity": best[0], "canonical_column": best[1],
+                        "confidence": round(best_r, 2), "reasoning": f"Fuzzy name match ({best_r:.0%})"})
+        else:
+            out.append({"source_field": sf, "canonical_entity": None, "canonical_column": None,
+                        "confidence": 0.3, "reasoning": "No close canonical match"})
+    return out
+
+
+def _validate_suggestions(raw: Any, source_fields: list[str], ent: dict) -> list[dict]:
+    valid = {(e, c) for e, cols in ent.items() for c in cols}
+    by_src: dict[str, dict] = {}
+    for it in (raw or []):
+        if not isinstance(it, dict) or not it.get("source_field"):
+            continue
+        e, c = it.get("canonical_entity"), it.get("canonical_column")
+        if not (e and c and (e, c) in valid):     # drop hallucinated / null targets
+            e, c = None, None
+        try:
+            conf = max(0.0, min(1.0, float(it.get("confidence", 0))))
+        except (TypeError, ValueError):
+            conf = 0.0
+        by_src[it["source_field"]] = {
+            "source_field": it["source_field"], "canonical_entity": e, "canonical_column": c,
+            "confidence": round(conf, 2), "reasoning": str(it.get("reasoning") or "")[:200]}
+    return [by_src.get(sf, {"source_field": sf, "canonical_entity": None, "canonical_column": None,
+                            "confidence": 0.0, "reasoning": "No suggestion returned"})
+            for sf in source_fields]
+
+
+async def _claude_suggest(source_fields: list[str], ent: dict) -> Optional[list]:
+    if not os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        return None
+    try:
+        from anthropic import AsyncAnthropic
+        canonical_list = [f"{e}.{c}" for e, cols in ent.items() for c in cols]
+        user_msg = (
+            f"Map these {len(source_fields)} source fields to canonical mortgage fields.\n\n"
+            f"SOURCE FIELDS:\n{json.dumps(source_fields)}\n\n"
+            f"CANONICAL SCHEMA (entity.column):\n{json.dumps(canonical_list)}\n\n"
+            "Return a JSON array, one object per source field:\n"
+            '[{"source_field":"...","canonical_entity":"entity or null",'
+            '"canonical_column":"column or null","confidence":0.0-1.0,"reasoning":"brief"}]\n\n'
+            "Rules:\n- If confident (>0.85): map it.\n- If unsure: entity+column null, confidence<0.5.\n"
+            "- Never guess wildly — null beats wrong.\n"
+            "- Patterns: loan_amt->loan.loan_amount, fico->credit.mid_score, dti->qualification.back_end_dti.")
+        resp = await AsyncAnthropic().messages.create(
+            model=_FIELD_MAP_MODEL, max_tokens=8192,
+            system="You are a mortgage data field mapper. Map source LOS field names to canonical "
+                   "mortgage data fields. Return JSON only, no prose.",
+            messages=[{"role": "user", "content": user_msg}])
+        text = "".join(getattr(b, "text", "") for b in resp.content)
+        i, j = text.find("["), text.rfind("]")
+        return json.loads(text[i:j + 1]) if i >= 0 and j > i else None
+    except Exception as exc:  # noqa: BLE001 — degrade to heuristic
+        logger.warning("[field-mapper] Claude failed, using heuristic: %s", str(exc)[:160])
+        return None
+
+
+class SuggestBody(BaseModel):
+    source_system: str = "encompass"
+    input_type: str = "paste"          # csv_headers | json_keys | paste
+    raw_input: str
+
+
+class SaveMapping(BaseModel):
+    source_field: str
+    canonical_entity: str
+    canonical_column: str
+    transform_rule: str = "direct"
+    notes: Optional[str] = None
+
+
+class SaveBody(BaseModel):
+    source_system: str = "encompass"
+    mappings: list[SaveMapping]
+
+
+def _studio_tenant_guard(user: dict, tenant_id: str) -> None:
+    _require_studio(user)
+    _require_db()
+    if not _is_super(user) and tenant_id != user["tenant_id"]:
+        raise HTTPException(403, "You may only manage your own tenant")
+
+
+@router.get("/tenants/{tenant_id}/field-mapper/canonical")
+async def field_mapper_canonical(tenant_id: str, user: dict = Depends(get_current_user)) -> dict:
+    """The global canonical schema (entity -> columns) for the edit dropdowns."""
+    _studio_tenant_guard(user, tenant_id)
+    async with _admin_conn() as conn:
+        ent = await _canonical_vocabulary(conn)
+    return {"entities": ent, "total": sum(len(v) for v in ent.values())}
+
+
+@router.post("/tenants/{tenant_id}/field-mapper/suggest")
+async def field_mapper_suggest(tenant_id: str, body: SuggestBody,
+                               user: dict = Depends(get_current_user)) -> dict:
+    """Claude-suggested source->canonical mappings; heuristic fallback if no key."""
+    _studio_tenant_guard(user, tenant_id)
+    source_fields = _parse_source_fields(body.input_type, body.raw_input)
+    if not source_fields:
+        raise HTTPException(400, "No source fields found in the input")
+    async with _admin_conn() as conn:
+        ent = await _canonical_vocabulary(conn)
+    claude = await _claude_suggest(source_fields, ent)
+    if claude is not None:
+        return {"suggestions": _validate_suggestions(claude, source_fields, ent),
+                "method": "claude", "model": _FIELD_MAP_MODEL}
+    return {"suggestions": _heuristic_suggest(source_fields, ent),
+            "method": "heuristic", "model": "fuzzy_match"}
+
+
+@router.post("/tenants/{tenant_id}/field-mapper/save")
+async def field_mapper_save(tenant_id: str, body: SaveBody,
+                            user: dict = Depends(get_current_user)) -> dict:
+    """Upsert confirmed mappings into field_mapping_registry (under accord_admin)."""
+    _studio_tenant_guard(user, tenant_id)
+    rows = [m for m in body.mappings if m.source_field and m.canonical_entity and m.canonical_column]
+    if not rows:
+        raise HTTPException(400, "No valid mappings to save")
+    async with _admin_conn() as conn:
+        async with conn.transaction():
+            for m in rows:
+                tr = m.transform_rule if m.transform_rule in _VALID_TRANSFORMS else "direct"
+                await conn.execute(
+                    "INSERT INTO field_mapping_registry (tenant_id, source_system, source_field, "
+                    "canonical_entity, canonical_column, transform_rule, is_active, notes) "
+                    "VALUES ($1,$2,$3,$4,$5,$6,true,$7) "
+                    "ON CONFLICT (tenant_id, source_system, source_field) DO UPDATE SET "
+                    "canonical_entity=EXCLUDED.canonical_entity, canonical_column=EXCLUDED.canonical_column, "
+                    "transform_rule=EXCLUDED.transform_rule, is_active=true, notes=EXCLUDED.notes",
+                    tenant_id, body.source_system, m.source_field, m.canonical_entity,
+                    m.canonical_column, tr, m.notes)
+    return {"saved": len(rows), "skipped": len(body.mappings) - len(rows)}
 
 
 __all__ = ["router"]
