@@ -402,6 +402,46 @@ export function fetchLoan(appId: string): Promise<LoanDetail> {
   return getJSON<LoanDetail>(`/api/accord/loans/${encodeURIComponent(appId)}`)
 }
 
+// ── Platform Studio (admin + super_admin) ────────────────────────────
+export interface PlatformTenant {
+  tenant_id: string
+  name: string
+  plan: string
+  is_active: boolean
+  products: string[]
+  user_count: number
+  created_at: string | null
+}
+export interface PlatformTenantList {
+  is_super_admin: boolean
+  own_tenant: string
+  tenants: PlatformTenant[]
+}
+export interface PlatformTenantDetail extends PlatformTenant {
+  users: { email: string; name: string; role: string }[]
+  mapping_count: number
+  loan_count: number
+  rules: { regulatory: number; agency_guidelines: number; scope: string }
+}
+export interface CreateTenantInput {
+  tenant_id: string
+  name: string
+  plan: string
+  products: string[]
+  admin_email?: string
+  admin_name?: string
+  admin_password?: string
+}
+export function fetchPlatformTenants(): Promise<PlatformTenantList> {
+  return getJSON<PlatformTenantList>('/api/accord/platform-studio/tenants')
+}
+export function fetchPlatformTenant(id: string): Promise<PlatformTenantDetail> {
+  return getJSON<PlatformTenantDetail>(`/api/accord/platform-studio/tenants/${encodeURIComponent(id)}`)
+}
+export function createPlatformTenant(body: CreateTenantInput): Promise<{ ok: boolean; tenant_id: string; admin_created: string | null }> {
+  return postJSON('/api/accord/platform-studio/tenants', body)
+}
+
 // Exam-ready PDF export (CN-EX). Fetches the PDF blob with the Bearer header
 // (a plain <a href> can't carry it) and triggers a browser download.
 export async function exportExamReady(appId: string): Promise<void> {

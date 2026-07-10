@@ -49,6 +49,7 @@ class SignupRequest(BaseModel):
 # Front-line ops roles (processor/closer) work the pipeline; senior_uw is a
 # broad decision-maker; the rest match the original gating.
 ROLE_PERMISSIONS: dict[str, list[str]] = {
+    "super_admin": ["platform_studio", "pipeline", "analytics", "simulation", "audit", "settings"],
     "admin": ["pipeline", "analytics", "simulation", "audit", "settings"],
     "manager": ["pipeline", "analytics", "simulation", "audit"],
     "senior_uw": ["pipeline", "analytics", "simulation", "audit"],

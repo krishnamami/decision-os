@@ -18,6 +18,7 @@ import RegulationTransparency from './pages/RegulationTransparency'
 import RulesSettings from './pages/RulesSettings'
 import ComparisonMode from './pages/ComparisonMode'
 import ImportLoans from './pages/ImportLoans'
+import PlatformStudio from './pages/PlatformStudio'
 import { StaleDataBanner } from './components/DataFreshness'
 import { AuthProvider, useAuth } from './context/AuthContext'
 
@@ -67,6 +68,7 @@ function AppShell() {
 
   // Role → which products this role may open at all.
   const ROLE_PRODUCTS: Record<string, string[]> = {
+    super_admin: ['pipeline', 'analytics', 'simulation', 'audit'],
     admin: ['pipeline', 'analytics', 'simulation', 'audit'],
     manager: ['pipeline', 'analytics', 'simulation', 'audit'],
     senior_uw: ['pipeline', 'analytics', 'simulation', 'audit'],
@@ -119,6 +121,7 @@ function AppShell() {
           {['admin', 'compliance', 'super_admin'].includes(role) && (
             <Route path="/regulation-transparency" element={<RegulationTransparency />} />
           )}
+          {(user?.role === 'admin' || user?.role === 'super_admin') && <Route path="/platform-studio" element={<PlatformStudio />} />}
           {user?.role === 'admin' && <Route path="/settings" element={<Settings />} />}
           {(user?.role === 'admin' || user?.role === 'manager') && <Route path="/settings/import" element={<ImportLoans />} />}
           {(user?.role === 'admin' || user?.role === 'manager') && <Route path="/settings/rules" element={<div className="mx-auto max-w-4xl px-6 py-6"><RulesSettings /></div>} />}
