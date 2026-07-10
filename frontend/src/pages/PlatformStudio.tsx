@@ -38,6 +38,7 @@ export default function PlatformStudio() {
   const [mapperTenant, setMapperTenant] = useState<{ id: string; name: string } | null>(null)
   const [policyTenant, setPolicyTenant] = useState<{ id: string; name: string } | null>(null)
   const [productsTenant, setProductsTenant] = useState<{ id: string; name: string } | null>(null)
+  const [confirmationTenant, setConfirmationTenant] = useState<{ id: string; name: string } | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const notify = (m: string) => { setToast(m); window.setTimeout(() => setToast(null), 2600) }
 
@@ -84,6 +85,18 @@ export default function PlatformStudio() {
           tenantId={policyTenant.id}
           tenantName={policyTenant.name}
           onBack={() => { const id = policyTenant.id; setPolicyTenant(null); load(id) }}
+        />
+      </div>
+    )
+  }
+
+  if (confirmationTenant) {
+    return (
+      <div className="min-h-screen px-6 py-6" style={{ backgroundColor: '#f8f9fa' }}>
+        <OnboardingConfirmation
+          tenantId={confirmationTenant.id}
+          tenantName={confirmationTenant.name}
+          onBack={() => { const id = confirmationTenant.id; setConfirmationTenant(null); load(id) }}
         />
       </div>
     )
@@ -159,7 +172,7 @@ export default function PlatformStudio() {
 
         {/* ── right: tenant detail ── */}
         <div className="min-w-0">
-          {selected ? <TenantDetail tenantId={selected} onConfigureMapping={(id, name) => setMapperTenant({ id, name })} onConfigurePolicy={(id, name) => setPolicyTenant({ id, name })} onConfigureProducts={(id, name) => setProductsTenant({ id, name })} /> : (
+          {selected ? <TenantDetail tenantId={selected} onConfigureMapping={(id, name) => setMapperTenant({ id, name })} onConfigurePolicy={(id, name) => setPolicyTenant({ id, name })} onConfigureProducts={(id, name) => setProductsTenant({ id, name })} onGoLive={(id, name) => setConfirmationTenant({ id, name })} /> : (
             <div className="flex h-full min-h-[40vh] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white text-sm text-slate-400">
               Select a tenant to view details.
             </div>
@@ -187,7 +200,7 @@ export default function PlatformStudio() {
 }
 
 // ── Read-only per-tenant detail panel ──
-function TenantDetail({ tenantId, onConfigureMapping, onConfigurePolicy, onConfigureProducts }: { tenantId: string; onConfigureMapping: (id: string, name: string) => void; onConfigurePolicy: (id: string, name: string) => void; onConfigureProducts: (id: string, name: string) => void }) {
+function TenantDetail({ tenantId, onConfigureMapping, onConfigurePolicy, onConfigureProducts, onGoLive }: { tenantId: string; onConfigureMapping: (id: string, name: string) => void; onConfigurePolicy: (id: string, name: string) => void; onConfigureProducts: (id: string, name: string) => void; onGoLive: (id: string, name: string) => void }) {
   const [detail, setDetail] = useState<PlatformTenantDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
@@ -236,6 +249,10 @@ function TenantDetail({ tenantId, onConfigureMapping, onConfigurePolicy, onConfi
               onClick={() => onConfigureMapping(detail.tenant_id, detail.name)}
               className="rounded-lg bg-[#14532d] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#0f3d22]"
             >Configure Field Mapping →</button>
+            <button
+              onClick={() => onGoLive(detail.tenant_id, detail.name)}
+              className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700"
+            >Go Live ✓</button>
           </div>
         </div>
         <div className="mt-3 flex flex-wrap gap-1.5">
@@ -364,7 +381,7 @@ function CreateTenantWizard({ onClose, onCreated }: {
             {done.admin && <p className="mt-1 text-sm text-slate-500">{done.admin} has been created</p>}
             <div className="mt-6 flex justify-center gap-3">
               <button onClick={() => onCreated(done.id, done.admin, true)} className="rounded-lg bg-[#14532d] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0f3d22]">Configure Field Mapping →</button>
-              <button onClick={() => onCreated(done.id, done.admin, false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">View in Tenant List</button>
+            <button
             </div>
           </div>
         ) : (<>
@@ -1040,3 +1057,192 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
     </label>
   )
 }
+
+// ── Onboarding Confirmation (Section 5 / P19) ────────────────────────────────
+
+type SectionStatus = { complete: boolean; detail: string }
+type OnboardingSummary = {
+  tenant_id: string
+  is_active: boolean
+  ready_for_go_live: boolean
+  sections: {
+    tenant_setup: SectionStatus
+    field_mapper: SectionStatus
+    policy_rules: SectionStatus
+    product_config: SectionStatus
+  }
+}
+type ImportResult = {
+  mapped_count: number
+  unmatched_count: number
+  mapped: Record<string, { value: unknown; source_field: string; transform_rule: string }>
+  unmatched: string[]
+}
+
+function OnboardingConfirmation({ tenantId, tenantName, onBack }: { tenantId: string; tenantName: string; onBack: () => void }) {
+  const [summary, setSummary] = useState<OnboardingSummary | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [goingLive, setGoingLive] = useState(false)
+  const [liveMsg, setLiveMsg] = useState<string | null>(null)
+  const [importJson, setImportJson] = useState('{\n  "loan_amt": 425000,\n  "fico_score": 720,\n  "dti_ratio": 38.5,\n  "ltv_ratio": 85.0\n}')
+  const [importResult, setImportResult] = useState<ImportResult | null>(null)
+  const [importErr, setImportErr] = useState<string | null>(null)
+  const [importLoading, setImportLoading] = useState(false)
+  const [showImport, setShowImport] = useState(false)
+
+  const tok = () => localStorage.getItem('accord_token') ?? ''
+
+  useEffect(() => {
+    fetch(`${BASE}/api/accord/platform-studio/tenants/${tenantId}/onboarding-summary`, {
+      headers: { Authorization: `Bearer ${tok()}` },
+    })
+      .then((r) => r.json())
+      .then((d) => setSummary(d))
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [tenantId])
+
+  async function handleGoLive() {
+    if (!summary?.ready_for_go_live) return
+    setGoingLive(true)
+    try {
+      const r = await fetch(`${BASE}/api/accord/platform-studio/tenants/${tenantId}/go-live`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tok()}` },
+      })
+      const d = await r.json()
+      setLiveMsg(d.status === 'live' ? '🎉 Tenant is now live!' : JSON.stringify(d))
+      setSummary((prev) => prev ? { ...prev, is_active: true } : prev)
+    } catch (e) {
+      setLiveMsg('Error going live')
+    } finally {
+      setGoingLive(false)
+    }
+  }
+
+  async function handleImportTest() {
+    setImportLoading(true)
+    setImportErr(null)
+    setImportResult(null)
+    try {
+      const raw = JSON.parse(importJson)
+      const r = await fetch(`${BASE}/api/accord/platform-studio/tenants/${tenantId}/import-test`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tok()}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ raw }),
+      })
+      const d = await r.json()
+      setImportResult(d)
+    } catch (e) {
+      setImportErr(e instanceof Error ? e.message : 'Parse or network error')
+    } finally {
+      setImportLoading(false)
+    }
+  }
+
+  const SECTION_LABELS: Record<string, string> = {
+    tenant_setup: '1 · Tenant Setup',
+    field_mapper: '2 · Field Mapper',
+    policy_rules: '3 · Policy Rules',
+    product_config: '4 · Product Config',
+  }
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-6">
+      <div className="flex items-center gap-3">
+        <button onClick={onBack} className="text-xs text-slate-400 hover:text-slate-700">← Back</button>
+        <div>
+          <h2 className="text-xl font-bold text-slate-900">{tenantName} — Onboarding Review</h2>
+          <p className="text-xs text-slate-400">{tenantId}</p>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="py-12 text-center text-sm text-slate-400">Loading summary…</div>
+      ) : summary ? (
+        <>
+          <div className="grid grid-cols-2 gap-4">
+            {Object.entries(summary.sections).map(([key, sec]) => (
+              <div key={key} className={`rounded-xl border p-4 ${sec.complete ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
+                <div className="flex items-center gap-2">
+                  <span className={`text-lg ${sec.complete ? 'text-emerald-600' : 'text-amber-500'}`}>{sec.complete ? '✓' : '○'}</span>
+                  <span className="text-sm font-semibold text-slate-800">{SECTION_LABELS[key]}</span>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">{sec.detail}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-semibold text-slate-800">Ready to go live?</div>
+                <div className="text-xs text-slate-400 mt-0.5">
+                  {summary.ready_for_go_live ? 'All sections complete — tenant can be activated.' : 'Complete all sections before activating.'}
+                </div>
+              </div>
+              <button
+                onClick={handleGoLive}
+                disabled={!summary.ready_for_go_live || goingLive || summary.is_active}
+                className="rounded-lg px-5 py-2 text-sm font-semibold text-white disabled:opacity-40 bg-indigo-600 hover:bg-indigo-700 disabled:cursor-not-allowed"
+              >
+                {summary.is_active ? 'Already Live ✓' : goingLive ? 'Activating…' : 'Go Live'}
+              </button>
+            </div>
+            {liveMsg && <div className="mt-3 text-sm font-medium text-emerald-700">{liveMsg}</div>}
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white">
+            <button
+              onClick={() => setShowImport((v) => !v)}
+              className="flex w-full items-center justify-between px-5 py-3 text-sm font-semibold text-slate-700"
+            >
+              <span>Test Import (dry-run)</span>
+              <span className="text-slate-400">{showImport ? '▲' : '▼'}</span>
+            </button>
+            {showImport && (
+              <div className="border-t border-slate-100 px-5 py-4 space-y-3">
+                <p className="text-xs text-slate-400">Paste a sample LOS JSON row. Fields are matched against your field mappings — no data is written.</p>
+                <textarea
+                  className="w-full rounded-lg border border-slate-200 p-3 font-mono text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                  rows={6}
+                  value={importJson}
+                  onChange={(e) => setImportJson(e.target.value)}
+                />
+                <button
+                  onClick={handleImportTest}
+                  disabled={importLoading}
+                  className="rounded-lg bg-slate-800 px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-40"
+                >
+                  {importLoading ? 'Running…' : 'Run Dry-Run Import'}
+                </button>
+                {importErr && <div className="text-xs text-red-600">{importErr}</div>}
+                {importResult && (
+                  <div className="space-y-2">
+                    <div className="flex gap-4 text-xs font-semibold">
+                      <span className="text-emerald-700">✓ {importResult.mapped_count} mapped</span>
+                      {importResult.unmatched_count > 0 && (
+                        <span className="text-amber-600">⚠ {importResult.unmatched_count} unmatched</span>
+                      )}
+                    </div>
+                    <div className="rounded-lg bg-slate-50 p-3 font-mono text-xs text-slate-600 overflow-x-auto">
+                      {Object.entries(importResult.mapped).map(([canon, v]) => (
+                        <div key={canon}><span className="text-emerald-700">{canon}</span> ← <span className="text-slate-400">{v.source_field}</span> = <span className="text-slate-800">{String(v.value)}</span></div>
+                      ))}
+                      {importResult.unmatched.map((u) => (
+                        <div key={u} className="text-amber-600">? {u} (no mapping)</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        <div className="text-sm text-red-600">Failed to load onboarding summary.</div>
+      )}
+    </div>
+  )
+}
+TSEOFcat >> ~/OneDrive/Documents/decision-os/frontend/src/pages/PlatformStudio.tsx << 'TSEOF'
