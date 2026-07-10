@@ -227,15 +227,6 @@ export default function Header() {
               🔄 Comparison
             </NavLink>
           )}
-          {['admin', 'super_admin'].includes(role) && (
-            <NavLink
-              to="/platform-studio"
-              className={({ isActive }) => `-mb-px border-b-2 py-3 text-sm font-medium transition ${isActive ? 'border-[#34D399] text-white' : 'border-transparent text-white/60 hover:text-white'}`}
-            >
-              🛠 Platform Studio
-            </NavLink>
-          )}
-        </nav>
       </div>
     </header>
   )
