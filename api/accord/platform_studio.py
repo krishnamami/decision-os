@@ -819,3 +819,38 @@ async def import_test(tenant_id: str, body: _ImportRow,
 def _utcnow() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
+
+
+# ── Tenant Edit (PATCH) ───────────────────────────────────────────────────────
+class TenantPatch(BaseModel):
+    name: Optional[str] = None
+    plan: Optional[str] = None
+    contact_email: Optional[str] = None
+    los_type: Optional[str] = None
+    programs: Optional[list[str]] = None
+    licensed_states: Optional[list[str]] = None
+    channels: Optional[list[str]] = None
+
+
+@router.patch("/tenants/{tenant_id}")
+async def tenant_update(tenant_id: str, body: TenantPatch,
+                        user: dict = Depends(get_current_user)) -> dict:
+    """Update tenant identity + configuration fields."""
+    _studio_tenant_guard(user, tenant_id)
+    async with _admin_conn() as conn:
+        t = await conn.fetchrow(
+            "SELECT name, plan, settings FROM tenants WHERE tenant_id=$1", tenant_id)
+        if not t:
+            raise HTTPException(404, "Tenant not found")
+        settings = json.loads(t["settings"] or "{}")
+        if body.los_type is not None:     settings["los_type"] = body.los_type
+        if body.programs is not None:     settings["programs"] = body.programs
+        if body.licensed_states is not None: settings["licensed_states"] = body.licensed_states
+        if body.channels is not None:     settings["channels"] = body.channels
+        if body.contact_email is not None: settings["contact_email"] = body.contact_email
+        new_name = body.name.strip() if body.name else t["name"]
+        new_plan = body.plan or t["plan"]
+        await conn.execute(
+            "UPDATE tenants SET name=$1, plan=$2, settings=$3::jsonb WHERE tenant_id=$4",
+            new_name, new_plan, json.dumps(settings), tenant_id)
+    return {"tenant_id": tenant_id, "status": "updated"}

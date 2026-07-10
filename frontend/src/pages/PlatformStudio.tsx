@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
-  fetchPlatformTenants, fetchPlatformTenant, createPlatformTenant,
+  fetchPlatformTenants, fetchPlatformTenant, createPlatformTenant, updatePlatformTenant,
   fetchFieldMapperCanonical, suggestFieldMappings, saveFieldMappings,
   fetchPolicyRules, savePolicyRules, nlpExtractPolicy,
   fetchPlatformProducts, createPlatformProduct, updatePlatformProduct,
@@ -39,6 +39,7 @@ export default function PlatformStudio() {
   const [policyTenant, setPolicyTenant] = useState<{ id: string; name: string } | null>(null)
   const [productsTenant, setProductsTenant] = useState<{ id: string; name: string } | null>(null)
   const [confirmationTenant, setConfirmationTenant] = useState<{ id: string; name: string } | null>(null)
+  const [editTenant, setEditTenant] = useState<PlatformTenantDetail | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const notify = (m: string) => { setToast(m); window.setTimeout(() => setToast(null), 2600) }
 
@@ -172,7 +173,7 @@ export default function PlatformStudio() {
 
         {/* ── right: tenant detail ── */}
         <div className="min-w-0">
-          {selected ? <TenantDetail tenantId={selected} onConfigureMapping={(id, name) => setMapperTenant({ id, name })} onConfigurePolicy={(id, name) => setPolicyTenant({ id, name })} onConfigureProducts={(id, name) => setProductsTenant({ id, name })} onGoLive={(id, name) => setConfirmationTenant({ id, name })} /> : (
+          {selected ? <TenantDetail tenantId={selected} onConfigureMapping={(id, name) => setMapperTenant({ id, name })} onConfigurePolicy={(id, name) => setPolicyTenant({ id, name })} onConfigureProducts={(id, name) => setProductsTenant({ id, name })} onGoLive={(id, name) => setConfirmationTenant({ id, name })} onEdit={(d) => setEditTenant(d)} /> : (
             <div className="flex h-full min-h-[40vh] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white text-sm text-slate-400">
               Select a tenant to view details.
             </div>
@@ -191,6 +192,7 @@ export default function PlatformStudio() {
           }}
         />
       )}
+      {editTenant && <EditTenantModal detail={editTenant} onClose={() => setEditTenant(null)} onSaved={() => { const id = editTenant.tenant_id; setEditTenant(null); load(id) }} />}
 
       {toast && (
         <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>
@@ -200,7 +202,7 @@ export default function PlatformStudio() {
 }
 
 // ── Read-only per-tenant detail panel ──
-function TenantDetail({ tenantId, onConfigureMapping, onConfigurePolicy, onConfigureProducts, onGoLive }: { tenantId: string; onConfigureMapping: (id: string, name: string) => void; onConfigurePolicy: (id: string, name: string) => void; onConfigureProducts: (id: string, name: string) => void; onGoLive: (id: string, name: string) => void }) {
+function TenantDetail({ tenantId, onConfigureMapping, onConfigurePolicy, onConfigureProducts, onGoLive, onEdit }: { tenantId: string; onConfigureMapping: (id: string, name: string) => void; onConfigurePolicy: (id: string, name: string) => void; onConfigureProducts: (id: string, name: string) => void; onGoLive: (id: string, name: string) => void; onEdit: (d: PlatformTenantDetail) => void }) {
   const [detail, setDetail] = useState<PlatformTenantDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
@@ -240,6 +242,7 @@ function TenantDetail({ tenantId, onConfigureMapping, onConfigurePolicy, onConfi
             <button
               onClick={() => onConfigureProducts(detail.tenant_id, detail.name)}
               className="rounded-lg border border-[#14532d] px-3 py-1.5 text-xs font-semibold text-[#14532d] hover:bg-[#14532d]/5"
+            <button onClick={() => onEdit(detail)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">Edit Tenant</button>
             >Loan Products →</button>
             <button
               onClick={() => onConfigurePolicy(detail.tenant_id, detail.name)}
@@ -1243,6 +1246,172 @@ function OnboardingConfirmation({ tenantId, tenantName, onBack }: { tenantId: st
       ) : (
         <div className="text-sm text-red-600">Failed to load onboarding summary.</div>
       )}
+    </div>
+  )
+}
+
+// ── Edit Tenant Modal ─────────────────────────────────────────────────────────
+const PLANS = ['starter', 'growth', 'business', 'enterprise']
+const LOS_TYPES = ['encompass', 'bytepro', 'openclose', 'custom']
+const ALL_PROGRAMS = ['CONVENTIONAL', 'FHA', 'VA', 'JUMBO', 'NON_QM']
+const ALL_CHANNELS = ['retail', 'wholesale', 'correspondent', 'consumer_direct']
+const ALL_STATES = [
+  'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA',
+  'KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ',
+  'NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT',
+  'VA','WA','WV','WI','WY','DC',
+]
+const STATE_NAMES: Record<string, string> = {
+  AL:'Alabama',AK:'Alaska',AZ:'Arizona',AR:'Arkansas',CA:'California',
+  CO:'Colorado',CT:'Connecticut',DE:'Delaware',FL:'Florida',GA:'Georgia',
+  HI:'Hawaii',ID:'Idaho',IL:'Illinois',IN:'Indiana',IA:'Iowa',KS:'Kansas',
+  KY:'Kentucky',LA:'Louisiana',ME:'Maine',MD:'Maryland',MA:'Massachusetts',
+  MI:'Michigan',MN:'Minnesota',MS:'Mississippi',MO:'Missouri',MT:'Montana',
+  NE:'Nebraska',NV:'Nevada',NH:'New Hampshire',NJ:'New Jersey',NM:'New Mexico',
+  NY:'New York',NC:'North Carolina',ND:'North Dakota',OH:'Ohio',OK:'Oklahoma',
+  OR:'Oregon',PA:'Pennsylvania',RI:'Rhode Island',SC:'South Carolina',
+  SD:'South Dakota',TN:'Tennessee',TX:'Texas',UT:'Utah',VT:'Vermont',
+  VA:'Virginia',WA:'Washington',WV:'West Virginia',WI:'Wisconsin',WY:'Wyoming',DC:'D.C.',
+}
+
+function EditTenantModal({ detail, onClose, onSaved }: {
+  detail: PlatformTenantDetail
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [form, setForm] = useState({
+    name: detail.name,
+    plan: detail.plan,
+    contact_email: detail.contact_email ?? '',
+    los_type: detail.los_type ?? 'encompass',
+    programs: [...detail.programs],
+    licensed_states: [...detail.licensed_states],
+    channels: [...detail.channels],
+  })
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [stateSearch, setStateSearch] = useState('')
+
+  const set = (p: Partial<typeof form>) => setForm((f) => ({ ...f, ...p }))
+  const toggle = (arr: string[], v: string) =>
+    arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]
+
+  const filteredStates = ALL_STATES.filter((s) => {
+    const q = stateSearch.toLowerCase()
+    return s.toLowerCase().includes(q) || (STATE_NAMES[s] ?? '').toLowerCase().includes(q)
+  })
+
+  async function save() {
+    if (!form.name.trim()) { setErr('Lender name is required'); return }
+    setSaving(true); setErr(null)
+    try {
+      await updatePlatformTenant(detail.tenant_id, {
+        name: form.name.trim(),
+        plan: form.plan,
+        contact_email: form.contact_email,
+        los_type: form.los_type,
+        programs: form.programs,
+        licensed_states: form.licensed_states,
+        channels: form.channels,
+      })
+      onSaved()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-2xl rounded-2xl bg-white shadow-xl overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <h3 className="text-lg font-bold text-slate-900">Edit Tenant — {detail.tenant_id}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">✕</button>
+        </div>
+        <div className="px-6 py-5 space-y-4">
+          {/* Name + Plan */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs font-semibold text-slate-600">Lender Name *</label>
+              <input value={form.name} onChange={(e) => set({ name: e.target.value })}
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#14532d]/30" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-600">Plan</label>
+              <select value={form.plan} onChange={(e) => set({ plan: e.target.value })}
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#14532d]/30">
+                {PLANS.map((p) => <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>)}
+              </select>
+            </div>
+          </div>
+          {/* Contact + LOS */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs font-semibold text-slate-600">Contact Email</label>
+              <input value={form.contact_email} onChange={(e) => set({ contact_email: e.target.value })}
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#14532d]/30" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-600">LOS Type</label>
+              <select value={form.los_type} onChange={(e) => set({ los_type: e.target.value })}
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#14532d]/30">
+                {LOS_TYPES.map((l) => <option key={l} value={l}>{l.charAt(0).toUpperCase() + l.slice(1)}</option>)}
+              </select>
+            </div>
+          </div>
+          {/* Programs */}
+          <div>
+            <label className="text-xs font-semibold text-slate-600">Loan Programs</label>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {ALL_PROGRAMS.map((p) => (
+                <label key={p} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                  <input type="checkbox" checked={form.programs.includes(p)}
+                    onChange={() => set({ programs: toggle(form.programs, p) })} />
+                  {p.replace('_', ' ')}
+                </label>
+              ))}
+            </div>
+          </div>
+          {/* Channels */}
+          <div>
+            <label className="text-xs font-semibold text-slate-600">Channels</label>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {ALL_CHANNELS.map((c) => (
+                <label key={c} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                  <input type="checkbox" checked={form.channels.includes(c)}
+                    onChange={() => set({ channels: toggle(form.channels, c) })} />
+                  {c.replace('_', ' ')}
+                </label>
+              ))}
+            </div>
+          </div>
+          {/* States */}
+          <div>
+            <label className="text-xs font-semibold text-slate-600">Licensed States ({form.licensed_states.length})</label>
+            <input value={stateSearch} onChange={(e) => setStateSearch(e.target.value)}
+              placeholder="Search by state name or abbreviation…"
+              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#14532d]/30" />
+            <div className="mt-2 grid grid-cols-6 gap-1 max-h-40 overflow-y-auto">
+              {filteredStates.map((s) => (
+                <label key={s} className="flex items-center gap-1 text-xs cursor-pointer">
+                  <input type="checkbox" checked={form.licensed_states.includes(s)}
+                    onChange={() => set({ licensed_states: toggle(form.licensed_states, s) })} />
+                  <span title={STATE_NAMES[s]}>{s}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          {err && <div className="text-sm text-red-600">{err}</div>}
+        </div>
+        <div className="flex justify-end gap-3 border-t border-slate-100 px-6 py-4">
+          <button onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
+          <button onClick={save} disabled={saving}
+            className="rounded-lg bg-[#14532d] px-5 py-2 text-sm font-semibold text-white hover:bg-[#0f3d22] disabled:opacity-40">
+            {saving ? 'Saving…' : 'Save Changes'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

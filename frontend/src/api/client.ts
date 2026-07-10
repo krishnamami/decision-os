@@ -456,6 +456,9 @@ export function fetchPlatformTenants(): Promise<PlatformTenantList> {
 export function fetchPlatformTenant(id: string): Promise<PlatformTenantDetail> {
   return getJSON<PlatformTenantDetail>(`/api/accord/platform-studio/tenants/${encodeURIComponent(id)}`)
 }
+export function updatePlatformTenant(id: string, body: Partial<CreateTenantInput>): Promise<{ status: string }> {
+  return patchJSON(`/api/accord/platform-studio/tenants/${encodeURIComponent(id)}`, body)
+}
 export function createPlatformTenant(body: CreateTenantInput): Promise<CreateTenantResult> {
   return postJSON('/api/accord/platform-studio/tenants', body)
 }
