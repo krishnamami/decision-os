@@ -81,7 +81,7 @@ function AppShell() {
   // Gating follows the EFFECTIVE user (so impersonation shows their access).
   const role = effectiveUser?.role ?? 'viewer'
   const allowed = (product: string) =>
-    (ROLE_PRODUCTS[role] ?? ['pipeline']).includes(product) && (product === 'pipeline' || hasProduct(product))
+    (ROLE_PRODUCTS[role] ?? ['pipeline']).includes(product) && (role === 'super_admin' || product === 'pipeline' || hasProduct(product))
 
   // A product the user can't reach (role or plan) redirects to Pipeline.
   const guard = (product: string, el: JSX.Element) => (allowed(product) ? el : <Navigate to="/pipeline" replace />)
@@ -124,7 +124,7 @@ function AppShell() {
           {(user?.role === 'admin' || user?.role === 'super_admin') && <Route path="/platform-studio" element={<PlatformStudio />} />}
           {user?.role === 'admin' && <Route path="/settings" element={<Settings />} />}
           {(user?.role === 'admin' || user?.role === 'manager') && <Route path="/settings/import" element={<ImportLoans />} />}
-          {(user?.role === 'admin' || user?.role === 'manager') && <Route path="/settings/rules" element={<div className="mx-auto max-w-4xl px-6 py-6"><RulesSettings /></div>} />}
+          {(user?.role === 'admin' || user?.role === 'manager' || user?.role === 'super_admin') && <Route path="/settings/rules" element={<div className="mx-auto max-w-4xl px-6 py-6"><RulesSettings /></div>} />}
           {(user?.role === 'admin' || user?.role === 'manager') && <Route path="/comparison" element={<ComparisonMode />} />}
           {/* Demo walkthrough — admin-only deep links into the real pages, with
               the DEMO watermark on. See pages/DemoMode.tsx + docs/DEMO_SCRIPT.md. */}

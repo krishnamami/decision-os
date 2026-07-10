@@ -86,7 +86,7 @@ export default function Header() {
   // Admin/manager use the Dashboard as their Pipeline landing (effective role,
   // so impersonating a non-manager keeps the real /pipeline link).
   const isMgr = ['admin', 'manager', 'super_admin'].includes(effRole)
-  const planAllows = (product: string) => product === 'pipeline' || product === 'data_health' || hasProduct(product)
+  const planAllows = (product: string) => role === 'super_admin' || product === 'pipeline' || product === 'data_health' || hasProduct(product)
   const initials = (user?.name || '?').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()
   const canCompare = role === 'admin' || role === 'manager'
 
