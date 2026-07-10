@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   fetchPlatformTenants, fetchPlatformTenant, createPlatformTenant,
   fetchFieldMapperCanonical, suggestFieldMappings, saveFieldMappings,
-  fetchPolicyRules, savePolicyRules,
+  fetchPolicyRules, savePolicyRules, nlpExtractPolicy,
   type PlatformTenantList, type PlatformTenantDetail, type CreateTenantInput,
-  type MappingSuggestion, type PolicyRule, type AssignmentRule,
+  type MappingSuggestion, type PolicyRule, type AssignmentRule, type ExtractedRule,
 } from '../api/client'
 
 const PLAN_BADGE: Record<string, string> = {
@@ -649,6 +649,12 @@ function PolicyRules({ tenantId, tenantName, onBack }: { tenantId: string; tenan
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  // Mode B (plain-English NLP)
+  const [mode, setMode] = useState<'form' | 'nlp'>('form')
+  const [policyText, setPolicyText] = useState('')
+  const [extracted, setExtracted] = useState<(ExtractedRule & { apply: boolean })[] | null>(null)
+  const [extMethod, setExtMethod] = useState(''); const [extModel, setExtModel] = useState('')
+  const [extracting, setExtracting] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -683,6 +689,34 @@ function PolicyRules({ tenantId, tenantName, onBack }: { tenantId: string; tenan
     finally { setSaving(false) }
   }
 
+  async function extract() {
+    if (!policyText.trim() || extracting) return
+    setExtracting(true); setErr(null)
+    try {
+      const res = await nlpExtractPolicy(tenantId, policyText)
+      setExtracted(res.extracted.map((e) => ({ ...e, apply: true })))
+      setExtMethod(res.method); setExtModel(res.model)
+    } catch (e) { setErr(e instanceof Error ? e.message.replace(/^\d+\s+\w+\s+—\s+/, '') : String(e)) }
+    finally { setExtracting(false) }
+  }
+  async function applyExtracted() {
+    if (!extracted || saving) return
+    const chosen = extracted.filter((e) => e.apply)
+    if (!chosen.length) { setErr('Select at least one rule to apply.'); return }
+    setValues((p) => { const n = { ...p }; chosen.forEach((e) => { n[e.rule_key] = e.extracted_value }); return n })
+    setSaving(true); setErr(null)
+    try {
+      const res = await savePolicyRules(tenantId, {
+        rules: chosen.map((e) => ({ rule_key: e.rule_key, rule_type: e.rule_key,
+          overlay_value: e.extracted_value, direction: e.is_stricter ? 'stricter' : 'looser' })),
+      })
+      setToast(`Policy rules saved for ${tenantName} (${res.saved_rules})`)
+      window.setTimeout(() => setToast(null), 2600)
+      setExtracted(null); setPolicyText('')
+    } catch (e) { setErr(e instanceof Error ? e.message.replace(/^\d+\s+\w+\s+—\s+/, '') : String(e)) }
+    finally { setSaving(false) }
+  }
+
   if (loading) return <div className="p-12 text-center text-slate-400">Loading policy rules…</div>
   if (err && !rules) return <Card><div className="py-8 text-center text-sm text-red-600">{err}</div></Card>
   if (!rules) return null
@@ -696,6 +730,14 @@ function PolicyRules({ tenantId, tenantName, onBack }: { tenantId: string; tenan
       <h1 className="text-2xl font-semibold text-slate-900">Policy Rules — {tenantName}</h1>
       <p className="mb-4 text-sm text-slate-500">Set tenant overlays against agency defaults. Stricter overlays tighten eligibility.</p>
 
+      <div className="mb-4 inline-flex rounded-lg border border-slate-200 bg-white p-1">
+        {([['form', '📋 Structured Form'], ['nlp', '💬 Plain English']] as const).map(([m, label]) => (
+          <button key={m} onClick={() => setMode(m)}
+            className={`rounded-md px-4 py-1.5 text-sm font-medium ${mode === m ? 'bg-[#14532d] text-white' : 'text-slate-500 hover:text-slate-700'}`}>{label}</button>
+        ))}
+      </div>
+
+      {mode === 'form' ? (<>
       {Object.entries(byCat).map(([cat, rs]) => (
         <Card key={cat} title={CAT_LABEL[cat] ?? pretty(cat)} className="mb-4">
           <div className="space-y-5">
@@ -757,6 +799,57 @@ function PolicyRules({ tenantId, tenantName, onBack }: { tenantId: string; tenan
           <button onClick={save} disabled={saving} className="rounded-lg bg-[#14532d] px-5 py-2 text-sm font-semibold text-white hover:bg-[#0f3d22] disabled:opacity-50">{saving ? 'Saving…' : 'Save Policy Rules'}</button>
         </div>
       </div>
+      </>) : (<>
+        {!extracted ? (
+          <Card>
+            <div className="mb-2 text-sm font-semibold text-slate-700">Describe your credit policy in plain English. I'll extract the rules automatically.</div>
+            <textarea value={policyText} onChange={(e) => setPolicyText(e.target.value)} rows={7}
+              placeholder={"We don't lend below 640 FICO.\nOur DTI cap is 45% back-end.\nWe require 3 months reserves.\nFraud scores above 0.70 go to senior review.\nMaximum LTV on purchases is 95%."}
+              className="w-full rounded-md border border-slate-200 p-3 text-sm focus:border-[#14532d] focus:outline-none" />
+            {err && <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">{err}</div>}
+            <button onClick={extract} disabled={!policyText.trim() || extracting}
+              className="mt-4 rounded-lg bg-[#14532d] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0f3d22] disabled:opacity-50">
+              {extracting ? 'Asking Claude…' : 'Extract Rules'}</button>
+          </Card>
+        ) : (
+          <Card>
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-sm text-slate-700">Extracted <span className="font-semibold">{extracted.length}</span> rule{extracted.length === 1 ? '' : 's'}</div>
+              <span className="text-[11px] text-slate-400">{extMethod === 'claude' ? `🤖 Claude ${extModel}` : '🔧 Regex extraction'}</span>
+            </div>
+            {extracted.length === 0 ? (
+              <div className="py-6 text-center text-sm text-slate-400">No rules found in that text. Try again with explicit thresholds.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-[12px]">
+                  <thead><tr className="border-b border-slate-100 text-[9px] uppercase tracking-wide text-slate-400">
+                    <th className="px-2 py-2">Rule</th><th className="px-2 py-2">Value</th><th className="px-2 py-2">Conf</th><th className="px-2 py-2">Stricter?</th><th className="px-2 py-2">Apply</th>
+                  </tr></thead>
+                  <tbody>
+                    {extracted.map((e, i) => (
+                      <tr key={e.rule_key} className={`border-b border-slate-50 ${e.apply ? '' : 'opacity-50'}`}>
+                        <td className="px-2 py-2 font-medium text-slate-800">{e.label}<div className="text-[10px] text-slate-400" title={e.reasoning}>{e.reasoning.slice(0, 40)}</div></td>
+                        <td className="px-2 py-2 font-semibold text-slate-700">{e.extracted_value}{e.unit}</td>
+                        <td className="px-2 py-2">{Math.round(e.confidence * 100)}%</td>
+                        <td className="px-2 py-2">{e.is_stricter ? <span className="text-emerald-700">✓ Yes</span> : <span className="text-amber-600">Looser</span>}</td>
+                        <td className="px-2 py-2"><input type="checkbox" checked={e.apply}
+                          onChange={(ev) => setExtracted((rs) => rs!.map((r, k) => k === i ? { ...r, apply: ev.target.checked } : r))} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {err && <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">{err}</div>}
+            <div className="mt-4 flex justify-between">
+              <button onClick={() => { setExtracted(null); setPolicyText('') }} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">← Try again</button>
+              <button onClick={applyExtracted} disabled={saving || extracted.filter((e) => e.apply).length === 0}
+                className="rounded-lg bg-[#14532d] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0f3d22] disabled:opacity-50">
+                {saving ? 'Saving…' : `Apply Selected Rules (${extracted.filter((e) => e.apply).length})`}</button>
+            </div>
+          </Card>
+        )}
+      </>)}
       {toast && <div className="fixed bottom-16 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>}
     </div>
   )

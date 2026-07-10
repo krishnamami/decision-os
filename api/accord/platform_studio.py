@@ -541,4 +541,112 @@ async def policy_rules_save(tenant_id: str, body: PolicyRulesBody,
     return {"saved_rules": saved}
 
 
+# ── Policy Rules Mode B: plain-English NLP extraction ──
+def _rule_unit(cat: str) -> str:
+    return "%" if cat in ("dti", "ltv") else " months" if cat == "reserves" else "" if cat == "credit" else " (0-1)"
+
+
+_KNOWN_BY_KEY = {r[0]: r for r in KNOWN_RULES}   # rule_key -> full tuple
+
+# regex fallback: keyword -> capture the number that follows
+_HEUR_PATTERNS = [
+    ('credit_min_score', r'(?:fico|credit\s*score)[^\d]{0,20}(\d{3})'),
+    ('dti_back_max', r'dti[^\d]{0,20}(\d{2,3}(?:\.\d+)?)'),
+    ('reserves_months_required', r'(\d{1,2})\s*(?:months?|mo)\s+(?:of\s+)?reserves|reserves[^\d]{0,20}(\d{1,2})'),
+    ('fraud_score_threshold', r'fraud[^\d]{0,25}(0?\.\d+)'),
+    ('ltv_max_purchase', r'ltv[^\d]{0,25}(\d{2,3}(?:\.\d+)?)'),
+]
+
+
+class NlpExtractBody(BaseModel):
+    policy_text: str
+
+
+def _enrich_extraction(items: Any) -> list[dict]:
+    """Keep only KNOWN rule_keys, coerce value/confidence, recompute is_stricter
+    server-side, attach agency_default/label/unit."""
+    out = []
+    for it in (items or []):
+        if not isinstance(it, dict):
+            continue
+        kr = _KNOWN_BY_KEY.get(it.get("rule_key"))
+        if not kr:
+            continue
+        try:
+            val = float(it.get("extracted_value"))
+        except (TypeError, ValueError):
+            continue
+        try:
+            conf = max(0.0, min(1.0, float(it.get("confidence", 0))))
+        except (TypeError, ValueError):
+            conf = 0.0
+        rk, cat, default = kr[0], kr[1], kr[2]
+        out.append({
+            "rule_key": rk, "extracted_value": val, "confidence": round(conf, 2),
+            "reasoning": str(it.get("reasoning") or "")[:200],
+            "is_stricter": _is_stricter(rk, val, default),   # server-side, not the model's
+            "agency_default": default, "label": kr[5], "unit": _rule_unit(cat)})
+    return out
+
+
+def _heuristic_extract(policy_text: str) -> list[dict]:
+    t = policy_text.lower()
+    found: dict[str, float] = {}
+    for rk, pat in _HEUR_PATTERNS:
+        m = re.search(pat, t)
+        if m:
+            num = next((g for g in m.groups() if g), None)
+            if num:
+                try:
+                    found.setdefault(rk, float(num))
+                except ValueError:
+                    pass
+    return [{"rule_key": rk, "extracted_value": v, "confidence": 0.70,
+             "reasoning": f"Keyword match for {rk}"} for rk, v in found.items()]
+
+
+async def _claude_extract(policy_text: str) -> Optional[list]:
+    if not os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        return None
+    try:
+        from anthropic import AsyncAnthropic
+        defs = [{"key": r[0], "label": r[5], "agency_default": r[2], "unit": _rule_unit(r[1])} for r in KNOWN_RULES]
+        user_msg = (
+            "Extract lending policy rules from this text. Return a JSON array only.\n\n"
+            f"TEXT: {policy_text}\n\n"
+            f"KNOWN RULE KEYS (extract only these):\n{json.dumps([r[0] for r in KNOWN_RULES])}\n\n"
+            f"RULE DEFINITIONS:\n{json.dumps(defs)}\n\n"
+            'Return JSON array:\n[{"rule_key":"dti_back_max","extracted_value":45.0,"confidence":0.95,'
+            '"reasoning":"Text says DTI cap is 45%","is_stricter":true}]\n\n'
+            "Rules:\n- Only extract rules explicitly mentioned\n- Do not guess or infer missing rules\n"
+            "- confidence: 0.95 if explicit, 0.75 if implied\n"
+            "- is_stricter: true if value tightens the agency default, false if loosens\n"
+            "- Return [] if no rules found")
+        resp = await AsyncAnthropic().messages.create(
+            model=_FIELD_MAP_MODEL, max_tokens=2048,
+            system="You are a mortgage lending policy analyst. Extract lender policy rules from plain "
+                   "English text. Return JSON only.",
+            messages=[{"role": "user", "content": user_msg}])
+        text = "".join(getattr(b, "text", "") for b in resp.content)
+        i, j = text.find("["), text.rfind("]")
+        return json.loads(text[i:j + 1]) if i >= 0 and j > i else None
+    except Exception as exc:  # noqa: BLE001 — degrade to regex
+        logger.warning("[policy-nlp] Claude failed, using regex: %s", str(exc)[:160])
+        return None
+
+
+@router.post("/tenants/{tenant_id}/policy-rules/nlp-extract")
+async def policy_rules_nlp_extract(tenant_id: str, body: NlpExtractBody,
+                                   user: dict = Depends(get_current_user)) -> dict:
+    """Extract policy rules from plain-English text (Claude; regex fallback)."""
+    _studio_tenant_guard(user, tenant_id)
+    text = (body.policy_text or "").strip()
+    if not text:
+        raise HTTPException(400, "policy_text is required")
+    claude = await _claude_extract(text)
+    if claude is not None:
+        return {"extracted": _enrich_extraction(claude), "method": "claude", "model": _FIELD_MAP_MODEL}
+    return {"extracted": _enrich_extraction(_heuristic_extract(text)), "method": "heuristic", "model": "regex"}
+
+
 __all__ = ["router"]

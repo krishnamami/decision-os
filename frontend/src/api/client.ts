@@ -498,6 +498,15 @@ export function fetchPolicyRules(id: string): Promise<PolicyRulesData> {
 export function savePolicyRules(id: string, body: { rules: Array<{ rule_key: string; rule_type: string; overlay_value: number | null; direction: string }> }): Promise<{ saved_rules: number }> {
   return postJSON(`/api/accord/platform-studio/tenants/${encodeURIComponent(id)}/policy-rules`, body)
 }
+export interface ExtractedRule {
+  rule_key: string; extracted_value: number; confidence: number
+  reasoning: string; is_stricter: boolean
+  agency_default: number | null; label: string; unit: string
+}
+export interface NlpExtractResult { extracted: ExtractedRule[]; method: 'claude' | 'heuristic'; model: string }
+export function nlpExtractPolicy(id: string, policy_text: string): Promise<NlpExtractResult> {
+  return postJSON(`/api/accord/platform-studio/tenants/${encodeURIComponent(id)}/policy-rules/nlp-extract`, { policy_text })
+}
 
 // Exam-ready PDF export (CN-EX). Fetches the PDF blob with the Bearer header
 // (a plain <a href> can't carry it) and triggers a browser download.
