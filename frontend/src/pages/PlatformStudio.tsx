@@ -98,6 +98,9 @@ export default function PlatformStudio() {
           tenantId={confirmationTenant.id}
           tenantName={confirmationTenant.name}
           onBack={() => { const id = confirmationTenant.id; setConfirmationTenant(null); load(id) }}
+          onEditMapping={() => { const t = confirmationTenant; setConfirmationTenant(null); setMapperTenant({ id: t.id, name: t.name }) }}
+          onEditPolicy={() => { const t = confirmationTenant; setConfirmationTenant(null); setPolicyTenant({ id: t.id, name: t.name }) }}
+          onEditProducts={() => { const t = confirmationTenant; setConfirmationTenant(null); setProductsTenant({ id: t.id, name: t.name }) }}
         />
       </div>
     )
@@ -1189,7 +1192,7 @@ type ImportResult = {
 
 const BASE = import.meta.env.VITE_API_URL ?? ""
 
-function OnboardingConfirmation({ tenantId, tenantName, onBack }: { tenantId: string; tenantName: string; onBack: () => void }) {
+function OnboardingConfirmation({ tenantId, tenantName, onBack, onEditMapping, onEditPolicy, onEditProducts }: { tenantId: string; tenantName: string; onBack: () => void; onEditMapping?: () => void; onEditPolicy?: () => void; onEditProducts?: () => void }) {
   const [summary, setSummary] = useState<OnboardingSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [goingLive, setGoingLive] = useState(false)
@@ -1214,7 +1217,35 @@ function OnboardingConfirmation({ tenantId, tenantName, onBack }: { tenantId: st
       .then((d) => setSummary(d))
       .catch(() => {})
       .finally(() => setLoading(false))
-    fetchSavedMappings(tenantId).then((d) => setSavedMaps(d.mappings)).catch(() => {})
+    fetchSavedMappings(tenantId).then((d) => {
+      setSavedMaps(d.mappings)
+      // Auto-build dry-run payload from tenant's actual source fields
+      if (d.mappings.length > 0) {
+        const SAMPLE_VALUES: Record<string, unknown> = {
+          loan_amount: 425000, loan_amt: 425000, amount: 425000,
+          fico_score: 720, credit_score: 720, mid_score: 720, score: 720,
+          back_end_dti: 38.5, dti: 38.5, dti_ratio: 38.5, dti_back: 38.5,
+          front_end_dti: 24.0, dti_front: 24.0,
+          ltv: 85.0, ltv_ratio: 85.0, loan_to_value: 85.0,
+          first_name: 'John', last_name: 'Smith',
+          annual_income: 95000, base_salary: 95000, income: 95000,
+          monthly_income: 7917, qualifying_income: 7917,
+          purchase_price: 500000, appraised_value: 510000,
+          loan_type: 'Conventional', loan_purpose: 'purchase',
+          property_state: 'CA', property_zip: '90210', property_type: 'SFR',
+          occupancy_type: 'primary_residence', occupancy: 'primary_residence',
+          employer_name: 'Acme Corp', years_employed: 5,
+          aus_recommendation: 'APPROVE/ELIGIBLE',
+          interest_rate: 6.875, amortization_type: 'fixed',
+        }
+        const payload: Record<string, unknown> = {}
+        d.mappings.slice(0, 15).forEach((m) => {
+          const sf = m.source_field
+          payload[sf] = SAMPLE_VALUES[sf] ?? SAMPLE_VALUES[sf.toLowerCase()] ?? `sample_${sf}`
+        })
+        setImportJson(JSON.stringify(payload, null, 2))
+      }
+    }).catch(() => {})
     fetchPolicyRules(tenantId).then((d) => setSavedRules(d.rules.filter(r => r.overlay_value !== null))).catch(() => {})
     fetchPlatformProducts(tenantId).then((d) => setSavedProducts(d.products)).catch(() => {})
   }, [tenantId])
@@ -1290,7 +1321,12 @@ function OnboardingConfirmation({ tenantId, tenantName, onBack }: { tenantId: st
                     <span className="text-sm font-semibold text-slate-800">{SECTION_LABELS[key]}</span>
                     <span className="text-xs text-slate-400">{sec.detail}</span>
                   </div>
-                  <span className="text-slate-400 text-xs">{expandSection === key ? '▲' : '▼'}</span>
+                  <div className="flex items-center gap-3">
+                    {key === 'field_mapper' && onEditMapping && <button onClick={(e) => { e.stopPropagation(); onEditMapping() }} className="text-xs text-emerald-700 hover:underline">Edit →</button>}
+                    {key === 'policy_rules' && onEditPolicy && <button onClick={(e) => { e.stopPropagation(); onEditPolicy() }} className="text-xs text-emerald-700 hover:underline">Edit →</button>}
+                    {key === 'product_config' && onEditProducts && <button onClick={(e) => { e.stopPropagation(); onEditProducts() }} className="text-xs text-emerald-700 hover:underline">Edit →</button>}
+                    <span className="text-slate-400 text-xs">{expandSection === key ? '▲' : '▼'}</span>
+                  </div>
                 </button>
                 {expandSection === key && (
                   <div className="border-t border-emerald-100 px-4 py-3">
@@ -1374,7 +1410,7 @@ function OnboardingConfirmation({ tenantId, tenantName, onBack }: { tenantId: st
               onClick={() => setShowImport((v) => !v)}
               className="flex w-full items-center justify-between px-5 py-3 text-sm font-semibold text-slate-700"
             >
-              <span>Test Import (dry-run)</span>
+              <span>Validate Field Mappings</span>
               <span className="text-slate-400">{showImport ? '▲' : '▼'}</span>
             </button>
             {showImport && (
