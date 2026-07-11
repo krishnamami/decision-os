@@ -175,7 +175,7 @@ export default function RulesSettings() {
       console.log('overlay_rules from API:', d.overlay_rules)
       console.log('tenant rules before merge:', d.tenant?.rules)
       if (d.overlay_rules && Object.keys(d.overlay_rules).length > 0) {
-        const overlayMerged = { ...(d.tenant?.rules || {}) }
+        const overlayMerged = JSON.parse(JSON.stringify(d.tenant?.rules || {}))
         const om = d.overlay_rules as Record<string, number>
         // Map overlay rule_keys to tenant_rules JSONB paths
         const KEY_MAP: Record<string, [string, string]> = {
@@ -200,6 +200,7 @@ export default function RulesSettings() {
           }
         })
         const merged = { ...d, tenant: d.tenant ? { ...d.tenant, rules: overlayMerged } : d.tenant }
+        console.log('overlayMerged result:', overlayMerged)
         setData(merged); setDraft(overlayMerged)
       } else {
         setData(d); setDraft(d.tenant?.rules || {})
