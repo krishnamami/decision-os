@@ -35,7 +35,7 @@ export default function PlatformStudio() {
   const [err, setErr] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
-  const [mapperTenant, setMapperTenant] = useState<{ id: string; name: string } | null>(null)
+  const [mapperTenant, setMapperTenant] = useState<{ id: string; name: string; losType?: string } | null>(null)
   const [policyTenant, setPolicyTenant] = useState<{ id: string; name: string } | null>(null)
   const [productsTenant, setProductsTenant] = useState<{ id: string; name: string } | null>(null)
   const [confirmationTenant, setConfirmationTenant] = useState<{ id: string; name: string } | null>(null)
@@ -73,6 +73,7 @@ export default function PlatformStudio() {
         <FieldMapper
           tenantId={mapperTenant.id}
           tenantName={mapperTenant.name}
+          losType={mapperTenant.losType}
           onBack={() => { const id = mapperTenant.id; setMapperTenant(null); load(id) }}
         />
       </div>
@@ -176,7 +177,7 @@ export default function PlatformStudio() {
 
         {/* ── right: tenant detail ── */}
         <div className="min-w-0">
-          {selected ? <TenantDetail tenantId={selected} onConfigureMapping={(id, name) => setMapperTenant({ id, name })} onConfigurePolicy={(id, name) => setPolicyTenant({ id, name })} onConfigureProducts={(id, name) => setProductsTenant({ id, name })} onGoLive={(id, name) => setConfirmationTenant({ id, name })} onEdit={(d) => setEditTenant(d)} /> : (
+          {selected ? <TenantDetail tenantId={selected} onConfigureMapping={(id, name, losType) => setMapperTenant({ id, name, losType })} onConfigurePolicy={(id, name) => setPolicyTenant({ id, name })} onConfigureProducts={(id, name) => setProductsTenant({ id, name })} onGoLive={(id, name) => setConfirmationTenant({ id, name })} onEdit={(d) => setEditTenant(d)} /> : (
             <div className="flex h-full min-h-[40vh] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white text-sm text-slate-400">
               Select a tenant to view details.
             </div>
@@ -205,7 +206,7 @@ export default function PlatformStudio() {
 }
 
 // ── Read-only per-tenant detail panel ──
-function TenantDetail({ tenantId, onConfigureMapping, onConfigurePolicy, onConfigureProducts, onGoLive, onEdit }: { tenantId: string; onConfigureMapping: (id: string, name: string) => void; onConfigurePolicy: (id: string, name: string) => void; onConfigureProducts: (id: string, name: string) => void; onGoLive: (id: string, name: string) => void; onEdit: (d: PlatformTenantDetail) => void }) {
+function TenantDetail({ tenantId, onConfigureMapping, onConfigurePolicy, onConfigureProducts, onGoLive, onEdit }: { tenantId: string; onConfigureMapping: (id: string, name: string, losType?: string) => void; onConfigurePolicy: (id: string, name: string) => void; onConfigureProducts: (id: string, name: string) => void; onGoLive: (id: string, name: string) => void; onEdit: (d: PlatformTenantDetail) => void }) {
   const [detail, setDetail] = useState<PlatformTenantDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
@@ -252,7 +253,7 @@ function TenantDetail({ tenantId, onConfigureMapping, onConfigurePolicy, onConfi
               className="rounded-lg border border-[#14532d] px-3 py-1.5 text-xs font-semibold text-[#14532d] hover:bg-[#14532d]/5"
             >Credit Policy →</button>
             <button
-              onClick={() => onConfigureMapping(detail.tenant_id, detail.name)}
+              onClick={() => onConfigureMapping(detail.tenant_id, detail.name, detail.los_type ?? undefined)}
               className="rounded-lg bg-[#14532d] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#0f3d22]"
             >Map Your Fields →</button>
             <button
@@ -539,8 +540,8 @@ const confBadge = (c: number) => c > 0.85
   : c >= 0.6 ? { t: 'Medium', cls: 'bg-amber-50 text-amber-700' }
              : { t: 'Review', cls: 'bg-red-50 text-red-700' }
 
-function FieldMapper({ tenantId, tenantName, onBack }: { tenantId: string; tenantName: string; onBack: () => void }) {
-  const [sourceSystem, setSourceSystem] = useState('encompass')
+function FieldMapper({ tenantId, tenantName, losType, onBack }: { tenantId: string; tenantName: string; losType?: string; onBack: () => void }) {
+  const [sourceSystem, setSourceSystem] = useState(losType?.toLowerCase() ?? 'encompass')
   const [tab, setTab] = useState<'upload' | 'paste'>('paste')
   const [raw, setRaw] = useState('')
   const [fileType, setFileType] = useState<string | null>(null)
