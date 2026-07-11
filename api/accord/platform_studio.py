@@ -262,11 +262,25 @@ _FIELD_MAP_MODEL = "claude-sonnet-4-6"   # matches _ANTHROPIC_DEFAULT_MODEL
 
 
 async def _canonical_vocabulary(conn) -> dict:
-    """Global canonical schema (entity -> [columns]) — NOT tenant-scoped."""
+    """Global canonical schema (entity -> [columns]).
+    Reads canonical_schema_registry (static schema) if seeded,
+    falls back to field_mapping_registry for backwards compat.
+    """
+    exists = await conn.fetchval(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+        "WHERE table_name = 'canonical_schema_registry')")
+    if exists:
+        rows = await conn.fetch(
+            "SELECT entity, column_name FROM canonical_schema_registry "
+            "ORDER BY entity, column_name")
+        ent: dict[str, list] = {}
+        for r in rows:
+            ent.setdefault(r["entity"], []).append(r["column_name"])
+        return ent
     rows = await conn.fetch(
         "SELECT DISTINCT canonical_entity, canonical_column FROM field_mapping_registry "
         "ORDER BY canonical_entity, canonical_column")
-    ent: dict[str, list] = {}
+    ent = {}
     for r in rows:
         ent.setdefault(r["canonical_entity"], []).append(r["canonical_column"])
     return ent
@@ -854,3 +868,59 @@ async def tenant_update(tenant_id: str, body: TenantPatch,
             "UPDATE tenants SET name=$1, plan=$2, settings=$3::jsonb WHERE tenant_id=$4",
             new_name, new_plan, json.dumps(settings), tenant_id)
     return {"tenant_id": tenant_id, "status": "updated"}
+
+
+# ── P21a: Canonical Schema Registry endpoint ──────────────────────────────────
+@router.get("/canonical-schema")
+async def canonical_schema_endpoint(user: dict = Depends(get_current_user)) -> dict:
+    """Full canonical schema registry — entity → columns with metadata.
+    Powers the field mapper dropdown. Uses canonical_schema_registry table
+    (static schema) if seeded; falls back to field_mapping_registry.
+    """
+    async with _admin_conn() as conn:
+        exists = await conn.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+            "WHERE table_name = 'canonical_schema_registry')")
+        if exists:
+            rows = await conn.fetch(
+                "SELECT entity, column_name, display_name, data_type, "
+                "persona_scope, source_doc_type, encompass_field_id, "
+                "is_required, notes, jsonb_path, es_column "
+                "FROM canonical_schema_registry ORDER BY entity, column_name")
+            entities: dict = {}
+            for r in rows:
+                e = r["entity"]
+                if e not in entities:
+                    entities[e] = []
+                entities[e].append({
+                    "column":              r["column_name"],
+                    "display_name":        r["display_name"],
+                    "data_type":           r["data_type"],
+                    "persona_scope":       r["persona_scope"],
+                    "source_doc_type":     r["source_doc_type"],
+                    "encompass_field_id":  r["encompass_field_id"],
+                    "is_required":         r["is_required"],
+                    "notes":               r["notes"],
+                    "jsonb_path":          r["jsonb_path"],
+                    "es_column":           r["es_column"],
+                })
+            return {"source": "canonical_schema_registry",
+                    "entities": entities,
+                    "total_fields": sum(len(v) for v in entities.values())}
+        # Fallback
+        rows = await conn.fetch(
+            "SELECT DISTINCT canonical_entity, canonical_column "
+            "FROM field_mapping_registry ORDER BY canonical_entity, canonical_column")
+        entities = {}
+        for r in rows:
+            e = r["canonical_entity"]
+            if e not in entities:
+                entities[e] = []
+            entities[e].append({"column": r["canonical_column"],
+                                 "display_name": r["canonical_column"],
+                                 "data_type": "text", "is_required": False})
+        return {"source": "field_mapping_registry_fallback",
+                "entities": entities,
+                "total_fields": sum(len(v) for v in entities.values())}
+
+
