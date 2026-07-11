@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   fetchPlatformTenants, fetchPlatformTenant, createPlatformTenant, updatePlatformTenant,
-  fetchFieldMapperCanonical, suggestFieldMappings, saveFieldMappings,
+  fetchFieldMapperCanonical, suggestFieldMappings, saveFieldMappings, fetchSavedMappings,
   fetchPolicyRules, savePolicyRules, nlpExtractPolicy,
   fetchPlatformProducts, createPlatformProduct, updatePlatformProduct,
   type PlatformTenantList, type PlatformTenantDetail, type CreateTenantInput,
-  type MappingSuggestion, type PolicyRule, type AssignmentRule, type ExtractedRule,
+  type MappingSuggestion, type PolicyRule, type AssignmentRule, type ExtractedRule, type SavedMapping,
   type PlatformProduct, type PlatformProductInput,
 } from '../api/client'
 
@@ -523,8 +523,16 @@ function FieldMapper({ tenantId, tenantName, onBack }: { tenantId: string; tenan
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState<{ saved: number } | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [existingMappings, setExistingMappings] = useState<SavedMapping[]>([])
+  const [showExisting, setShowExisting] = useState(false)
 
-  useEffect(() => { fetchFieldMapperCanonical(tenantId).then((d) => setCanonical(d.entities)).catch(() => {}) }, [tenantId])
+  useEffect(() => {
+    fetchFieldMapperCanonical(tenantId).then((d) => setCanonical(d.entities)).catch(() => {})
+    fetchSavedMappings(tenantId).then((d) => {
+      setExistingMappings(d.mappings)
+      if (d.count > 0) setShowExisting(true)
+    }).catch(() => {})
+  }, [tenantId])
   const options = useMemo(() => Object.entries(canonical).flatMap(([e, cols]) => cols.map((c) => `${e}.${c}`)), [canonical])
 
   const detectType = (t: string) => fileType ?? (/^\s*[[{]/.test(t) ? 'json_keys' : 'paste')
@@ -568,6 +576,71 @@ function FieldMapper({ tenantId, tenantName, onBack }: { tenantId: string; tenan
       <button onClick={onBack} className="mb-3 text-sm text-slate-500 hover:text-slate-800">← Back to tenants</button>
       <h1 className="text-2xl font-semibold text-slate-900">Map Your Fields — {tenantName}</h1>
       <p className="mb-4 text-sm text-slate-500">Map your LOS fields to canonical mortgage fields</p>
+      {existingMappings.length > 0 && (
+        <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50">
+          <button onClick={() => setShowExisting(v => !v)} className="flex w-full items-center justify-between px-4 py-3 text-sm font-semibold text-emerald-800">
+            <span>checkmark {existingMappings.length} saved mappings</span>
+            <span>{showExisting ? "up" : "down"}</span>
+          </button>
+          {showExisting && (
+            <div className="border-t border-emerald-200 px-4 py-3 overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead><tr className="border-b border-emerald-200 text-[10px] uppercase tracking-wide text-emerald-600">
+                  <th className="py-1.5 pr-4">Source Field</th>
+                  <th className="py-1.5 pr-4">Canonical Mapping</th>
+                  <th className="py-1.5 pr-4">Transform</th>
+                  <th className="py-1.5">System</th>
+                </tr></thead>
+                <tbody>
+                  {existingMappings.map((m, i) => (
+                    <tr key={i} className="border-b border-emerald-100 last:border-0">
+                      <td className="py-1.5 pr-4 font-mono text-slate-700">{m.source_field}</td>
+                      <td className="py-1.5 pr-4 font-medium text-emerald-700">{m.canonical_entity}.{m.canonical_column}</td>
+                      <td className="py-1.5 pr-4 text-slate-500">{m.transform_rule}</td>
+                      <td className="py-1.5 text-slate-400">{m.source_system}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+      {existingMappings.length > 0 && (
+        <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50">
+          <button
+            onClick={() => setShowExisting(v => !v)}
+            className="flex w-full items-center justify-between px-4 py-3 text-sm font-semibold text-emerald-800"
+          >
+            <span>✓ {existingMappings.length} saved mappings — click to view/edit</span>
+            <span className="text-emerald-600">{showExisting ? '▲' : '▼'}</span>
+          </button>
+          {showExisting && (
+            <div className="border-t border-emerald-200 px-4 py-3 overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-emerald-200 text-[10px] uppercase tracking-wide text-emerald-600">
+                    <th className="py-1.5 pr-4">Source Field</th>
+                    <th className="py-1.5 pr-4">Canonical Mapping</th>
+                    <th className="py-1.5 pr-4">Transform</th>
+                    <th className="py-1.5">Source System</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {existingMappings.map((m, i) => (
+                    <tr key={i} className="border-b border-emerald-100 last:border-0">
+                      <td className="py-1.5 pr-4 font-mono text-slate-700">{m.source_field}</td>
+                      <td className="py-1.5 pr-4 font-medium text-emerald-700">{m.canonical_entity}.{m.canonical_column}</td>
+                      <td className="py-1.5 pr-4 text-slate-500">{m.transform_rule}</td>
+                      <td className="py-1.5 text-slate-400">{m.source_system}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {saved ? (
         <Card>

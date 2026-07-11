@@ -924,3 +924,24 @@ async def canonical_schema_endpoint(user: dict = Depends(get_current_user)) -> d
                 "total_fields": sum(len(v) for v in entities.values())}
 
 
+
+
+@router.get("/tenants/{tenant_id}/field-mappings")
+async def get_field_mappings(tenant_id: str,
+                              user: dict = Depends(get_current_user)) -> dict:
+    """Return all saved field mappings for a tenant."""
+    _studio_tenant_guard(user, tenant_id)
+    async with _admin_conn() as conn:
+        rows = await conn.fetch(
+            "SELECT source_system, source_field, canonical_entity, canonical_column, "
+            "transform_rule, is_active, notes "
+            "FROM field_mapping_registry "
+            "WHERE tenant_id=$1 AND is_active=true "
+            "ORDER BY canonical_entity, canonical_column",
+            tenant_id)
+    mappings = [dict(r) for r in rows]
+    return {
+        "tenant_id": tenant_id,
+        "count": len(mappings),
+        "mappings": mappings,
+    }

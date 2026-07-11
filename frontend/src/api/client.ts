@@ -476,6 +476,23 @@ export interface SuggestResult { suggestions: MappingSuggestion[]; method: 'clau
 export function fetchFieldMapperCanonical(id: string): Promise<FieldMapperCanonical> {
   return getJSON(`/api/accord/platform-studio/tenants/${encodeURIComponent(id)}/field-mapper/canonical`)
 }
+
+export interface SavedMapping {
+  source_system: string
+  source_field: string
+  canonical_entity: string
+  canonical_column: string
+  transform_rule: string
+  notes: string | null
+}
+export interface SavedMappingsResult {
+  tenant_id: string
+  count: number
+  mappings: SavedMapping[]
+}
+export function fetchSavedMappings(id: string): Promise<SavedMappingsResult> {
+  return getJSON(`/api/accord/platform-studio/tenants/${encodeURIComponent(id)}/field-mappings`)
+}
 export function suggestFieldMappings(id: string, body: { source_system: string; input_type: string; raw_input: string }): Promise<SuggestResult> {
   return postJSON(`/api/accord/platform-studio/tenants/${encodeURIComponent(id)}/field-mapper/suggest`, body)
 }
