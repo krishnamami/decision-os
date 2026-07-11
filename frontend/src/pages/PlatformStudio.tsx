@@ -555,10 +555,14 @@ function FieldMapper({ tenantId, tenantName, onBack }: { tenantId: string; tenan
   const [showExisting, setShowExisting] = useState(false)
 
   useEffect(() => {
+    setRows(null); setSaved(null); setErr(null)
     fetchFieldMapperCanonical(tenantId).then((d) => setCanonical(d.entities)).catch(() => {})
     fetchSavedMappings(tenantId).then((d) => {
       setExistingMappings(d.mappings)
-      if (d.count > 0) setShowExisting(true)
+      if (d.count > 0) {
+        setShowExisting(true)
+        setRaw(d.mappings.map((m) => m.source_field).join(', '))
+      }
     }).catch(() => {})
   }, [tenantId])
   const options = useMemo(() => Object.entries(canonical).flatMap(([e, cols]) => cols.map((c) => `${e}.${c}`)), [canonical])
@@ -787,6 +791,12 @@ function PolicyRules({ tenantId, tenantName, onBack }: { tenantId: string; tenan
             return `${r.label}: ${r.overlay_value}${cfg.unit}`
           })
         setPolicyText(lines.join('\n'))
+        // Also show saved summary immediately on load
+        setSavedSummary({ count: d.rules.filter(r => r.overlay_value !== null).length,
+          rules: d.rules.filter(r => r.overlay_value !== null).map(r => {
+            const cfg = sliderCfg(r.category)
+            return { label: r.label, value: r.overlay_value ?? 0, unit: cfg.unit }
+          })})
       }
     }).catch((e) => setErr(e instanceof Error ? e.message : String(e))).finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
