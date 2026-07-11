@@ -542,6 +542,7 @@ const confBadge = (c: number) => c > 0.85
 
 function FieldMapper({ tenantId, tenantName, losType, onBack }: { tenantId: string; tenantName: string; losType?: string; onBack: () => void }) {
   const [sourceSystem, setSourceSystem] = useState(losType?.toLowerCase() ?? 'encompass')
+  useEffect(() => { if (losType) setSourceSystem(losType.toLowerCase()) }, [losType])
   const [tab, setTab] = useState<'upload' | 'paste'>('paste')
   const [raw, setRaw] = useState('')
   const [fileType, setFileType] = useState<string | null>(null)
