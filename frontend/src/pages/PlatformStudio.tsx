@@ -542,7 +542,16 @@ const confBadge = (c: number) => c > 0.85
 
 function FieldMapper({ tenantId, tenantName, losType, onBack }: { tenantId: string; tenantName: string; losType?: string; onBack: () => void }) {
   const [sourceSystem, setSourceSystem] = useState(losType?.toLowerCase() ?? 'encompass')
-  useEffect(() => { if (losType) setSourceSystem(losType.toLowerCase()) }, [losType])
+  const [resolvedLosType, setResolvedLosType] = useState(losType?.toLowerCase() ?? '')
+  useEffect(() => {
+    if (losType) { setSourceSystem(losType.toLowerCase()); setResolvedLosType(losType.toLowerCase()); return }
+    // Fetch los_type from tenant detail if not passed as prop
+    fetch(`${BASE}/api/accord/platform-studio/tenants/${tenantId}`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('accord_token') ?? ''}` }
+    }).then(r => r.json()).then(d => {
+      if (d.los_type) { setSourceSystem(d.los_type.toLowerCase()); setResolvedLosType(d.los_type.toLowerCase()) }
+    }).catch(() => {})
+  }, [tenantId, losType])
   const [tab, setTab] = useState<'upload' | 'paste'>('paste')
   const [raw, setRaw] = useState('')
   const [fileType, setFileType] = useState<string | null>(null)
@@ -660,7 +669,7 @@ function FieldMapper({ tenantId, tenantName, losType, onBack }: { tenantId: stri
             <div className="flex flex-wrap gap-2">
               {SOURCE_SYSTEMS.map((s) => {
                 const isActive = sourceSystem === s
-                const isDisabled = !!losType && s !== losType.toLowerCase() && s !== 'custom'
+                const isDisabled = !!resolvedLosType && s !== resolvedLosType && s !== 'custom'
                 return (
                   <button key={s}
                     onClick={() => !isDisabled && setSourceSystem(s)}
