@@ -177,16 +177,18 @@ export default function RulesSettings() {
         const om = d.overlay_rules as Record<string, number>
         // Map overlay rule_keys to tenant_rules JSONB paths
         const KEY_MAP: Record<string, [string, string]> = {
-          dti_back_max:       ['dti',     'back_max'],
-          credit_min_score:   ['credit',  'min_score'],
-          ltv_max_purchase:   ['ltv',     'max'],
-          ltv_max_cashout:    ['ltv',     'cashout_max'],
-          ltv_max_investment: ['ltv',     'investment_max'],
-          fraud_score_block:  ['fraud',   'block_threshold'],
-          income_conf_min:    ['income',  'confidence_min'],
-          min_reserves:       ['reserves','primary_months'],
-          min_reserves_jumbo: ['reserves','jumbo_months'],
-          dti_senior_uw:      ['dti',     'senior_uw_threshold'],
+          dti_back_max:              ['dti',      'back_max'],
+          credit_min_score:          ['credit',   'min_score'],
+          ltv_max_purchase:          ['ltv',      'max'],
+          ltv_max_cashout:           ['ltv',      'cashout_max'],
+          ltv_max_investment:        ['ltv',      'investment_max'],
+          fraud_score_threshold:     ['fraud',    'block_threshold'],
+          income_min_confidence:     ['income',   'confidence_min'],
+          reserves_months_required:  ['reserves', 'primary_months'],
+          reserves_months_jumbo:     ['reserves', 'jumbo_months'],
+          high_dti_senior_review:    ['dti',      'senior_uw_threshold'],
+          uw_auto_approve_risk_max:  ['fraud',    'auto_approve_max'],
+          uw_escalate_risk_min:      ['fraud',    'escalate_min'],
         }
         Object.entries(om).forEach(([key, val]) => {
           const path = KEY_MAP[key]
