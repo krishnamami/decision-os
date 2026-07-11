@@ -1194,6 +1194,10 @@ function OnboardingConfirmation({ tenantId, tenantName, onBack }: { tenantId: st
   const [loading, setLoading] = useState(true)
   const [goingLive, setGoingLive] = useState(false)
   const [liveMsg, setLiveMsg] = useState<string | null>(null)
+  const [savedMaps, setSavedMaps] = useState<SavedMapping[]>([])
+  const [savedRules, setSavedRules] = useState<PolicyRule[]>([])
+  const [savedProducts, setSavedProducts] = useState<PlatformProduct[]>([])
+  const [expandSection, setExpandSection] = useState<string | null>(null)
   const [importJson, setImportJson] = useState('{\n  "loan_amt": 425000,\n  "fico_score": 720,\n  "dti_ratio": 38.5,\n  "ltv_ratio": 85.0\n}')
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
   const [importErr, setImportErr] = useState<string | null>(null)
@@ -1210,6 +1214,9 @@ function OnboardingConfirmation({ tenantId, tenantName, onBack }: { tenantId: st
       .then((d) => setSummary(d))
       .catch(() => {})
       .finally(() => setLoading(false))
+    fetchSavedMappings(tenantId).then((d) => setSavedMaps(d.mappings)).catch(() => {})
+    fetchPolicyRules(tenantId).then((d) => setSavedRules(d.rules.filter(r => r.overlay_value !== null))).catch(() => {})
+    fetchPlatformProducts(tenantId).then((d) => setSavedProducts(d.products)).catch(() => {})
   }, [tenantId])
 
   async function handleGoLive() {
@@ -1271,14 +1278,74 @@ function OnboardingConfirmation({ tenantId, tenantName, onBack }: { tenantId: st
         <div className="py-12 text-center text-sm text-slate-400">Loading summary…</div>
       ) : summary ? (
         <>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-3">
             {Object.entries(summary.sections).map(([key, sec]) => (
-              <div key={key} className={`rounded-xl border p-4 ${sec.complete ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
-                <div className="flex items-center gap-2">
-                  <span className={`text-lg ${sec.complete ? 'text-emerald-600' : 'text-amber-500'}`}>{sec.complete ? '✓' : '○'}</span>
-                  <span className="text-sm font-semibold text-slate-800">{SECTION_LABELS[key]}</span>
-                </div>
-                <p className="mt-1 text-xs text-slate-500">{sec.detail}</p>
+              <div key={key} className={`rounded-xl border ${sec.complete ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
+                <button
+                  onClick={() => setExpandSection(expandSection === key ? null : key)}
+                  className="flex w-full items-center justify-between px-4 py-3"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className={`text-lg ${sec.complete ? 'text-emerald-600' : 'text-amber-500'}`}>{sec.complete ? '✓' : '○'}</span>
+                    <span className="text-sm font-semibold text-slate-800">{SECTION_LABELS[key]}</span>
+                    <span className="text-xs text-slate-400">{sec.detail}</span>
+                  </div>
+                  <span className="text-slate-400 text-xs">{expandSection === key ? '▲' : '▼'}</span>
+                </button>
+                {expandSection === key && (
+                  <div className="border-t border-emerald-100 px-4 py-3">
+                    {key === 'field_mapper' && savedMaps.length > 0 && (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead><tr className="text-[10px] uppercase text-emerald-600 border-b border-emerald-200">
+                            <th className="py-1 pr-3 text-left">Source Field</th>
+                            <th className="py-1 pr-3 text-left">Canonical</th>
+                            <th className="py-1 text-left">System</th>
+                          </tr></thead>
+                          <tbody>{savedMaps.slice(0,10).map((m,i) => (
+                            <tr key={i} className="border-b border-emerald-50">
+                              <td className="py-1 pr-3 font-mono text-slate-600">{m.source_field}</td>
+                              <td className="py-1 pr-3 text-emerald-700 font-medium">{m.canonical_entity}.{m.canonical_column}</td>
+                              <td className="py-1 text-slate-400">{m.source_system}</td>
+                            </tr>
+                          ))}</tbody>
+                        </table>
+                        {savedMaps.length > 10 && <p className="mt-1 text-xs text-slate-400">+{savedMaps.length - 10} more mappings</p>}
+                      </div>
+                    )}
+                    {key === 'policy_rules' && savedRules.length > 0 && (
+                      <div className="grid grid-cols-2 gap-2">
+                        {savedRules.map((r,i) => (
+                          <div key={i} className="rounded-lg bg-white border border-emerald-100 px-3 py-2">
+                            <div className="text-[10px] text-slate-400">{r.label}</div>
+                            <div className="text-sm font-bold text-slate-800">{r.overlay_value}{r.category === 'credit' ? '' : r.category === 'fraud' || r.category === 'income' ? '' : '%'}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {key === 'product_config' && savedProducts.length > 0 && (
+                      <table className="w-full text-xs">
+                        <thead><tr className="text-[10px] uppercase text-emerald-600 border-b border-emerald-200">
+                          <th className="py-1 pr-3 text-left">Product</th>
+                          <th className="py-1 pr-3 text-left">Type</th>
+                          <th className="py-1 pr-3 text-left">Max LTV</th>
+                          <th className="py-1 text-left">Min FICO</th>
+                        </tr></thead>
+                        <tbody>{savedProducts.map((p,i) => (
+                          <tr key={i} className="border-b border-emerald-50">
+                            <td className="py-1 pr-3 font-medium text-slate-700">{p.product_name}</td>
+                            <td className="py-1 pr-3 text-slate-500">{p.loan_type}</td>
+                            <td className="py-1 pr-3 text-slate-500">{p.max_ltv ? `${p.max_ltv}%` : '—'}</td>
+                            <td className="py-1 text-slate-500">{p.min_credit_score ?? '—'}</td>
+                          </tr>
+                        ))}</tbody>
+                      </table>
+                    )}
+                    {key === 'tenant_setup' && (
+                      <p className="text-xs text-slate-500">Tenant configured with {sec.detail}. Use Edit Tenant to modify.</p>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>
