@@ -755,6 +755,7 @@ function PolicyRules({ tenantId, tenantName, onBack }: { tenantId: string; tenan
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [savedSummary, setSavedSummary] = useState<{count: number; rules: Array<{label: string; value: number; unit: string}>} | null>(null)
   // Mode B (plain-English NLP)
   const [mode, setMode] = useState<'form' | 'nlp'>('form')
   const [policyText, setPolicyText] = useState('')
@@ -789,7 +790,12 @@ function PolicyRules({ tenantId, tenantName, onBack }: { tenantId: string; tenan
         }),
       }
       const res = await savePolicyRules(tenantId, body)
-      setToast(`Policy rules saved for ${tenantName} (${res.saved_rules})`)
+      const summary = rules.map((r) => {
+        const cfg = sliderCfg(r.category)
+        return { label: r.label, value: values[r.rule_key] ?? r.agency_default ?? 0, unit: cfg.unit }
+      })
+      setSavedSummary({ count: res.saved_rules, rules: summary })
+      setToast(`Credit policy saved — ${res.saved_rules} rules active`)
       window.setTimeout(() => setToast(null), 2600)
     } catch (e) { setErr(e instanceof Error ? e.message.replace(/^\d+\s+\w+\s+—\s+/, '') : String(e)) }
     finally { setSaving(false) }
@@ -816,7 +822,12 @@ function PolicyRules({ tenantId, tenantName, onBack }: { tenantId: string; tenan
         rules: chosen.map((e) => ({ rule_key: e.rule_key, rule_type: e.rule_key,
           overlay_value: e.extracted_value, direction: e.is_stricter ? 'stricter' : 'looser' })),
       })
-      setToast(`Policy rules saved for ${tenantName} (${res.saved_rules})`)
+      const summary = rules.map((r) => {
+        const cfg = sliderCfg(r.category)
+        return { label: r.label, value: values[r.rule_key] ?? r.agency_default ?? 0, unit: cfg.unit }
+      })
+      setSavedSummary({ count: res.saved_rules, rules: summary })
+      setToast(`Credit policy saved — ${res.saved_rules} rules active`)
       window.setTimeout(() => setToast(null), 2600)
       setExtracted(null); setPolicyText('')
     } catch (e) { setErr(e instanceof Error ? e.message.replace(/^\d+\s+\w+\s+—\s+/, '') : String(e)) }
@@ -900,6 +911,22 @@ function PolicyRules({ tenantId, tenantName, onBack }: { tenantId: string; tenan
       </Card>
 
       {err && <div className="mb-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">{err}</div>}
+      {savedSummary && (
+        <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-sm font-semibold text-emerald-800">&#10003; {savedSummary.count} credit policy rules saved</div>
+            <button onClick={() => setSavedSummary(null)} className="text-xs text-emerald-600 hover:text-emerald-800 underline">Edit rules</button>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {savedSummary.rules.map((r, i) => (
+              <div key={i} className="rounded-lg bg-white border border-emerald-100 px-3 py-2">
+                <div className="text-[10px] text-slate-400 uppercase tracking-wide">{r.label}</div>
+                <div className="text-sm font-bold text-slate-800">{r.value}{r.unit}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white px-6 py-3 shadow-[0_-2px_8px_rgba(0,0,0,0.05)]">
         <div className="mx-auto flex max-w-5xl justify-end">
           <button onClick={save} disabled={saving} className="rounded-lg bg-[#14532d] px-5 py-2 text-sm font-semibold text-white hover:bg-[#0f3d22] disabled:opacity-50">{saving ? 'Saving…' : 'Save Credit Policy'}</button>
