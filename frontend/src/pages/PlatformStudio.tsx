@@ -774,6 +774,17 @@ function PolicyRules({ tenantId, tenantName, onBack }: { tenantId: string; tenan
         init[r.rule_key] = r.overlay_value ?? r.agency_default ?? (cfg.min + cfg.max) / 2
       })
       setValues(init); setErr(null)
+      // Pre-populate plain English textarea with existing overlay values
+      const hasOverlays = d.rules.some((r) => r.overlay_value !== null)
+      if (hasOverlays) {
+        const lines = d.rules
+          .filter((r) => r.overlay_value !== null)
+          .map((r) => {
+            const cfg = sliderCfg(r.category)
+            return `${r.label}: ${r.overlay_value}${cfg.unit}`
+          })
+        setPolicyText(lines.join('\n'))
+      }
     }).catch((e) => setErr(e instanceof Error ? e.message : String(e))).finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
   }, [tenantId])
