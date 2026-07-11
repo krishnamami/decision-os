@@ -657,10 +657,20 @@ function FieldMapper({ tenantId, tenantName, losType, onBack }: { tenantId: stri
         <Card>
           <Field label="Source system">
             <div className="flex flex-wrap gap-2">
-              {SOURCE_SYSTEMS.map((s) => (
-                <button key={s} onClick={() => setSourceSystem(s)}
-                  className={`rounded-md border px-3 py-1.5 text-xs font-medium ${sourceSystem === s ? 'border-[#14532d] bg-[#14532d]/5 text-[#14532d]' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>{pretty(s)}</button>
-              ))}
+              {SOURCE_SYSTEMS.map((s) => {
+                const isActive = sourceSystem === s
+                const isDisabled = !!losType && s !== losType.toLowerCase() && s !== 'custom'
+                return (
+                  <button key={s}
+                    onClick={() => !isDisabled && setSourceSystem(s)}
+                    title={isDisabled ? `This tenant uses ${losType}` : undefined}
+                    className={`rounded-md border px-3 py-1.5 text-xs font-medium transition
+                      ${isActive ? 'border-[#14532d] bg-[#14532d]/5 text-[#14532d]' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}
+                      ${isDisabled ? 'opacity-30 cursor-not-allowed pointer-events-none' : ''}`}>
+                    {pretty(s)}
+                  </button>
+                )
+              })}
             </div>
           </Field>
           <div className="mt-3 flex gap-2 border-b border-slate-100">
