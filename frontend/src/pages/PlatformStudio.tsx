@@ -665,8 +665,8 @@ function FieldMapper({ tenantId, tenantName, losType, onBack }: { tenantId: stri
                     onClick={() => !isDisabled && setSourceSystem(s)}
                     title={isDisabled ? `This tenant uses ${losType}` : undefined}
                     className={`rounded-md border px-3 py-1.5 text-xs font-medium transition
-                      ${isActive ? 'border-[#14532d] bg-[#14532d]/5 text-[#14532d]' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}
-                      ${isDisabled ? 'opacity-30 cursor-not-allowed pointer-events-none' : ''}`}>
+                      ${isActive ? 'border-[#14532d] bg-[#14532d]/5 text-[#14532d]' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+                    style={isDisabled ? { opacity: 0.25, cursor: 'not-allowed', pointerEvents: 'none' } : {}}>
                     {pretty(s)}
                   </button>
                 )
