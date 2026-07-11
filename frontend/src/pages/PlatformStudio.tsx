@@ -372,7 +372,24 @@ function CreateTenantWizard({ onClose, onCreated }: {
     } finally { setSubmitting(false) }
   }
 
-  const filteredStates = US_STATES.filter((s) => !form.licensed_states.includes(s) && s.includes(stateSearch.toUpperCase()))
+  const STATE_NAME_MAP: Record<string, string> = {
+    AL:'Alabama',AK:'Alaska',AZ:'Arizona',AR:'Arkansas',CA:'California',
+    CO:'Colorado',CT:'Connecticut',DE:'Delaware',DC:'Washington D.C.',FL:'Florida',
+    GA:'Georgia',HI:'Hawaii',ID:'Idaho',IL:'Illinois',IN:'Indiana',IA:'Iowa',
+    KS:'Kansas',KY:'Kentucky',LA:'Louisiana',ME:'Maine',MD:'Maryland',
+    MA:'Massachusetts',MI:'Michigan',MN:'Minnesota',MS:'Mississippi',MO:'Missouri',
+    MT:'Montana',NE:'Nebraska',NV:'Nevada',NH:'New Hampshire',NJ:'New Jersey',
+    NM:'New Mexico',NY:'New York',NC:'North Carolina',ND:'North Dakota',OH:'Ohio',
+    OK:'Oklahoma',OR:'Oregon',PA:'Pennsylvania',RI:'Rhode Island',SC:'South Carolina',
+    SD:'South Dakota',TN:'Tennessee',TX:'Texas',UT:'Utah',VT:'Vermont',
+    VA:'Virginia',WA:'Washington',WV:'West Virginia',WI:'Wisconsin',WY:'Wyoming',
+  }
+  const filteredStates = US_STATES.filter((s) => {
+    if (form.licensed_states.includes(s)) return false
+    const q = stateSearch.toLowerCase()
+    if (!q) return true
+    return s.toLowerCase().includes(q) || (STATE_NAME_MAP[s] ?? '').toLowerCase().includes(q)
+  })
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
@@ -403,6 +420,14 @@ function CreateTenantWizard({ onClose, onCreated }: {
           {step === 1 && (
             <div className="space-y-3">
               <Field label="Lender name *"><input value={form.name} onChange={(e) => set({ name: e.target.value })} placeholder="Capital Loans Mortgage" className={inputCls} /></Field>
+              <Field label="Plan *">
+                <select value={form.plan || 'starter'} onChange={(e) => set({ plan: e.target.value })} className={inputCls}>
+                  <option value="starter">Starter</option>
+                  <option value="growth">Growth</option>
+                  <option value="business">Business</option>
+                  <option value="enterprise">Enterprise</option>
+                </select>
+              </Field>
               <Field label="Tenant ID *" hint={`preview: ${slug || '—'}`}><input value={form.idEdited ? form.tenant_id : slug} onChange={(e) => set({ tenant_id: e.target.value, idEdited: true })} className={inputCls} /></Field>
               <Field label="Contact email *"><input value={form.contact_email} onChange={(e) => set({ contact_email: e.target.value })} placeholder="ops@capitalloans.com" className={inputCls} /></Field>
               <Field label="LOS type *">
