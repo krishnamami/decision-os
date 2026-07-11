@@ -1257,20 +1257,37 @@ function OnboardingConfirmation({ tenantId, tenantName, onBack, onEditMapping, o
           fico_score: 720, credit_score: 720, mid_score: 720, score: 720,
           back_end_dti: 38.5, dti: 38.5, dti_ratio: 38.5, dti_back: 38.5,
           front_end_dti: 24.0, dti_front: 24.0,
-          ltv: 85.0, ltv_ratio: 85.0, loan_to_value: 85.0,
+          ltv: 85.0, ltv_ratio: 85.0, loan_to_value: 85.0, cltv: 85.0, hcltv: 85.0,
           first_name: 'John', last_name: 'Smith',
           annual_income: 95000, base_salary: 95000, income: 95000,
           monthly_income: 7917, qualifying_income: 7917,
           purchase_price: 500000, appraised_value: 510000,
           loan_type: 'Conventional', loan_purpose: 'purchase',
           property_state: 'CA', property_zip: '90210', property_type: 'SFR',
+          property_city: 'Los Angeles', property_county: 'Los Angeles',
           occupancy_type: 'primary_residence', occupancy: 'primary_residence',
           employer_name: 'Acme Corp', years_employed: 5,
-          aus_recommendation: 'APPROVE/ELIGIBLE',
-          interest_rate: 6.875, amortization_type: 'fixed',
+          employment_status: 'employed', employment_type: 'full_time',
+          aus_recommendation: 'APPROVE/ELIGIBLE', aus_system: 'DU',
+          interest_rate: 6.875, amortization_type: 'fixed', loan_term: 360,
+          lien_position: 'first', loan_term_months: 360,
+          fraud_score: 0.15, identity_match_confidence: 0.95,
+          total_liquid_assets: 85000, checking_balance: 45000, savings_balance: 40000,
+          reserves_months: 6.0, gift_amount: 0,
+          monthly_obligations: 2100, total_monthly_debt: 1200, piti_monthly: 2100,
+          mid_score: 720, equifax_score: 718, experian_score: 722, transunion_score: 720,
+          derogatory_count: 0, open_tradelines: 8, credit_utilization: 0.15,
+          public_records_count: 0, inquiries_last_90: 1,
+          date_of_birth: '1985-06-15', ssn_last4: '1234',
+          email: 'john.smith@email.com', phone: '555-123-4567',
+          marital_status: 'married', co_first_name: 'Jane', co_last_name: 'Smith',
+          rental_income_gross: 0, alimony_income: 0, social_security_income: 0,
+          bonus_income: 0, rsu_income: 0, ytd_gross: 47917,
+          flood_zone: 'X', hoa_monthly: 0,
+          action_taken: 'originated', lien_status_hmda: 'secured_by_first_lien',
         }
         const payload: Record<string, unknown> = {}
-        d.mappings.slice(0, 15).forEach((m) => {
+        d.mappings.forEach((m) => {
           const sf = m.source_field
           payload[sf] = SAMPLE_VALUES[sf] ?? SAMPLE_VALUES[sf.toLowerCase()] ?? `sample_${sf}`
         })

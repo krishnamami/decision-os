@@ -318,10 +318,50 @@ def _parse_source_fields(input_type: str, raw: str) -> list[str]:
     return out[:150]
 
 
+# Encompass field ID → canonical mapping (from canonical_schema_registry)
+_ENCOMPASS_ID_MAP: dict[str, tuple[str, str]] = {
+    "1569": ("credit",        "credit_report_date"),
+    "1041": ("loan",          "amortization_type"),
+    "420":  ("loan",          "lien_position"),
+    "1292": ("qualification", "residual_income"),
+    "2":    ("loan",          "loan_amount"),
+    "19":   ("loan",          "loan_purpose"),
+    "4":    ("loan",          "loan_term_months"),
+    "136":  ("loan",          "purchase_price"),
+    "356":  ("loan",          "appraised_value"),
+    "1172": ("loan",          "loan_type"),
+    "1041": ("loan",          "amortization_type"),
+    "420":  ("loan",          "lien_position"),
+    "65":   ("applicant",     "ssn_last4"),
+    "66":   ("applicant",     "phone"),
+    "52":   ("applicant",     "marital_status"),
+    "4000": ("applicant",     "first_name"),
+    "4002": ("applicant",     "last_name"),
+    "4004": ("coborrower",    "co_first_name"),
+    "4006": ("coborrower",    "co_last_name"),
+    "1240": ("applicant",     "email"),
+    "1402": ("applicant",     "date_of_birth"),
+    "1569": ("credit",        "credit_report_date"),
+    "1292": ("qualification", "residual_income"),
+    "11":   ("property",      "property_address"),
+    "12":   ("property",      "property_state"),
+    "13":   ("property",      "property_county"),
+    "15":   ("property",      "property_zip"),
+    "16":   ("property",      "property_type"),
+    "1811": ("property",      "occupancy_type"),
+    "3":    ("loan",          "interest_rate"),
+    "1":    ("credit",        "mid_score"),
+}
+
 def _heuristic_suggest(source_fields: list[str], ent: dict) -> list[dict]:
     flat = [(e, c) for e, cols in ent.items() for c in cols]
     out = []
     for sf in source_fields:
+        # Encompass field ID lookup
+        if sf.strip().isdigit() and sf in _ENCOMPASS_ID_MAP:
+            e, c = _ENCOMPASS_ID_MAP[sf]
+            out.append({"source_field": sf, "canonical_entity": e, "canonical_column": c, "confidence": 0.99, "reasoning": f"Encompass field ID {sf}"})
+            continue
         n = _norm(sf)
         best, best_r = None, 0.0
         for e, c in flat:
@@ -359,6 +399,17 @@ def _validate_suggestions(raw: Any, source_fields: list[str], ent: dict) -> list
 
 
 async def _claude_suggest(source_fields: list[str], ent: dict) -> Optional[list]:
+    # Pre-resolve Encompass field IDs before sending to Claude
+    resolved = []
+    pre_mapped = []
+    for sf in source_fields:
+        if sf.strip().isdigit() and sf in _ENCOMPASS_ID_MAP:
+            e, c = _ENCOMPASS_ID_MAP[sf]
+            pre_mapped.append({"source_field": sf, "canonical_entity": e, "canonical_column": c, "confidence": 0.99, "reasoning": f"Encompass field ID {sf}"})
+        else:
+            resolved.append(sf)
+    if not resolved:
+        return pre_mapped
     if not os.environ.get("ANTHROPIC_API_KEY", "").strip():
         return None
     try:
