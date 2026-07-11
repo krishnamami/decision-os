@@ -330,7 +330,7 @@ function CreateTenantWizard({ onClose, onCreated }: {
 }) {
   const [step, setStep] = useState(1)
   const [form, setForm] = useState({
-    name: '', tenant_id: '', idEdited: false, contact_email: '', los_type: 'encompass',
+    name: '', tenant_id: '', idEdited: false, contact_email: '', los_type: 'encompass', plan: 'starter',
     programs: ['CONVENTIONAL'] as string[], channels: ['retail'] as string[],
     licensed_states: [] as string[],
     admin_email: '', admin_name: '', admin_password: '', admin_confirm: '',
@@ -358,7 +358,7 @@ function CreateTenantWizard({ onClose, onCreated }: {
       const body: CreateTenantInput = {
         tenant_id: slug, name: form.name.trim(), contact_email: form.contact_email.trim(),
         los_type: form.los_type, programs: form.programs, channels: form.channels,
-        licensed_states: form.licensed_states, plan: 'starter', products: ['pipeline'],
+        licensed_states: form.licensed_states, plan: form.plan || 'starter', products: ['pipeline'],
       }
       if (wantsAdmin) {
         body.admin_email = form.admin_email.trim()
