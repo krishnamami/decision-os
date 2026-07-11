@@ -170,7 +170,37 @@ export default function RulesSettings() {
   const isAdmin = user?.role === 'admin'
 
   function load() {
-    fetchRules().then((d) => { setData(d); setDraft(d.tenant?.rules || {}) }).catch(() => undefined)
+    fetchRules().then((d) => {
+      // Option A: merge overlay_rules into tenant rules for display
+      if (d.overlay_rules && Object.keys(d.overlay_rules).length > 0) {
+        const overlayMerged = { ...(d.tenant?.rules || {}) }
+        const om = d.overlay_rules as Record<string, number>
+        // Map overlay rule_keys to tenant_rules JSONB paths
+        const KEY_MAP: Record<string, [string, string]> = {
+          dti_back_max:       ['dti',     'back_max'],
+          credit_min_score:   ['credit',  'min_score'],
+          ltv_max_purchase:   ['ltv',     'max'],
+          ltv_max_cashout:    ['ltv',     'cashout_max'],
+          ltv_max_investment: ['ltv',     'investment_max'],
+          fraud_score_block:  ['fraud',   'block_threshold'],
+          income_conf_min:    ['income',  'confidence_min'],
+          min_reserves:       ['reserves','primary_months'],
+          min_reserves_jumbo: ['reserves','jumbo_months'],
+          dti_senior_uw:      ['dti',     'senior_uw_threshold'],
+        }
+        Object.entries(om).forEach(([key, val]) => {
+          const path = KEY_MAP[key]
+          if (path) {
+            if (!overlayMerged[path[0]]) overlayMerged[path[0]] = {}
+            overlayMerged[path[0]][path[1]] = val
+          }
+        })
+        const merged = { ...d, tenant: d.tenant ? { ...d.tenant, rules: overlayMerged } : d.tenant }
+        setData(merged); setDraft(overlayMerged)
+      } else {
+        setData(d); setDraft(d.tenant?.rules || {})
+      }
+    }).catch(() => undefined)
     fetchRuleAlerts().then((d) => setAlerts(d.alerts)).catch(() => undefined)
     fetchRulesHistory().then((h) => {
       setVersions(h.versions)

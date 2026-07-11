@@ -204,6 +204,11 @@ async def get_rules(tenant_id: str = Depends(get_tenant_id)) -> dict:
         exam = await conn.fetchrow(
             "SELECT * FROM examination_periods WHERE tenant_id=$1 AND is_active=true ORDER BY started_at DESC LIMIT 1", tenant_id)
         bounds = await load_overlay_bounds(conn, tenant_id)
+        # Option A: fetch overlay_rules to merge into display
+        overlay_rows = await conn.fetch(
+            "SELECT rule_key, overlay_value FROM overlay_rules WHERE tenant_id=$1 AND is_active=true",
+            tenant_id)
+        overlay_map = {r["rule_key"]: float(r["overlay_value"]) for r in overlay_rows if r["overlay_value"] is not None}
 
     errors, warnings = validate_overlay(_jsonb(active["rules"]), programs, bounds) if active else ([], [])
     expiring = _expiring_waivers(_jsonb(active["rules"]) if active else {})
@@ -223,6 +228,7 @@ async def get_rules(tenant_id: str = Depends(get_tenant_id)) -> dict:
             "last_verified": _iso(r["last_verified"]), "verified_by": r["verified_by"],
         } for r in agc],
         "tenant": _version_row(active, names) if active else None,
+        "overlay_rules": overlay_map,
         "data_freshness": [_freshness_row(r) for r in freshness],
         "validation": {"all_above_regulatory": not errors, "errors": errors, "warnings": warnings},
         "scheduled": [_version_row(r, names) for r in scheduled],
