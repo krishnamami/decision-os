@@ -296,9 +296,10 @@ export default function RulesSettings() {
   const scheduledVersion = (data.scheduled && data.scheduled[0]) || null
 
   // Your Policy card summary (dynamic from active overlay)
-  const cv = get(active?.rules, ['credit', 'min_score'])
-  const dv = get(active?.rules, ['dti', 'back_max'])
-  const lv = get(active?.rules, ['ltv', 'max'])
+  // Use draft (overlay-merged) for summary card display
+  const cv = get(draft ?? active?.rules, ['credit', 'min_score'])
+  const dv = get(draft ?? active?.rules, ['dti', 'back_max'])
+  const lv = get(draft ?? active?.rules, ['ltv', 'max'])
   const tightened = [Number(cv) > 620, Number(dv) < 50, Number(lv) < 97].filter(Boolean).length
 
   const Badge = ({ bg, color, children }: { bg: string; color: string; children: any }) => (
