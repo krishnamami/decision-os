@@ -819,6 +819,7 @@ export interface DataSource {
 export interface ExpiringWaiverItem { name: string; field: string; value: number; normal: number; expires: string; days_remaining: number; severity: string }
 export interface RulesResponse {
   regulatory: RegulatoryRule[]; agency: AgencyGuideline[]; tenant: TenantVersion | null
+  overlay_rules?: Record<string, number>
   data_freshness: DataSource[]
   validation: { all_above_regulatory: boolean; errors: string[]; warnings: string[] }
   scheduled?: TenantVersion[]; shadow?: TenantVersion | null
