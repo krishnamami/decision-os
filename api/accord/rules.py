@@ -206,7 +206,7 @@ async def get_rules(tenant_id: str = Depends(get_tenant_id)) -> dict:
         bounds = await load_overlay_bounds(conn, tenant_id)
         # Option A: fetch overlay_rules to merge into display
         overlay_rows = await conn.fetch(
-            "SELECT rule_key, overlay_value FROM overlay_rules WHERE tenant_id=$1 AND is_active=true",
+            "SELECT rule_type as rule_key, overlay_value FROM overlay_rules WHERE tenant_id=$1 AND is_active=true",
             tenant_id)
         overlay_map = {r["rule_key"]: float(r["overlay_value"]) for r in overlay_rows if r["overlay_value"] is not None}
 
