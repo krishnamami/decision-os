@@ -790,7 +790,7 @@ function PolicyRules({ tenantId, tenantName, onBack }: { tenantId: string; tenan
         }),
       }
       const res = await savePolicyRules(tenantId, body)
-      const summary = rules.map((r) => {
+      const summary = (rules ?? []).map((r) => {
         const cfg = sliderCfg(r.category)
         return { label: r.label, value: values[r.rule_key] ?? r.agency_default ?? 0, unit: cfg.unit }
       })
@@ -822,7 +822,7 @@ function PolicyRules({ tenantId, tenantName, onBack }: { tenantId: string; tenan
         rules: chosen.map((e) => ({ rule_key: e.rule_key, rule_type: e.rule_key,
           overlay_value: e.extracted_value, direction: e.is_stricter ? 'stricter' : 'looser' })),
       })
-      const summary = rules.map((r) => {
+      const summary = (rules ?? []).map((r) => {
         const cfg = sliderCfg(r.category)
         return { label: r.label, value: values[r.rule_key] ?? r.agency_default ?? 0, unit: cfg.unit }
       })
