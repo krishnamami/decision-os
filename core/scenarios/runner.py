@@ -59,7 +59,10 @@ class ScenarioRunner:
 
     async def close(self) -> None:
         if self._conn is not None:
-            await self._conn.close()
+            try:
+                await self._conn.close()
+            except Exception:
+                pass  # suppress WinError 121 semaphore timeout on Windows
         if self._runner is not None:
             await self._runner.close()
 

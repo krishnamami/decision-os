@@ -355,9 +355,15 @@ class PersonaRunner:
                 # bundle. Loaded only for the decision that uses them — with a
                 # one-shot retry so a transient blip doesn't drop the rules
                 # (and with them the bundle's rules_snapshot). RA-4H.
-                await self._inject_decision_rules(
-                    conn, snapshot, app_id, decision_id, tenant_id
-                )
+                # Use a separate connection for rule injection to avoid
+                # pool release conflicts with the evidence enricher connection
+                try:
+                    async with pool.acquire() as rule_conn:
+                        await self._inject_decision_rules(
+                            rule_conn, snapshot, app_id, decision_id, tenant_id
+                        )
+                except Exception:
+                    pass
         except Exception:  # noqa: BLE001 — enrichment must never break a decision
             pass
 
