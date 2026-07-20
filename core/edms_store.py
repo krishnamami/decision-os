@@ -145,6 +145,7 @@ class EdmsContextStore:
                 "stated_vs_verified_drift_pct": "stated_vs_verified_drift_pct",
                 "employer_on_watchlist": "employer_on_watchlist",
                 "employer_name": "employer_name",
+                "employer_name_raw": "employer_name_raw",
                 "period_start": "period_start",
                 "period_end": "period_end",
                 "employment_status": "employment_status",
