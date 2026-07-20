@@ -400,9 +400,14 @@ class EdmsContextStore:
                     list(upstream_decision_ids),
                 )
             for r in rows:
+                # Try reasoning.input_context first (has the FraudProfile/IncomeProfile
+                # input data the downstream persona needs), fall back to context_snapshot
+                _reasoning = _decode_json(r["reasoning"]) or {}
+                _input_ctx = _reasoning.get("input_context") or {}
+                _snapshot = _decode_json(r["context_snapshot"]) or {}
                 upstream_outputs[r["decision_id"]] = {
                     "outcome": r["outcome"],
-                    "payload": _decode_json(r["context_snapshot"]) or {},
+                    "payload": {**_snapshot, **_input_ctx} if _input_ctx else _snapshot,
                     "confidence": r["confidence"],
                 }
 

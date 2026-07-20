@@ -440,6 +440,10 @@ class PersonaRunner:
                     {"name": s.name, "value": s.value}
                     for s in (reasoning.signals or [])
                 ],
+                "input_context": {
+                    k: list(v.values())[0] if isinstance(v, dict) and len(v)==1 else v
+                    for k, v in (snapshot.context or {}).items()
+                },
             },
             confidence=float(reasoning.confidence),
             upstream_decisions=upstream_data,
