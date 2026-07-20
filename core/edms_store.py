@@ -160,6 +160,7 @@ class EdmsContextStore:
             "object_type": "IncomeProfile",
             "field_map": {
                 "income_confidence_score": "income_confidence_score",
+                "reconciliation_status": "reconciliation_status",
                 "employment_type": "employment_type",
                 "payroll_verified": "payroll_verified",
                 "reconciliation_status": "reconciliation_status",

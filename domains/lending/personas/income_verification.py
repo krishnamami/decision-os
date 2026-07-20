@@ -82,6 +82,11 @@ class IncomeVerificationAgent(LendingPersona):
         # Upstream reconciliation output — the primary signal.
         reconciled = upstream_payload(bundle, "employment_reconciliation")
         reconciliation_status = reconciled.get("reconciliation_status") or "missing"
+        # Fallback: read reconciliation_status from own IncomeProfile bundle
+        # (populated by vw_income_verification_context from entity_states)
+        if reconciliation_status == "missing":
+            own_income = latest_object(bundle, "IncomeProfile") or {}
+            reconciliation_status = own_income.get("reconciliation_status") or "missing"
         reconciled_attempts = int(
             reconciled.get("verification_attempts_count") or 0
         )
