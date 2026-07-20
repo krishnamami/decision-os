@@ -96,7 +96,9 @@ class FraudDetectionAgent(LendingPersona):
                 )
             )
 
-        if watchlist or synthetic or score >= 0.5:
+        # Read fraud threshold from tenant overlay (default 0.70 per Fannie Mae)
+        fraud_threshold = float((policy.rules or {}).get("fraud_score_threshold") or 0.70) if policy else 0.70
+        if watchlist or synthetic or score >= fraud_threshold:
             outcome = DecisionOutcome.BLOCK
             confidence = 0.95
         elif doc_auth < 0.8:
