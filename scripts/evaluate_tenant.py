@@ -48,14 +48,14 @@ def _parse_args() -> tuple[str, int, bool, bool]:
         print("Usage: python scripts/evaluate_tenant.py --tenant <tenant_id>")
         sys.exit(1)
 
-    return tenant, concurrency, dry_run, "--direct" in sys.argv
+    return tenant, concurrency, dry_run, "--direct" in sys.argv, "--clean" in sys.argv
 
 
 async def main():
     from core.cron.runner import WAVES
     from core.scenarios.runner import ScenarioRunner
 
-    tenant, concurrency, dry_run, direct = _parse_args()
+    tenant, concurrency, dry_run, direct, clean = _parse_args()
 
     print(f"\n{'='*60}")
     print(f"  Decision OS — Tenant Evaluation")
@@ -84,7 +84,7 @@ async def main():
 
         wave_count = sum(len(w) for w in WAVES)
         # Clean mode: delete all existing decisions before re-running
-        if args.clean:
+        if clean:
             deleted = await conn.execute(
                 "DELETE FROM decision_outputs WHERE tenant_id=$1", tenant
             )
