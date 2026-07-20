@@ -96,9 +96,9 @@ class FraudDetectionAgent(LendingPersona):
                 )
             )
 
-        # Fraud threshold — Fannie Mae B3-5.4 standard is 0.70
-        # TODO: read from tenant overlay_rules when bundle supports it
-        fraud_threshold = 0.70
+        # Read fraud threshold from tenant overlay (injected via fraud_rules)
+        fraud_rules = latest_object(bundle, "fraud_rules") or {}
+        fraud_threshold = float(fraud_rules.get("fraud_score_threshold") or 0.70)
         if watchlist or synthetic or score >= fraud_threshold:
             outcome = DecisionOutcome.BLOCK
             confidence = 0.95

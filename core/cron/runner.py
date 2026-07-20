@@ -487,6 +487,9 @@ class PersonaRunner:
         elif decision_id == "credit_assessment":
             from core.credit.findings_resolver import load_credit_rules
             key, loader = "credit_rules", load_credit_rules
+        elif decision_id == "fraud_screening":
+            from core.fraud.fraud_resolver import load_fraud_rules
+            key, loader = "fraud_rules", load_fraud_rules
         elif decision_id == "product_eligibility":
             from core.collateral.property_eligibility_resolver import (
                 load_collateral_rules,
