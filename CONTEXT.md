@@ -4462,3 +4462,67 @@ summit; the `APP-SC13-085` in the report was the applicant id `APL-SC13-005` con
 - **Step 5 (the flip):** deployed Step 2 code inert → baseline verify PASS → registered task-def `accord-api:80` with `ACCORD_DATABASE_URL=accord_app` → post-flip cross-tenant API verify ALL PASS (summit 49 / meridian 16, disjoint sets, cross-tenant 404, own-loan 200).
 
 **Live state:** `/api/accord/*` connects as `accord_app` (RLS enforced) on task-def `:80`. Legacy `/workbench` + `core/*` pools still `edms_admin` (deliberate — smallest blast radius). **Rollback:** `aws ecs update-service --cluster accord --service accord-api --task-definition accord-api:79 --force-new-deployment` (reverts to edms_admin; code stays inert). Audit scripts: `scripts/migrations/qa_c/`. Residual follow-ups tracked in `FOLLOW_UPS.md`.
+
+---
+
+## Senior-UW escalation + tenant isolation in /decide — 2026-06-29/30
+
+**Event-driven escalation, not cron.** `POST /api/accord/pipeline/decide {action:'escalate'}` and the workbench "Escalate" (→ `/loans/{id}/actions`, `action_type='escalate'`) both reassign to the tenant's `senior_uw` via a **dynamic role lookup** (never a hardcoded id). Root-cause bug fixed (`f2e75bc`): `create_action` was only routing `senior_review`, so escalated loans never reached the senior queue — now routes `("senior_review","escalate")` through `_route_senior_review` (reassigns/creates the `loan_assignment`, notifies). Senior reads their work via `GET /api/accord/pipeline/my-queue`.
+
+**Tenant isolation hardened in /decide (`b50d50e`, DEPLOYED + verified).** `DecideBody` has **no** `tenant_id` field — `tid` always comes from the JWT. `decide()` now: (1) 403s if the loan's `entity_states.tenant_id` ≠ caller's tenant (`SELECT 1 … WHERE application_id=$1 AND tenant_id=$2`; was a silent no-op 200 before — verified via a cross-tenant `meridian admin approve summit loan → 403 "Loan is not in your tenant"`); (2) gates approve/deny/**override** behind the `override_decision` action-permission (403 otherwise); (3) adds an `override` branch (stamps `decision_outputs.human_action='overridden'` + reviewer + reason, requires `decision_id` + reasoning ≥25); (4) notifies the original escalator on approve/deny/override (latest `loan_assignments.assigned_by`). `loan_detail()` gained `assign_row` + `esc_action` JOINs → returns `assigned_to_name` / `escalated_by_name` / `escalation_category` / `escalation_reason` / `escalated_at` (verified live: `Karen Senior UW` / `Summit Admin` / `fraud_concern` / BSA-threshold reason).
+
+**Role-aware workbench (`7036614`).** `LoanSummaryWorkbench.tsx` reads `permissions.override_decision` (from `/auth/me.action_permissions`, threaded via `AuthContext`) — **never role names**. Senior UW sees an amber escalation banner + Override/Approve/Deny; a plain UW does not. Zero hardcoded values (ROLES const, API/auth data). `AuthContext` now fetches `action_permissions` on login + initial load; `client.ts` `decideLoan(appId, body: DecideInput)` posts the body-shaped action; `types/accord.ts` `LoanDetail` gained the assignment/escalation fields.
+
+**RBAC surface (established).** `/auth/me` → `{user, tenant, permissions (product list), action_permissions (RBAC flags: override_decision, export_reports, approve_exception, add_notes, …)}`. `/auth/permissions` and `/pipeline/available-actions/{id}` do **not** exist (404) — action lists are computed client-side from `action_permissions`. `fraud_score` is a genuine **0–1** scale (min 0.01 / max 0.82, BSA threshold 0.75) — 0.04/0.074 are REAL low scores; **do not ×10** (corrupts the scale, overstates clean loans).
+
+**Open (pending, not yet shipped):** three `LoanSummaryWorkbench.tsx` polish items requested — (1) a SEPARATE `showRequestDocsModal` state + dedicated Request-documents modal (doc-type + send-to checkboxes, message, due date) posting `{action:'request_documents', …}` — NOTE `/pipeline/decide` has **no `request_documents` branch yet** (would 400; needs a backend branch first); (2) **hide** (not gray) Approve/Deny in the right-panel `ActionPanel` when `override_decision !== true`; (3) the fraud-score display (already correct at `toFixed(2)` — re-confirm, do not multiply).
+
+---
+
+## Processor workflow + trace citations + exam PDF + live Dashboard — 2026-07-08/09
+
+- **Processor doc-checklist workflow** (`3dcdb57`) — processor queue view + workbench panel: per-condition checklist (`processor_checklist` on `loan_detail`: condition_code/text/assignee/status/blocks_closing/days_outstanding), **mark-received** + **advance-to-underwriting** actions (`decide` actions `mark_condition_received` / `advance_to_underwriting`, plumbed through `DecideInput`). `my-queue` gained a `processor_queue` split (needs_action / waiting_on_borrower / ready_to_advance).
+- **Agency citations in the decision trace** (`b6587b6`) + wave-header polish — the trace surfaces the `governed_by` agency/citation per decision (from the RA-4-era governance map).
+- **Exam-ready PDF export** (`8684ae3`) — `POST /loans/{id}/export/exam-ready` renders a 5-page reportlab PDF (via `api/accord/exam_export.py`, its own router); workbench "Export" button, all roles. Follow-up noted: `loan_condition_instances.cleared_by` for Page 3.
+- **Dashboard wired to live API** (`3460b46`) — `DashboardPage` (admin/manager landing) replaced ALL hardcoded mock data with real KPIs / team performance / attention loans from `api/accord/dashboard.py`. Admin/manager land on `/dashboard` (Header maps their "Pipeline" tab → `/dashboard`; `/pipeline` redirects them there).
+- **Workbench fidelity** (`dae89f5`, `7a144ec`) — normalize `loan_program` display codes (`FHA_203B → FHA 30yr`); LTV-specific AI explanation with exact amounts.
+
+---
+
+## Platform Studio onboarding UI — self-serve tenant setup (Sections 1–4 + P19 + P21) — 2026-07-09/11
+
+The **customer-facing onboarding console** built on top of the PL-A/C/D/E backend extractors (see ARCHITECTURE.md → Platform Studio Onboarding). Lets a `super_admin` stand up and configure a new lender tenant entirely through the UI — no code deploy. Lives under `frontend/` Platform Studio pages + `api/accord/platform_studio.py` (new router). Config-layer only; nothing here touches `decision_outputs`.
+
+- **entity_states v4.9** (`6483899`) — 10 new P0 canonical columns for Capital Loans onboarding (schema migration; the target of field-mapping).
+- **Canonical schema registry (P21a, `2fa5f86`)** — **93 fields × 12 entities**, the single source of truth that populates the field-mapper target dropdown (fixed the empty-dropdown bug).
+- **Shell + roles** (`d2f7dd8`) — Platform Studio shell, new `super_admin` role (bypasses plan-gating: `9e59d1a`), `accordlend` platform tenant, tenant list + per-tenant detail + Create-Tenant form; nav added for admin + super_admin (`b41057a`). Edit-Tenant modal — name/plan/LOS/programs/channels/states (`b099a82`).
+- **Section 1 — Tenant setup wizard** (`f51edc5`) — 3-step: LOS type, programs, states, channels, admin user, default rules. Cross-tenant seeding runs under the `accord_admin` RLS sentinel (`6f9440c`); `tenant_rules`/`overlay_rules` seeded via direct VALUES (`5ee033f`). Plan field in the wizard (`89152f3`, `2e3a245`).
+- **Section 2 — NLP field mapper** (`c1cc529`) — Claude sonnet-4-6 + heuristic fallback, 3-step suggest → review → save. Loads existing mappings on open (`5184ea6`, `GET /field-mappings`); LOS type gates the source-system tabs, defaults to tenant LOS, greys non-matching (`59279f8`, `adfc947`); pre-populates source fields (`7ad605d`).
+- **Section 3 — Credit policy** — 3A structured form (sliders + agency comparison + read-only routing rules, `cf7c05b`); 3B NLP policy rules (Claude + regex fallback, plain-English → extracted rules → confirm → save, `387c585`); pre-populates the textarea with existing rules + plain-English summary on save (`3a8e425`, `a2a1d68`).
+- **Section 4 — Product configurator** (`1247686`) — add/edit loan products via UI (GET/POST/PATCH `/products`), no code deploy.
+- **P19 — Onboarding confirmation + go-live** (`9c0f78d`, `1aee88b`) — `OnboardingConfirmation` screen: 4 summary cards, Go Live, dry-run import; endpoints `/onboarding-summary`, `/go-live`, `/import-test`. P21d expanded the confirmation into expandable saved-mappings/rules/products cards with edit buttons + auto-built validate payload (`ebd7018`, `bc24179`).
+
+**UI naming:** Platform Studio sections renamed to "Map Your Fields / Credit Policy / Loan Products" (`d9e6731`). Section labels are the customer-facing names; the PL-A/C/D/E codenames remain the backend/extractor identifiers.
+
+**Docs updated this pass (2026-07-11):** this CONTEXT block, ARCHITECTURE.md (Platform Studio UI/API layer + canonical schema registry + entity_states v4.9), and PRD.md (Session 15 delta + version bump to v0.15).
+
+---
+
+## Policy Rules surface reads the Platform Studio overlay — 2026-07-11
+
+Closed the loop between Platform Studio's saved **credit-policy overlay** (Section 3) and the admin **Policy Rules** settings surface (`RulesSettings.tsx`) — the values a lender configures during onboarding now show up in the live rules view instead of only the agency defaults.
+
+- **`overlay_rules` on `RulesResponse`** (`0e3eae5`) — added the field to the `client.ts` type so the frontend can read the tenant's overlay alongside the base rules.
+- **Summary card reads the overlay-merged draft** (`640b2c7`, cleanup `b4826f3`) — the Policy Rules summary card now reads from the draft (base ∪ overlay), so Platform Studio's saved credit/DTI/LTV/program values render; a deep-clone before the overlay merge fixed a mutation bug (`8d8fe1d`), debug logging added then removed.
+- **Field-mapper preview tidy** (uncommitted, `PlatformStudio.tsx`) — deduped the `mid_score` key and added `fico_mid` in the `OnboardingConfirmation` sample-value dictionary that drives the mapping preview.
+
+---
+
+## Multi-tenant evaluation harness + product-demo recorder — 2026-07-15
+
+Tooling pass on top of Platform Studio: prove the self-serve onboarding path end-to-end by running a *brand-new* tenant's loans through the **real production decision path** (not a mock), and generalise the meridian-only eval into a tenant-agnostic runner. Plus a rebuilt marketing walkthrough of the live app. Scripts + recorder are committed; the demo media assets (`accord_demo.mp4`, voiceover audio) are deliberately **left untracked** (multi-MB binaries). Nothing here touches the decision engine or the 16/16 meridian eval.
+
+- **Universal tenant evaluator** (`scripts/evaluate_tenant.py`) — `--tenant <name> [--concurrency=N] [--dry-run] [--seq]`. Reads `entity_states` from RDS for any tenant, runs every decision of every loan in `core.cron.runner.WAVES` order through `core.scenarios.runner.ScenarioRunner` (the production `PersonaRunner` path), writes `decision_outputs`, then prints a summary (total written, outcome distribution, per-decision-type, per-application). This is the reusable generalisation of the meridian-specific script.
+- **Capital Loans evaluator** (`scripts/evaluate_capital_loans.py`) — the same ScenarioRunner harness pinned to `TENANT="capital_loans"` with an `EXPECTED_OUTCOMES` table for the 45-scenario onboarding set (Group A clean approvals, B credit blocks, C income/DTI, … ), verifying each key decision's `outcome` against the corrected plan. **This is the Platform Studio onboarding proof:** capital_loans was stood up through the UI (schema map + credit policy + products), then its loans run through the same engine meridian/summit use. **Not yet executed here** — it writes `decision_outputs` to the live RDS, so per the standing show-before-run rule it needs a "go ahead" before running; pass/fail counts are therefore not recorded in this doc yet.
+- **Meridian debug/patch helpers** — `scripts/debug_meridian.py` (read-only: dumps real `entity_states` values + actual-vs-expected for all 16 meridian scenarios; documents where the real schema hides fields — `loan_purpose` in `loan_terms.urla`, `fraud_score` in `borrower.identity`, co-score in `co_borrowers[0].credit`, `decision_outputs` deduped to latest version per (application, decision)); `scripts/patch_meridian_entity_states.py` (writes scenario-spec qualifying-income/obligations/DTI/state/purpose into `entity_states`; notes the real column is `monthly_obligations` not `total_obligations`, and `property_state`/`loan_purpose` are written into the `loan_terms` jsonb, not real columns).
+- **Product-demo recorder rebuilt** (`frontend/record_demo.cjs`, → `accord_demo.mp4`) — ~60s silent captioned walkthrough of the LIVE app (voiceover muxed in afterwards via `-c:v copy`). Starts on the already-loaded `/login` page (no black intro), drives the loan header (OFAC + QM badges, 4 clickable metrics → evidence panels), Decision Journey layer badges + citation, then re-logs as compliance for the examiner report. Demo loan switched to `APP-SC30-004` (Wayne Hart). Read-only — never submits an action, so no prod mutation.

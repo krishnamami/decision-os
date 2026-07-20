@@ -1,8 +1,19 @@
 # DECISION OS — PRODUCT REQUIREMENTS DOCUMENT
 
-**Version:** 0.14 &nbsp;·&nbsp; **Updated:** June 2026 &nbsp;·&nbsp; Source of truth for Claude Code every session.
+**Version:** 0.15 &nbsp;·&nbsp; **Updated:** July 2026 &nbsp;·&nbsp; Source of truth for Claude Code every session.
 
 > **Strategic note (Session 8):** the user committed to PATH C — full DecisionOS as system of record (12–18 month roadmap). See §19 for the tier breakdown that drives every following session.
+
+### Session 15 deltas (v0.14 → v0.15) — role-aware ops + self-serve onboarding · deployed on the `accord` ECS cluster
+
+Two arcs. (1) **Trustworthy multi-tenant operations** — the review path is now role-aware and tenant-isolated end to end. (2) **Self-serve tenant onboarding (Platform Studio)** — a lender can be stood up and configured entirely through the UI, no code deploy. Full session narrative + commit hashes in `CONTEXT.md`; storage/registry mechanics in `docs/ARCHITECTURE.md`.
+
+- **Tenant isolation + RBAC in `/pipeline/decide`** (`b50d50e`) — `tenant_id` always from the JWT (never the request body); a cross-tenant loan now 403s ("Loan is not in your tenant") instead of silently no-op'ing; approve/deny/**override** gated behind the `override_decision` action-permission. New `override` branch stamps `decision_outputs.human_action='overridden'`. RBAC comes from `/auth/me.action_permissions`; the workbench hides/shows actions by permission flag, never by role name.
+- **Event-driven senior-UW escalation** (`f2e75bc`, `7036614`) — `escalate` reassigns to the tenant's `senior_uw` via dynamic role lookup; `loan_detail` surfaces the escalation context (who/why/when/category); senior reads their queue via `/pipeline/my-queue`. `fraud_score` is a genuine 0–1 scale (BSA threshold 0.75) — not rescaled.
+- **Processor doc-checklist workflow** (`3dcdb57`) — per-condition checklist + mark-received + advance-to-underwriting; `my-queue` split into needs_action / waiting_on_borrower / ready_to_advance.
+- **Exam-ready PDF** (`8684ae3`) — `POST /loans/{id}/export/exam-ready` → 5-page reportlab PDF. **Live admin/manager Dashboard** (`3460b46`) — real KPIs / team performance / attention loans (no mock data). **Agency citations in the decision trace** (`b6587b6`).
+- **Platform Studio onboarding UI** (`d2f7dd8` → `adfc947`) — `super_admin` role + `accordlend` platform tenant + tenant CRUD; **canonical schema registry (93 fields × 12 entities, `2fa5f86`)** feeding an NLP field mapper; credit-policy (structured + plain-English) and product configurators; confirmation/go-live with dry-run import — all on top of the PL-A/C/D/E extractors from v0.14. New `entity_states` v4.9 P0 columns (`6483899`). Config-layer only; the decision path and the 16/16 meridian eval are untouched.
+- **Policy Rules ← Platform Studio overlay** (`0e3eae5`, `640b2c7`) — the admin Policy Rules settings surface now reads the tenant's saved credit-policy **overlay** (base ∪ overlay draft), so values configured during onboarding render live instead of only agency defaults (`overlay_rules` added to `RulesResponse`; deep-clone-before-merge fix).
 
 ### Session 13–14 deltas (v0.13 → v0.14) — 5 commits · 77/77 UI tests · live EDMS data
 

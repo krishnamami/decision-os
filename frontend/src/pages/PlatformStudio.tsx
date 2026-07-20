@@ -1254,7 +1254,7 @@ function OnboardingConfirmation({ tenantId, tenantName, onBack, onEditMapping, o
       if (d.mappings.length > 0) {
         const SAMPLE_VALUES: Record<string, unknown> = {
           loan_amount: 425000, loan_amt: 425000, amount: 425000,
-          fico_score: 720, credit_score: 720, mid_score: 720, score: 720,
+          fico_score: 720, credit_score: 720, score: 720,
           back_end_dti: 38.5, dti: 38.5, dti_ratio: 38.5, dti_back: 38.5,
           front_end_dti: 24.0, dti_front: 24.0,
           ltv: 85.0, ltv_ratio: 85.0, loan_to_value: 85.0, cltv: 85.0, hcltv: 85.0,
@@ -1275,7 +1275,7 @@ function OnboardingConfirmation({ tenantId, tenantName, onBack, onEditMapping, o
           total_liquid_assets: 85000, checking_balance: 45000, savings_balance: 40000,
           reserves_months: 6.0, gift_amount: 0,
           monthly_obligations: 2100, total_monthly_debt: 1200, piti_monthly: 2100,
-          mid_score: 720, equifax_score: 718, experian_score: 722, transunion_score: 720,
+          mid_score: 720, fico_mid: 720, equifax_score: 718, experian_score: 722, transunion_score: 720,
           derogatory_count: 0, open_tradelines: 8, credit_utilization: 0.15,
           public_records_count: 0, inquiries_last_90: 1,
           date_of_birth: '1985-06-15', ssn_last4: '1234',

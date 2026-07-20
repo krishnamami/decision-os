@@ -760,8 +760,40 @@ confidence + source provenance + `missing_inputs`; unparseable items surface as
 **8-step onboarding API surface (complete):** 1 `/company` · 2 `/licenses` ·
 3 `/products/upload` (PL-E) · 4 `/extract-policy` (PL-C) + `GET /api/accord/rules` ·
 5 `/exception-config` · 6 `/extract-rate-sheet` (PL-D) · 7 `/import` · 8 `/test-loan`.
-The React 8-step wizard (PL-A-UI, `frontend/`) is a deferred follow-up — not covered
-by the pytest / 16/16 gate.
+
+### Platform Studio UI + API layer (Sections 1–4 · P19 · P21 — shipped 2026-07)
+
+The self-serve console on top of the extractors above: a `super_admin` stands up and
+configures a lender tenant entirely through the UI — **no code deploy**. Frontend under
+`frontend/` Platform Studio pages; backend `api/accord/platform_studio.py` (new router,
+JWT-enforced, `super_admin`-gated). Config-layer only — nothing here writes
+`decision_outputs`/`entity_states` values; it writes tenant config, mappings, rules,
+and products. Cross-tenant seeding runs under the `accord_admin` RLS sentinel.
+
+- **`super_admin` role** — bypasses plan-gating; the `accordlend` platform tenant owns the
+  tenant list + per-tenant detail + Create/Edit-Tenant (name/plan/LOS/programs/channels/states).
+- **Canonical schema registry (P21a)** — **93 fields × 12 entities**, the single source of
+  truth for the field-mapper target dropdown (maps a lender's LOS export fields →
+  Accord entity columns, incl. the `entity_states` v4.9 P0 columns).
+- **Section 1 — Tenant setup wizard:** LOS type, programs, states, channels, admin user,
+  default rules (`tenant_rules`/`overlay_rules` seeded via direct VALUES).
+- **Section 2 — Map Your Fields:** NLP field mapper (Claude sonnet-4-6 + heuristic
+  fallback; suggest → review → save). `GET /field-mappings` loads existing on open;
+  LOS type gates the source-system tabs.
+- **Section 3 — Credit Policy:** 3A structured form (sliders + agency comparison +
+  read-only routing rules) · 3B NLP rules (plain-English → extracted → confirm → save,
+  reusing PL-C's extractor). Activates via the existing `rules.py` overlay flow, and the
+  saved overlay is read back on the admin **Policy Rules** surface (`RulesSettings.tsx`
+  merges base ∪ `overlay_rules` so onboarding values render live, not just agency defaults).
+- **Section 4 — Loan Products:** product configurator (GET/POST/PATCH `/products`),
+  writing the `products` matrix table (still decision-path-safe — `product_eligibility`
+  reads its inline `_PRODUCTS`).
+- **P19 — Confirmation + go-live:** `/onboarding-summary`, `/go-live`, `/import-test`;
+  expandable saved-mappings/rules/products cards (P21d) with a dry-run import.
+
+The **PL-A-UI 8-step wizard** described in the extractor section above is now realized by
+these Section 1–4 + P19 screens; the pytest / 16/16 gate still covers only the backend
+extractors + config endpoints (the React UI is verified against the live ALB).
 
 ---
 
