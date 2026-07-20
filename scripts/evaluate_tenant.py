@@ -85,10 +85,16 @@ async def main():
         wave_count = sum(len(w) for w in WAVES)
         # Clean mode: delete all existing decisions before re-running
         if clean:
-            deleted = await conn.execute(
-                "DELETE FROM decision_outputs WHERE tenant_id=$1", tenant
-            )
-            print(f"Cleaned all decisions for {tenant}: {deleted}")
+            import asyncpg as _apg
+            _db_url = os.environ.get("DATABASE_URL", "").replace("+asyncpg", "").replace("postgresql+psycopg2", "postgresql")
+            _clean_conn = await _apg.connect(_db_url)
+            try:
+                deleted = await _clean_conn.execute(
+                    "DELETE FROM decision_outputs WHERE tenant_id=$1", tenant
+                )
+                print(f"Cleaned all decisions for {tenant}: {deleted}")
+            finally:
+                await _clean_conn.close()
         # Remove pure duplicates before re-running
         await sr.conn.execute("""
             DELETE FROM decision_outputs d
