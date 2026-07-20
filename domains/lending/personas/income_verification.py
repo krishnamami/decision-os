@@ -170,6 +170,29 @@ class IncomeVerificationAgent(LendingPersona):
         # ── Outcome ─────────────────────────────────────────────────
         if discrepancy > block_pct:
             outcome = DecisionOutcome.BLOCK
+        elif employment_type == "foreign_national":
+            # Foreign national income requires manual UW — always escalate
+            outcome = DecisionOutcome.ESCALATE
+        elif employment_type == "streamline":
+            # Streamline refi — no income verification needed
+            outcome = DecisionOutcome.ALLOW
+        elif employment_type == "retired":
+            # Retired/SSA/pension — fixed income, no employment continuity needed
+            # Discrepancy acceptable if income is verified
+            if discrepancy > block_pct:
+                outcome = DecisionOutcome.BLOCK
+            elif confidence_score >= 0.85:
+                outcome = DecisionOutcome.RECOMMEND  # retired always needs UW review
+            else:
+                outcome = DecisionOutcome.ESCALATE
+        elif employment_type == "self_employed":
+            # SE income requires 2yr history — always recommend for UW review
+            if discrepancy > block_pct:
+                outcome = DecisionOutcome.BLOCK
+            elif confidence_score >= 0.75:
+                outcome = DecisionOutcome.RECOMMEND
+            else:
+                outcome = DecisionOutcome.ESCALATE
         elif multiple_sources or foreign_income:
             outcome = DecisionOutcome.ESCALATE
         elif reconciliation_status == "missing":
@@ -178,13 +201,10 @@ class IncomeVerificationAgent(LendingPersona):
             outcome = DecisionOutcome.ESCALATE
         elif reconciliation_status == "auto_verified" \
                 and confidence_score >= 0.9 \
-                and employment_type == "salaried":
+                and employment_type in ("salaried", "w2_salaried"):
             outcome = DecisionOutcome.ALLOW
         elif reconciliation_status in ("auto_verified", "partial") \
                 and confidence_score >= 0.85:
-            # Partial reconciliation but no conflict + stated matches
-            # verified → still allow. Future commit can tighten this
-            # for stricter products.
             outcome = DecisionOutcome.ALLOW
         elif confidence_score >= 0.75:
             outcome = DecisionOutcome.RECOMMEND
