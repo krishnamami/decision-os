@@ -339,12 +339,17 @@ class EdmsContextStore:
 
     # ── Snapshot ─────────────────────────────────────────────────────
 
+    async def set_tenant(self, conn: Any, tenant_id: str) -> None:
+        """Set the tenant context for RLS-aware views."""
+        await conn.execute(f"SET app.tenant_id = '{tenant_id}'")
+
     async def snapshot(
         self,
         application_id: str,
         decision_id: str,
         entity_keys: Optional[list[tuple[str, str]]] = None,
         upstream_decision_ids: Optional[list[str]] = None,
+        tenant_id: Optional[str] = None,
     ) -> EdmsSnapshot:
         """Read the persona view for this decision + upstream outputs.
 
@@ -362,6 +367,8 @@ class EdmsContextStore:
         id_field = mapping["id_field"]
 
         async with pool.acquire() as conn:
+            if tenant_id:
+                await conn.execute(f"SET app.tenant_id = '{tenant_id}'")
             row = await conn.fetchrow(
                 f"SELECT * FROM {view} WHERE application_id = $1",
                 application_id,

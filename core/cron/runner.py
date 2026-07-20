@@ -347,7 +347,7 @@ class PersonaRunner:
             pool = await self.decision_store._get_pool()
             async with pool.acquire() as conn:
                 facts = await ContextEnricher(conn).evidence_facts(
-                    app_id, tenant_id, decision_id=decision_id
+                    app_id, tenant_id, decision_id=decision_id, tenant_id=tenant_id
                 )
                 snapshot.context["evidence"] = {app_id: facts}
                 # RA-4A: resolvers are sync/DB-less, so catalogue rules they
