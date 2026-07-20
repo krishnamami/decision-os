@@ -83,6 +83,12 @@ async def main():
             return
 
         wave_count = sum(len(w) for w in WAVES)
+        # Clean mode: delete all existing decisions before re-running
+        if args.clean:
+            deleted = await conn.execute(
+                "DELETE FROM decision_outputs WHERE tenant_id=$1", tenant
+            )
+            print(f"Cleaned all decisions for {tenant}: {deleted}")
         # Remove pure duplicates before re-running
         await sr.conn.execute("""
             DELETE FROM decision_outputs d
