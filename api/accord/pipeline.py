@@ -2449,7 +2449,7 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
         "interest_rate": _pct(e.get("interest_rate")),
         "lock_days_remaining": lock_days,
         "income_stated": _f((borrower.get("income") or {}).get("stated_income_annual")),
-        "income_verified": _f((borrower.get("income") or {}).get("verified_income_annual")),
+        "income_verified": _f(entity.get("combined_monthly_income") and entity["combined_monthly_income"] * 12 or (borrower.get("income") or {}).get("verified_income_annual")),
     }
     full_name = ap.get("full_name") or e.get("application_id") or "The borrower"
 
@@ -2472,7 +2472,7 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
             for _k in ("ltv", "ltv_ratio", "max_allowable_ltv", "credit_band", "loan_amount", "appraised_value"):
                 ltv_ctx.setdefault(_k, _ltv_cs.get(_k))
     # AUS result: aus_results table (primary) -> loan_terms.aus_findings (fallback).
-    _aus_findings = loan_terms.get("aus_findings") or {}
+    _aus_findings = loan_terms.get("aus_findings") or loan_terms.get("aus") or {}
     _aus_sys = (aus_row["system"] if aus_row else None) or _aus_findings.get("system")
     _aus_rec = (aus_row["recommendation"] if aus_row else None) or _aus_findings.get("recommendation")
     aus_result = None
