@@ -2132,7 +2132,6 @@ async def similar_cases(
                    es.borrower->'income'->>'employment_type' as employment_type,
                    d.outcome
             FROM entity_states es
-            LEFT JOIN applicants a ON a.applicant_id = (es.borrower->>'applicant_id')
             LEFT JOIN decision_outputs d ON d.application_id = es.application_id
                 AND d.decision_id = 'underwriting_decision'
                 AND d.tenant_id = es.tenant_id
