@@ -2104,8 +2104,12 @@ async def similar_cases(
 ) -> dict:
     """Return loans with similar risk profile — FICO band ±30, DTI ±5%, same loan type."""
     tenant = user["tenant_id"]
-    pool = await _get_pool()
-    async with pool.acquire() as conn:
+    try:
+        pool = await _get_pool()
+    except Exception as exc:
+        raise HTTPException(500, f"Pool error: {exc}")
+    try:
+        async with pool.acquire() as conn:
         await conn.execute(f"SET app.tenant_id = '{tenant}'")
         # Get the target loan's full profile
         target = await conn.fetchrow("""
@@ -2187,6 +2191,9 @@ async def similar_cases(
         "cases": cases,
         "based_on": {"fraud_score": float(fraud_score) if fraud_score else None, "loan_type": loan_type},
     }
+    except Exception as exc:
+        import traceback
+        raise HTTPException(500, f"similar-cases error: {exc} | {traceback.format_exc()[-300:]}")
 
 
 @router.get("/loans/{application_id}")
