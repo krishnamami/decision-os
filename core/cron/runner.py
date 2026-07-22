@@ -412,8 +412,27 @@ class PersonaRunner:
         )
 
         # 3. Re-run with the resolved policy in hand (no longer None) so any
-        #    persona that consumes it gets it. Values are unchanged.
-        reasoning = agent._compute_offline(bundle, policy)
+        #    persona that consumes it gets it. Uses Claude when API key present.
+        if agent.use_anthropic:
+            _ar = await agent.reason(bundle, policy)
+            # AgentReasoning wraps OfflineReasoning — extract fields for the writer
+            _j = _ar.journal
+            reasoning = agent._compute_offline(bundle, policy)
+            # Override the summary/hypothesis with Claude's narrative
+            if _j and hasattr(_j, "human_readable_summary") and _j.human_readable_summary:
+                reasoning = type(reasoning)(
+                    output_payload=_ar.output_payload,
+                    proposed_outcome=_ar.proposed_outcome,
+                    confidence=_ar.confidence,
+                    signals=reasoning.signals,
+                    contradictions=reasoning.contradictions,
+                    hypothesis=_j.hypothesis_tested or reasoning.hypothesis,
+                    conclusion=_j.conclusion or reasoning.conclusion,
+                    confidence_basis=_j.confidence_basis or reasoning.confidence_basis,
+                    summary=_j.human_readable_summary or reasoning.summary,
+                )
+        else:
+            reasoning = agent._compute_offline(bundle, policy)
 
         # 4. The policy engine has the last word on outcome
         #    (no_action_without_policy). Fall back to the persona's proposal
