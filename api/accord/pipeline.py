@@ -2150,9 +2150,7 @@ async def similar_cases(
                     AND d2.decision_id = 'underwriting_decision'
                     AND d2.tenant_id = es.tenant_id
                 )
-            LEFT JOIN vw_fraud_screening_context fr ON fr.application_id = es.application_id
-            WHERE es.tenant_id = $1
-            AND es.application_id != $2
+            WHERE es.tenant_id = $1         AND es.application_id != $2
             AND ($3 IS NULL OR ABS(COALESCE(es.mid_credit_score,0) - $3) <= 50)
             AND ($4 IS NULL OR ABS(COALESCE(es.dti_back,0) - $4) <= 10)
             ORDER BY
@@ -2178,7 +2176,7 @@ async def similar_cases(
             cases.append({
                 "application_id": r["application_id"],
                 "loan_amount": float(r["loan_amount"]) if r["loan_amount"] else None,
-                "fraud_score": float(r["fraud_score"]) if r["fraud_score"] else None,
+                "fraud_score": None,  # fetched separately if needed
                 "loan_type": r["loan_type"],
                 "outcome": outcome,
                 "action_type": "underwriting_decision",
