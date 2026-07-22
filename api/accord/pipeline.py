@@ -2107,25 +2107,36 @@ async def similar_cases(
     pool = await _get_pool()
     async with pool.acquire() as conn:
         await conn.execute(f"SET app.tenant_id = '{tenant}'")
-        # Get the target loan's profile
+        # Get the target loan's full profile
         target = await conn.fetchrow("""
             SELECT es.mid_credit_score, es.dti_back, es.ltv,
-                   es.loan_terms->>'loan_type' as loan_type,
-                   es.loan_amount, es.application_id
+                   es.loan_terms->>'loan_program' as loan_type,
+                   es.loan_terms->>'purpose' as loan_purpose,
+                   es.borrower->'income'->>'employment_type' as employment_type,
+                   es.loan_amount, es.application_id,
+                   fr.fraud_score
             FROM entity_states es
+            LEFT JOIN vw_fraud_screening_context fr ON fr.application_id = es.application_id
             WHERE es.application_id = $1 AND es.tenant_id = $2
         """, application_id, tenant)
         if not target:
             return {"cases": [], "based_on": {"fraud_score": None, "loan_type": None}}
         fico = target["mid_credit_score"]
         dti = target["dti_back"]
+        ltv = target["ltv"]
         loan_type = target["loan_type"]
-        # Find similar loans (exclude self, same tenant)
+        loan_purpose = target["loan_purpose"]
+        emp_type = target["employment_type"]
+        fraud_score = target["fraud_score"]
+        loan_amount = float(target["loan_amount"] or 0)
+        # Find similar loans — match on FICO band, DTI range, loan purpose, employment type
         rows = await conn.fetch("""
             SELECT es.application_id, es.loan_amount, es.mid_credit_score,
                    es.dti_back, es.ltv, es.status,
                    a.first_name || ' ' || a.last_name as borrower_name,
-                   es.loan_terms->>'loan_type' as loan_type,
+                   es.loan_terms->>'loan_program' as loan_type,
+                   es.loan_terms->>'purpose' as loan_purpose,
+                   es.borrower->'income'->>'employment_type' as employment_type,
                    d.outcome, d.decided_at,
                    fr.fraud_score
             FROM entity_states es
@@ -2142,16 +2153,28 @@ async def similar_cases(
             LEFT JOIN vw_fraud_screening_context fr ON fr.application_id = es.application_id
             WHERE es.tenant_id = $1
             AND es.application_id != $2
-            AND ($3 IS NULL OR ABS(COALESCE(es.mid_credit_score,0) - $3) <= 40)
-            AND ($4 IS NULL OR ABS(COALESCE(es.dti_back,0) - $4) <= 8)
+            AND ($3 IS NULL OR ABS(COALESCE(es.mid_credit_score,0) - $3) <= 50)
+            AND ($4 IS NULL OR ABS(COALESCE(es.dti_back,0) - $4) <= 10)
             ORDER BY
+                -- Score similarity: lower = more similar
+                (CASE WHEN es.loan_terms->>'purpose' = $5 THEN 0 ELSE 20 END) +
+                (CASE WHEN es.borrower->'income'->>'employment_type' = $6 THEN 0 ELSE 10 END) +
                 ABS(COALESCE(es.mid_credit_score,0) - COALESCE($3,0)) +
-                ABS(COALESCE(es.dti_back,0) - COALESCE($4,0)) * 5
+                ABS(COALESCE(es.dti_back,0) - COALESCE($4,0)) * 5 +
+                ABS(COALESCE(es.ltv,0) - COALESCE($7,0)) * 2
             LIMIT 5
-        """, tenant, application_id, fico, dti)
+        """, tenant, application_id, fico, dti, loan_purpose, emp_type, ltv)
         cases = []
         for r in rows:
             outcome = r["outcome"] or r["status"] or "in_underwriting"
+            similarity_notes = []
+            if r["loan_purpose"] == loan_purpose:
+                similarity_notes.append(f"{(r['loan_purpose'] or '').replace('_',' ').title()}")
+            if r["employment_type"] == emp_type:
+                similarity_notes.append(f"{(r['employment_type'] or '').replace('_',' ').title()}")
+            reason = f"FICO {r['mid_credit_score']}, DTI {round(r['dti_back'] or 0, 1)}%, LTV {round(r['ltv'] or 0, 1)}%"
+            if similarity_notes:
+                reason += f" · {' · '.join(similarity_notes)}"
             cases.append({
                 "application_id": r["application_id"],
                 "loan_amount": float(r["loan_amount"]) if r["loan_amount"] else None,
@@ -2159,14 +2182,14 @@ async def similar_cases(
                 "loan_type": r["loan_type"],
                 "outcome": outcome,
                 "action_type": "underwriting_decision",
-                "reason_text": f"FICO {r['mid_credit_score']}, DTI {round(r['dti_back'] or 0, 1)}%, LTV {round(r['ltv'] or 0, 1)}%",
+                "reason_text": reason,
                 "reason_category": "similar_profile",
                 "related_decision_id": "underwriting_decision",
                 "resolved_days": None,
             })
     return {
         "cases": cases,
-        "based_on": {"fraud_score": None, "loan_type": loan_type},
+        "based_on": {"fraud_score": float(fraud_score) if fraud_score else None, "loan_type": loan_type},
     }
 
 
