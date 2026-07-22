@@ -2102,7 +2102,88 @@ async def similar_cases(
     application_id: str,
     user: dict = Depends(get_current_user),
 ) -> dict:
-    return {"cases": [], "based_on": {"fraud_score": None, "loan_type": None}}
+    tenant = user["tenant_id"]
+    try:
+        pool = await _get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(f"SET app.tenant_id = '{tenant}'")
+            target = await conn.fetchrow(
+                """SELECT mid_credit_score, dti_back, ltv,
+                          loan_terms->>'loan_program' as loan_type,
+                          loan_terms->>'purpose' as loan_purpose,
+                          borrower->'income'->>'employment_type' as emp_type
+                   FROM entity_states
+                   WHERE application_id=$1 AND tenant_id=$2""",
+                application_id, tenant
+            )
+            if not target:
+                return {"cases": [], "based_on": {"fraud_score": None, "loan_type": None}}
+            fico = target["mid_credit_score"]
+            dti = target["dti_back"]
+            ltv = target["ltv"]
+            loan_type = target["loan_type"]
+            loan_purpose = target["loan_purpose"]
+            emp_type = target["emp_type"]
+            rows = await conn.fetch(
+                """SELECT es.application_id, es.loan_amount, es.mid_credit_score,
+                          es.dti_back, es.ltv, es.status,
+                          es.loan_terms->>'loan_program' as loan_type,
+                          es.loan_terms->>'purpose' as loan_purpose,
+                          es.borrower->'income'->>'employment_type' as emp_type,
+                          d.outcome
+                   FROM entity_states es
+                   LEFT JOIN decision_outputs d
+                     ON d.application_id=es.application_id
+                     AND d.decision_id='underwriting_decision'
+                     AND d.tenant_id=es.tenant_id
+                     AND d.version=(SELECT MAX(v) FROM decision_outputs d2
+                                    JOIN (SELECT application_id, MAX(version) v
+                                          FROM decision_outputs
+                                          WHERE decision_id='underwriting_decision'
+                                          AND tenant_id=$1
+                                          GROUP BY application_id) sub
+                                    ON sub.application_id=d2.application_id AND sub.v=d2.version
+                                    WHERE d2.application_id=es.application_id LIMIT 1)
+                   WHERE es.tenant_id=$1
+                   AND es.application_id!=$2
+                   AND ABS(COALESCE(es.mid_credit_score,0)-COALESCE($3,0))<=50
+                   AND ABS(COALESCE(es.dti_back,0)-COALESCE($4,0))<=10
+                   ORDER BY
+                     (CASE WHEN es.loan_terms->>'purpose'=$5 THEN 0 ELSE 20 END)+
+                     (CASE WHEN es.borrower->'income'->>'employment_type'=$6 THEN 0 ELSE 10 END)+
+                     ABS(COALESCE(es.mid_credit_score,0)-COALESCE($3,0))+
+                     ABS(COALESCE(es.dti_back,0)-COALESCE($4,0))*5+
+                     ABS(COALESCE(es.ltv,0)-COALESCE($7,0))*2
+                   LIMIT 5""",
+                tenant, application_id, fico, dti, loan_purpose, emp_type, ltv
+            )
+            cases = []
+            for r in rows:
+                outcome = r["outcome"] or r["status"] or "in_underwriting"
+                notes = []
+                if r["loan_purpose"] == loan_purpose:
+                    notes.append((r["loan_purpose"] or "").replace("_", " ").title())
+                if r["emp_type"] == emp_type:
+                    notes.append((r["emp_type"] or "").replace("_", " ").title())
+                reason = f"FICO {r['mid_credit_score']}, DTI {round(r['dti_back'] or 0,1)}%, LTV {round(r['ltv'] or 0,1)}%"
+                if notes:
+                    reason += " · " + " · ".join(notes)
+                cases.append({
+                    "application_id": r["application_id"],
+                    "loan_amount": float(r["loan_amount"]) if r["loan_amount"] else None,
+                    "fraud_score": None,
+                    "loan_type": r["loan_type"],
+                    "outcome": outcome,
+                    "action_type": "underwriting_decision",
+                    "reason_text": reason,
+                    "reason_category": "similar_profile",
+                    "related_decision_id": "underwriting_decision",
+                    "resolved_days": None,
+                })
+            return {"cases": cases, "based_on": {"fraud_score": None, "loan_type": loan_type}}
+    except Exception as exc:
+        import traceback; tb = traceback.format_exc()[-500:]
+        raise HTTPException(500, f"{exc} | {tb}")
 
 @router.get("/loans/{application_id}")
 async def loan_detail(application_id: str, user: dict = Depends(get_current_user)) -> dict:
