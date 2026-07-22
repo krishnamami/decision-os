@@ -2104,7 +2104,7 @@ async def similar_cases(
 ) -> dict:
     """Return loans with similar risk profile — FICO band ±30, DTI ±5%, same loan type."""
     tenant = user["tenant_id"]
-    pool = await get_pool()
+    pool = await _get_pool()
     async with pool.acquire() as conn:
         await conn.execute(f"SET app.tenant_id = '{tenant}'")
         # Get the target loan's profile
