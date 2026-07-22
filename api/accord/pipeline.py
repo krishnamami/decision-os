@@ -2113,10 +2113,8 @@ async def similar_cases(
                    es.loan_terms->>'loan_program' as loan_type,
                    es.loan_terms->>'purpose' as loan_purpose,
                    es.borrower->'income'->>'employment_type' as employment_type,
-                   es.loan_amount, es.application_id,
-                   fr.fraud_score
+                   es.loan_amount, es.application_id
             FROM entity_states es
-            LEFT JOIN vw_fraud_screening_context fr ON fr.application_id = es.application_id
             WHERE es.application_id = $1 AND es.tenant_id = $2
         """, application_id, tenant)
         if not target:
@@ -2127,7 +2125,7 @@ async def similar_cases(
         loan_type = target["loan_type"]
         loan_purpose = target["loan_purpose"]
         emp_type = target["employment_type"]
-        fraud_score = target["fraud_score"]
+        fraud_score = None
         loan_amount = float(target["loan_amount"] or 0)
         # Find similar loans — match on FICO band, DTI range, loan purpose, employment type
         rows = await conn.fetch("""
