@@ -207,7 +207,12 @@ class PersonaRunner:
         cls = classes.get(decision_id)
         if cls is None:
             raise KeyError(f"No persona class registered for {decision_id!r}")
-        self._agents[decision_id] = cls()
+        import os
+        use_ai = bool(os.environ.get("ANTHROPIC_API_KEY"))
+        try:
+            self._agents[decision_id] = cls(use_anthropic=use_ai)
+        except TypeError:
+            self._agents[decision_id] = cls()
         return self._agents[decision_id]
 
     # ── One persona run ──────────────────────────────────────────────
