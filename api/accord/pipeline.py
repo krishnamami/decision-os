@@ -2097,6 +2097,79 @@ def _resolve_loan_program(loan_type, loan_amount, explicit=None):
     return None
 
 
+@router.get("/loans/{application_id}/similar-cases")
+async def similar_cases(
+    application_id: str,
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Return loans with similar risk profile — FICO band ±30, DTI ±5%, same loan type."""
+    tenant = user["tenant_id"]
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(f"SET app.tenant_id = '{tenant}'")
+        # Get the target loan's profile
+        target = await conn.fetchrow("""
+            SELECT es.mid_credit_score, es.dti_back, es.ltv,
+                   es.loan_terms->>'loan_type' as loan_type,
+                   es.loan_amount, es.application_id
+            FROM entity_states es
+            WHERE es.application_id = $1 AND es.tenant_id = $2
+        """, application_id, tenant)
+        if not target:
+            return {"cases": [], "based_on": {"fraud_score": None, "loan_type": None}}
+        fico = target["mid_credit_score"]
+        dti = target["dti_back"]
+        loan_type = target["loan_type"]
+        # Find similar loans (exclude self, same tenant)
+        rows = await conn.fetch("""
+            SELECT es.application_id, es.loan_amount, es.mid_credit_score,
+                   es.dti_back, es.ltv, es.status,
+                   a.first_name || ' ' || a.last_name as borrower_name,
+                   es.loan_terms->>'loan_type' as loan_type,
+                   d.outcome, d.decided_at,
+                   fr.fraud_score
+            FROM entity_states es
+            LEFT JOIN applicants a ON a.applicant_id = (es.borrower->>'applicant_id')
+            LEFT JOIN decision_outputs d ON d.application_id = es.application_id
+                AND d.decision_id = 'underwriting_decision'
+                AND d.tenant_id = es.tenant_id
+                AND d.version = (
+                    SELECT MAX(d2.version) FROM decision_outputs d2
+                    WHERE d2.application_id = es.application_id
+                    AND d2.decision_id = 'underwriting_decision'
+                    AND d2.tenant_id = es.tenant_id
+                )
+            LEFT JOIN vw_fraud_screening_context fr ON fr.application_id = es.application_id
+            WHERE es.tenant_id = $1
+            AND es.application_id != $2
+            AND ($3 IS NULL OR ABS(COALESCE(es.mid_credit_score,0) - $3) <= 40)
+            AND ($4 IS NULL OR ABS(COALESCE(es.dti_back,0) - $4) <= 8)
+            ORDER BY
+                ABS(COALESCE(es.mid_credit_score,0) - COALESCE($3,0)) +
+                ABS(COALESCE(es.dti_back,0) - COALESCE($4,0)) * 5
+            LIMIT 5
+        """, tenant, application_id, fico, dti)
+        cases = []
+        for r in rows:
+            outcome = r["outcome"] or r["status"] or "in_underwriting"
+            cases.append({
+                "application_id": r["application_id"],
+                "loan_amount": float(r["loan_amount"]) if r["loan_amount"] else None,
+                "fraud_score": float(r["fraud_score"]) if r["fraud_score"] else None,
+                "loan_type": r["loan_type"],
+                "outcome": outcome,
+                "action_type": "underwriting_decision",
+                "reason_text": f"FICO {r['mid_credit_score']}, DTI {round(r['dti_back'] or 0, 1)}%, LTV {round(r['ltv'] or 0, 1)}%",
+                "reason_category": "similar_profile",
+                "related_decision_id": "underwriting_decision",
+                "resolved_days": None,
+            })
+    return {
+        "cases": cases,
+        "based_on": {"fraud_score": None, "loan_type": loan_type},
+    }
+
+
 @router.get("/loans/{application_id}")
 async def loan_detail(application_id: str, user: dict = Depends(get_current_user)) -> dict:
     _require_db()
