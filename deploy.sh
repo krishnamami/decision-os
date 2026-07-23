@@ -97,21 +97,5 @@ case "$TARGET" in
 esac
 
 echo ""
-# ── Auto-evaluate all active tenants after API deploy ─────────────────────
-echo ""
-echo ">>> Triggering evaluation for active tenants..."
-for TENANT in capital_loans meridian; do
-  TASK_ARN=$(aws ecs run-task \
-    --cluster $ECS_CLUSTER \
-    --task-definition accord-api \
-    --overrides "{\"containerOverrides\":[{\"name\":\"accord-api\",\"command\":[\"python\",\"/app/scripts/evaluate_tenant.py\",\"--tenant\",\"$TENANT\",\"--concurrency=4\",\"--clean\"]}]}" \
-    --launch-type FARGATE \
-    --network-configuration "awsvpcConfiguration={subnets=[\"subnet-06f6695e50577d0a6\",\"subnet-0c752ca6465821670\"],securityGroups=[\"sg-0f1a63688a8bfad05\"],assignPublicIp=ENABLED}" \
-    --region $AWS_REGION \
-    --output text --query 'tasks[0].taskArn' 2>/dev/null)
-  echo "    Evaluation task for $TENANT: $TASK_ARN"
-done
-echo "    Decisions will refresh in ~3-4 minutes"
-echo ""
 echo "=== Deploy complete ==="
 echo "Live at: http://accord-alb-588286075.us-east-1.elb.amazonaws.com"
