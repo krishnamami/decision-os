@@ -415,22 +415,26 @@ class PersonaRunner:
         #    persona that consumes it gets it. Uses Claude when API key present.
         if agent.use_anthropic:
             _ar = await agent.reason(bundle, policy)
-            # AgentReasoning wraps OfflineReasoning — extract fields for the writer
             _j = _ar.journal
-            reasoning = agent._compute_offline(bundle, policy)
-            # Override the summary/hypothesis with Claude's narrative
-            if _j and hasattr(_j, "human_readable_summary") and _j.human_readable_summary:
-                reasoning = type(reasoning)(
-                    output_payload=_ar.output_payload,
-                    proposed_outcome=_ar.proposed_outcome,
-                    confidence=_ar.confidence,
-                    signals=reasoning.signals,
-                    contradictions=reasoning.contradictions,
-                    hypothesis=_j.hypothesis_tested or reasoning.hypothesis,
-                    conclusion=_j.conclusion or reasoning.conclusion,
-                    confidence_basis=_j.confidence_basis or reasoning.confidence_basis,
-                    summary=_j.human_readable_summary or reasoning.summary,
-                )
+            # Build base reasoning from offline
+            _base = agent._compute_offline(bundle, policy)
+            # Use Claude narrative if available
+            _summary = getattr(_j, "human_readable_summary", None) if _j else None
+            _hypothesis = getattr(_j, "hypothesis_tested", None) if _j else None
+            _conclusion = getattr(_j, "conclusion", None) if _j else None
+            _conf_basis = getattr(_j, "confidence_basis", None) if _j else None
+            from domains.lending.personas.base import OfflineReasoning
+            reasoning = OfflineReasoning(
+                output_payload=_ar.output_payload or _base.output_payload,
+                proposed_outcome=_ar.proposed_outcome or _base.proposed_outcome,
+                confidence=_ar.confidence or _base.confidence,
+                signals=_base.signals,
+                contradictions=_base.contradictions,
+                hypothesis=_hypothesis or _base.hypothesis,
+                conclusion=_conclusion or _base.conclusion,
+                confidence_basis=_conf_basis or _base.confidence_basis,
+                summary=_summary or _base.summary,
+            )
         else:
             reasoning = agent._compute_offline(bundle, policy)
 
