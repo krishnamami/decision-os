@@ -415,7 +415,10 @@ class PersonaRunner:
         #    persona that consumes it gets it. Uses Claude when API key present.
         # Only call Claude for high-value personas to control cost
         _AI_PERSONAS = {"underwriting_decision"}
-        if agent.use_anthropic and decision_id in _AI_PERSONAS:
+        import os as _os
+        _should_use_ai = bool(_os.environ.get("ANTHROPIC_API_KEY")) and decision_id in _AI_PERSONAS
+        if _should_use_ai:
+            agent._use_anthropic = True
             _ar = await agent.reason(bundle, policy)
             _j = _ar.journal
             # Build base reasoning from offline
