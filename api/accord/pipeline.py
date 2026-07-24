@@ -2502,6 +2502,7 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
                 r["rule_version_effective_from"].isoformat() if r["rule_version_effective_from"] else None
             ),
             "governed_by": _J(r["governed_by"]) if r["governed_by"] else [],
+            "reasoning_summary": (_J(r["reasoning"]) or {}).get("summary") if r["reasoning"] else None,
         })
 
     lock_days = _lock_days(loan_terms)
@@ -2687,7 +2688,8 @@ async def loan_detail(application_id: str, user: dict = Depends(get_current_user
         "rain_check": rain_check,
         "conversational_summary": _conversational_summary(
             decisions, metrics_out, full_name.split()[0],
-            conditions=[dict(r) for r in lci_rows], ltv_ctx=ltv_ctx),
+            conditions=[dict(r) for r in lci_rows], ltv_ctx=ltv_ctx,
+            ai_reasoning=next((d.get("reasoning_summary") for d in decisions if d.get("decision_id") == "underwriting_decision" and d.get("reasoning_summary")), None)),
         "status": status,
         "urgency": urgency,
         "blocking_persona": blocking,

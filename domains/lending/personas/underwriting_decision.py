@@ -259,4 +259,38 @@ class SeniorUnderwritingAgent(LendingPersona):
         )
 
 
+    @staticmethod
+    def _build_user_prompt(bundle, policy, offline):
+        """Slim prompt — only key underwriting signals, not the full bundle."""
+        import json
+        # Extract only essential fields to avoid token limits
+        obj = bundle.objects or {}
+        uw = {}
+        for k, v in obj.items():
+            if isinstance(v, dict):
+                first = next(iter(v.values()), {})
+                uw[k] = first
+        upstream = {}
+        for k, v in (bundle.upstream_outputs or {}).items():
+            upstream[k] = {"outcome": v.get("outcome"), "confidence": v.get("confidence")}
+        payload = {
+            "application_id": bundle.application_id,
+            "decision_id": "underwriting_decision",
+            "computed_values": offline.output_payload,
+            "upstream_decisions": upstream,
+            "key_signals": uw,
+            "policy": {"outcome": policy.outcome.value, "reasons": list(policy.reasons)} if policy else None,
+            "instructions": (
+                "You are a senior underwriter. Based on the data, write a professional "
+                "underwriting memo in plain English. Include: decision rationale, key strengths, "
+                "blocking issues, and recommended next steps. Return JSON with: "
+                "hypothesis_tested (str), signals_evaluated (list), contradictions_found (list), "
+                "conclusion (str), confidence_basis (str), human_readable_summary (str, 3-5 paragraphs). "
+                "human_readable_summary should be detailed, cite specific numbers, and be written "
+                "for a senior underwriter audience."
+            ),
+        }
+        return json.dumps(payload, default=str)
+
+
 __all__ = ["SeniorUnderwritingAgent"]
