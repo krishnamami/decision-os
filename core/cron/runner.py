@@ -414,7 +414,7 @@ class PersonaRunner:
         # 3. Re-run with the resolved policy in hand (no longer None) so any
         #    persona that consumes it gets it. Uses Claude when API key present.
         # Only call Claude for high-value personas to control cost
-        _AI_PERSONAS = {"underwriting_decision", "fraud_screening", "approval_routing"}
+        _AI_PERSONAS = {"underwriting_decision"}
         if agent.use_anthropic and decision_id in _AI_PERSONAS:
             _ar = await agent.reason(bundle, policy)
             _j = _ar.journal
