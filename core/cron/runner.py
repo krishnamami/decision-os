@@ -419,7 +419,10 @@ class PersonaRunner:
         _should_use_ai = bool(_os.environ.get("ANTHROPIC_API_KEY")) and decision_id in _AI_PERSONAS
         if _should_use_ai:
             agent._use_anthropic = True
+            import logging as _log
+            _log.getLogger("persona").warning("CALLING CLAUDE for %s/%s", decision_id, app_id)
             _ar = await agent.reason(bundle, policy)
+            _log.getLogger("persona").warning("CLAUDE DONE for %s/%s summary=%s", decision_id, app_id, getattr(getattr(_ar, "journal", None), "human_readable_summary", "NONE")[:50])
             _j = _ar.journal
             # Build base reasoning from offline
             _base = agent._compute_offline(bundle, policy)
