@@ -128,14 +128,8 @@ class LendingPersona(DecisionAgent):
         try:
             response = await client.messages.create(
                 model=self._anthropic_model,
-                max_tokens=1024,
-                system=[
-                    {
-                        "type": "text",
-                        "text": system,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
+                max_tokens=4096,
+                system=system,
                 messages=[{"role": "user", "content": user}],
             )
         except Exception as _api_err:
@@ -351,12 +345,18 @@ def _extract_text(response: Any) -> str:
 def _journal_from_json(
     text: str, *, fallback: OfflineReasoning
 ) -> WorkJournalEntry:
-    payload = json.loads(text)
+    # Strip markdown code fences if Claude wraps response
+    t = text.strip()
+    if t.startswith(b"```" if isinstance(t, bytes) else "```"):
+        t = t.split("\n", 1)[-1]
+        if t.endswith("```"):
+            t = t.rsplit("```", 1)[0].strip()
+    payload = json.loads(t)
     signals_raw = payload.get("signals_evaluated") or []
     contradictions_raw = payload.get("contradictions_found") or []
     return WorkJournalEntry(
         hypothesis_tested=str(payload.get("hypothesis_tested") or fallback.hypothesis),
-        signals_evaluated=[Signal(**s) for s in signals_raw if isinstance(s, dict)],
+        signals_evaluated=[Signal(**{**s, "weight": (lambda w: float(w) if isinstance(w, (int, float)) else (float(w) if isinstance(w, str) and w.replace(".","").isdigit() else 1.0))(s.get("weight", 1.0))}) for s in signals_raw if isinstance(s, dict)],
         contradictions_found=[
             Contradiction(**c) for c in contradictions_raw if isinstance(c, dict)
         ],
