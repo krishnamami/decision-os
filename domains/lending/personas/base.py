@@ -138,15 +138,19 @@ class LendingPersona(DecisionAgent):
                 ],
                 messages=[{"role": "user", "content": user}],
             )
-        except Exception:
+        except Exception as _api_err:
+            import logging; logging.getLogger("persona.anthropic").warning("API call failed: %s", _api_err)
             return None
 
         text = _extract_text(response)
         if not text:
             return None
         try:
-            return _journal_from_json(text, fallback=offline)
-        except Exception:
+            result = _journal_from_json(text, fallback=offline)
+            import logging; logging.getLogger("persona.anthropic").info("Claude summary: %s", result.human_readable_summary[:100])
+            return result
+        except Exception as _json_err:
+            import logging; logging.getLogger("persona.anthropic").warning("JSON parse failed: %s | text=%s", _json_err, text[:200])
             return None
 
     @staticmethod
