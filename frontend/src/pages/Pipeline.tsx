@@ -294,7 +294,15 @@ function AllApplications() {
     }
   }
 
-  const rows = [...(data?.applications ?? [])].sort(
+  // Compliance role: only show fraud/OFAC flagged loans (halted or fraud blocked)
+  const isCompliance = role === 'compliance'
+  const rows = [...(data?.applications ?? [])].filter((a) => {
+    if (!isCompliance) return true
+    const decisions = a.decisions ?? {}
+    const fraudBlock = decisions['fraud_screening']?.outcome === 'block'
+    const halted = a.status === 'halted'
+    return fraudBlock || halted
+  }).sort(
     (a, b) => (STATUS_SORT[a.status] ?? 9) - (STATUS_SORT[b.status] ?? 9),
   )
   const kpis = data?.kpis

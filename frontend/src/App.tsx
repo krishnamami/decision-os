@@ -124,7 +124,7 @@ function AppShell() {
           {(user?.role === 'admin' || user?.role === 'super_admin') && <Route path="/platform-studio" element={<PlatformStudio />} />}
           {user?.role === 'admin' && <Route path="/settings" element={<Settings />} />}
           {(user?.role === 'admin' || user?.role === 'manager') && <Route path="/settings/import" element={<ImportLoans />} />}
-          {(user?.role === 'admin' || user?.role === 'manager' || user?.role === 'super_admin') && <Route path="/settings/rules" element={<div className="mx-auto max-w-4xl px-6 py-6"><RulesSettings /></div>} />}
+          {(user?.role === 'admin' || user?.role === 'manager' || user?.role === 'super_admin' || user?.role === 'compliance') && <Route path="/settings/rules" element={<div className="mx-auto max-w-4xl px-6 py-6"><RulesSettings /></div>} />}
           {(user?.role === 'admin' || user?.role === 'manager') && <Route path="/comparison" element={<ComparisonMode />} />}
           {/* Demo walkthrough — admin-only deep links into the real pages, with
               the DEMO watermark on. See pages/DemoMode.tsx + docs/DEMO_SCRIPT.md. */}
