@@ -261,9 +261,8 @@ class SeniorUnderwritingAgent(LendingPersona):
 
     @staticmethod
     def _build_user_prompt(bundle, policy, offline):
-        """Slim prompt — only key underwriting signals, not the full bundle."""
+        """Slim prompt — structured bullet format for UW workbench."""
         import json
-        # Extract only essential fields to avoid token limits
         obj = bundle.objects or {}
         uw = {}
         for k, v in obj.items():
@@ -281,13 +280,15 @@ class SeniorUnderwritingAgent(LendingPersona):
             "key_signals": uw,
             "policy": {"outcome": policy.outcome.value, "reasons": list(policy.reasons)} if policy else None,
             "instructions": (
-                "You are a senior underwriter. Based on the data, write a professional "
-                "underwriting memo in plain English. Include: decision rationale, key strengths, "
-                "blocking issues, and recommended next steps. Return JSON with: "
-                "hypothesis_tested (str), signals_evaluated (list), contradictions_found (list), "
-                "conclusion (str), confidence_basis (str), human_readable_summary (str, 3-5 paragraphs). "
-                "human_readable_summary should be detailed, cite specific numbers, and be written "
-                "for a senior underwriter audience."
+                "You are a senior underwriter writing a file briefing for a colleague. "
+                "Write human_readable_summary with these sections, each on its own line:\n"
+                "- Opening sentence: borrower name, credit profile, and decision verdict with primary reason.\n"
+                "- 🔴 One line per hard block with specific numbers and brief context.\n"
+                "- ✅ One sentence listing key strengths with numbers.\n"
+                "- 👉 Next step: most important action and regulatory deadline if applicable.\n"
+                "Max 120 words. Use specific numbers. Professional but readable tone. "
+                "Return JSON with: hypothesis_tested, signals_evaluated (list), "
+                "contradictions_found (list), conclusion, confidence_basis, human_readable_summary."
             ),
         }
         return json.dumps(payload, default=str)
