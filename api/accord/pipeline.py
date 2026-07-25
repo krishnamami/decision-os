@@ -1783,7 +1783,7 @@ def _conversational_summary(decisions: list[dict], m: dict, name: str,
             "issue": blockers[0]["decision_id"] if blockers else None,
             "whats_good": whats_good,
             "next_step": "Review AI analysis and resolve open conditions",
-            "headline": headline if blockers else "AI ANALYSIS COMPLETE",
+            "headline": ("DO NOT APPROVE — resolve the block before proceeding" if has_block else "REVIEW — needs your judgment before it advances") if blockers else "AI ANALYSIS COMPLETE",
             "tone": tone,
             "ai_generated": True,
         }
