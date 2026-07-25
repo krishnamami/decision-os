@@ -54,6 +54,63 @@ function money(v?: number | null): string {
   return v == null ? '—' : `$${Math.round(v / 1000)}k`
 }
 
+function EscalationsView() {
+  const [rows, setRows] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    fetch('/api/accord/pipeline?limit=500', { headers: { Authorization: `Bearer ${localStorage.getItem('accord_token')}` } })
+      .then(r => r.json())
+      .then(d => {
+        const escalated = (d.applications || []).filter((a: any) =>
+          a.decisions?.underwriting_decision?.outcome === 'escalate' ||
+          Object.values(a.decisions || {}).some((dec: any) => dec.outcome === 'escalate')
+        )
+        setRows(escalated)
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return <div className="p-8 text-center text-slate-400 text-sm">Loading escalations…</div>
+  if (!rows.length) return <div className="p-8 text-center text-slate-400 text-sm">No escalated loans.</div>
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+      <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+        <div>
+          <div className="font-semibold text-slate-900 text-sm">Escalated Loans</div>
+          <div className="text-xs text-slate-400">{rows.length} loans requiring senior review</div>
+        </div>
+      </div>
+      <table className="w-full text-xs">
+        <thead className="bg-slate-50 text-slate-500 uppercase tracking-wide text-[10px]">
+          <tr>
+            <th className="px-4 py-2 text-left">Borrower</th>
+            <th className="px-4 py-2 text-left">Loan</th>
+            <th className="px-4 py-2 text-left">FICO</th>
+            <th className="px-4 py-2 text-left">DTI</th>
+            <th className="px-4 py-2 text-left">LTV</th>
+            <th className="px-4 py-2 text-left">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r: any) => (
+            <tr key={r.application_id} className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer"
+                onClick={() => window.location.href = `/pipeline/${r.application_id}`}>
+              <td className="px-4 py-2 font-medium text-slate-800">{r.borrower_name}<div className="text-[10px] text-slate-400">{r.application_id}</div></td>
+              <td className="px-4 py-2">${((r.loan_amount||0)/1000).toFixed(0)}K</td>
+              <td className="px-4 py-2">{r.credit_score ?? '—'}</td>
+              <td className="px-4 py-2">{r.dti ? `${r.dti.toFixed(1)}%` : '—'}</td>
+              <td className="px-4 py-2">{r.ltv ? `${r.ltv.toFixed(1)}%` : '—'}</td>
+              <td className="px-4 py-2"><span className="rounded-full bg-amber-50 text-amber-700 px-2 py-0.5 text-[10px] font-semibold">Escalated</span></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 export default function DashboardPage() {
   const navigate = useNavigate()
   const { effectiveUser } = useAuth()
@@ -139,8 +196,7 @@ export default function DashboardPage() {
   )
 
   const NAV: Array<[string, number | null]> = [
-    ['Team Overview', null], ['All Applications', null], ['Queues', attentionTotal || null], ['SLA Dashboard', null],
-    ['Escalations', null], ['Reports', null], ['Workload', null], ['Settings', null],
+    ['Team Overview', null], ['All Applications', null], ['Escalations', null],
   ]
 
   return (
@@ -190,7 +246,13 @@ export default function DashboardPage() {
         </div>
 
         {activeNav !== 'Team Overview' ? (
-          <ComingSoon section={activeNav} />
+          activeNav === 'All Applications' ? (
+            <iframe src="/pipeline" className="w-full border-0" style={{height: 'calc(100vh - 120px)'}} />
+          ) : activeNav === 'Escalations' ? (
+            <EscalationsView />
+          ) : (
+            <ComingSoon section={activeNav} />
+          )
         ) : loading ? (
           <div className="flex min-h-[50vh] items-center justify-center">
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-[#14532d]" />
