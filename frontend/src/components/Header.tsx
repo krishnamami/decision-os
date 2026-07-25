@@ -38,7 +38,7 @@ const ROLE_NAV: Record<string, string[]> = {
   viewer: ['Pipeline'],
   senior_uw: ['Pipeline', 'Analytics'],
   manager: ['Pipeline', 'Analytics', 'Simulation'],
-  compliance: ['Pipeline', 'Audit', 'Data Health', 'Policy Rules'],
+  compliance: ['Pipeline', 'Audit', 'Policy Rules'],
   admin: ['Pipeline', 'Analytics', 'Simulation', 'Audit', 'Data Health', 'Policy Rules', 'Platform Studio'],
   super_admin: ['Pipeline', 'Analytics', 'Simulation', 'Audit', 'Data Health', 'Policy Rules', 'Platform Studio'],
 }
