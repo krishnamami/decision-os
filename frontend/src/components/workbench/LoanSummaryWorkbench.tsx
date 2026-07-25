@@ -420,7 +420,11 @@ export default function LoanSummaryWorkbench({ applicationId }: { applicationId:
   // Prefer the decision that actually drove the outcome — fraud first — so a
   // fraud-blocked loan shows the fraud rationale, not e.g. compliance_check.
   const aiDecision = useMemo(() => {
-    const withText = (loan?.decisions ?? []).filter((d) => d.explanation)
+    const decisions = loan?.decisions ?? []
+    // Prefer underwriting_decision with Claude reasoning_summary
+    const uwWithAI = decisions.find((d) => d.decision_id === 'underwriting_decision' && (d as any).reasoning_summary)
+    if (uwWithAI) return { ...uwWithAI, explanation: (uwWithAI as any).reasoning_summary }
+    const withText = decisions.filter((d) => d.explanation)
     const PRIORITY = ['fraud_screening', 'underwriting_decision', 'closing_readiness']
     for (const id of PRIORITY) {
       const hit = withText.find((d) => d.decision_id === id && (d.outcome === 'block' || d.outcome === 'escalate'))
