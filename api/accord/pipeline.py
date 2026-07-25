@@ -321,6 +321,7 @@ async def list_pipeline(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     tenant_id: str = Depends(get_tenant_id),
+    user: dict = Depends(get_current_user),
 ) -> dict:
     _require_db()
     pool = await _get_pool()
@@ -338,6 +339,18 @@ async def list_pipeline(
     async with pool.acquire() as conn:
         where = ["es.tenant_id = $1"]
         params: list[Any] = [tenant_id]
+        # Compliance role: only show fraud/OFAC flagged or halted loans
+        if user.get("role") == "compliance":
+            where.append("""(
+                es.status = 'halted'
+                OR EXISTS (
+                    SELECT 1 FROM decision_outputs d
+                    WHERE d.application_id = es.application_id
+                    AND d.tenant_id = es.tenant_id
+                    AND d.decision_id = 'fraud_screening'
+                    AND d.outcome = 'block'
+                )
+            )""")
         if type:
             params.append(type)
             where.append(f"a.loan_type = ${len(params)}")
