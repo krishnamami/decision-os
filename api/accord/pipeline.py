@@ -1749,7 +1749,8 @@ def _sig(decision: dict, key: str) -> str:
 
 def _conversational_summary(decisions: list[dict], m: dict, name: str,
                             conditions: Optional[list] = None,
-                            ltv_ctx: Optional[dict] = None) -> dict:
+                            ltv_ctx: Optional[dict] = None,
+                            ai_reasoning: Optional[str] = None) -> dict:
     """Plain-English, senior-underwriter-voice summary built from the decisions.
     Handles a clean file or N blocking issues (root cause = lowest wave, with a
     hard block beating an escalate at the same wave)."""
@@ -1775,6 +1776,17 @@ def _conversational_summary(decisions: list[dict], m: dict, name: str,
     whats_good = ", ".join(goods) if goods else f"{len(passed)} other checks passed"
     whats_good = whats_good[:1].upper() + whats_good[1:]
 
+    # Use Claude AI reasoning when available
+    if ai_reasoning and len(ai_reasoning) > 100:
+        return {
+            "summary": ai_reasoning,
+            "issue": blockers[0]["decision_id"] if blockers else None,
+            "whats_good": whats_good,
+            "next_step": "Review AI analysis and resolve open conditions",
+            "headline": headline if blockers else "AI ANALYSIS COMPLETE",
+            "tone": tone,
+            "ai_generated": True,
+        }
     if not blockers:
         clean = (f"This is a clean file. All {len(decisions)} AI checks passed — credit {int(score) if score else '—'}"
                  + (f", income verified within {gap}%" if gap is not None else "")
