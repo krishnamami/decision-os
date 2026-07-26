@@ -182,7 +182,29 @@ async def report_data(
                         if overall and n >= 5 and abs(rate - overall) / max(overall, 0.01) > 0.15
                         else "No disparate impact")
                 rows.append([r["seg"] or "unknown", n, ap_, round(rate * 100, 1), flag])
-        else:  # examiner_package (or unknown) — loan-level decision chain summary
+        elif report_id == "examiner_package":
+            columns = ["Application", "Borrower", "Decision Agent", "Wave", "Outcome", "Confidence %", "Governing Rule", "Human Action", "Reviewer", "Timestamp"]
+            recs = await conn.fetch(
+                "SELECT d.application_id, COALESCE(ap.full_name, d.application_id) AS borrower, "
+                "d.decision_id, d.wave, d.outcome, d.confidence, d.boundary_rule, "
+                "d.human_action, d.human_reviewer, d.acted_at "
+                "FROM decision_outputs d "
+                "LEFT JOIN applications a ON a.application_id=d.application_id "
+                "LEFT JOIN applicants ap ON ap.applicant_id=a.applicant_id "
+                "WHERE d.tenant_id=$1 ORDER BY d.application_id, d.wave",
+                tid,
+            )
+            rows = [[
+                r["application_id"], r["borrower"],
+                r["decision_id"].replace("_", " ").title(),
+                r["wave"], r["outcome"],
+                round((r["confidence"] or 0) * 100, 1),
+                (r["boundary_rule"] or "")[:50],
+                r["human_action"] or "—",
+                r["human_reviewer"] or "—",
+                r["acted_at"].strftime("%Y-%m-%d %H:%M") if r["acted_at"] else "—"
+            ] for r in recs]
+        else:  # fallback
             columns = ["Application", "Status", "AI Decisions", "Human Actions", "Overrides"]
             recs = await conn.fetch(
                 "SELECT es.application_id, es.loan_status, "
