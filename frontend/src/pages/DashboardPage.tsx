@@ -196,7 +196,7 @@ export default function DashboardPage() {
   )
 
   const NAV: Array<[string, number | null]> = [
-    ['Team Overview', null], ['All Applications', null], ['Escalations', null],
+    ['Team Overview', null], ['Escalations', null],
   ]
 
   return (
