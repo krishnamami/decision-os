@@ -1,8 +1,16 @@
 # DECISION OS — PRODUCT REQUIREMENTS DOCUMENT
 
-**Version:** 0.15 &nbsp;·&nbsp; **Updated:** July 2026 &nbsp;·&nbsp; Source of truth for Claude Code every session.
+**Version:** 0.16 &nbsp;·&nbsp; **Updated:** July 2026 &nbsp;·&nbsp; Source of truth for Claude Code every session.
 
 > **Strategic note (Session 8):** the user committed to PATH C — full DecisionOS as system of record (12–18 month roadmap). See §19 for the tier breakdown that drives every following session.
+
+### Session 16 deltas (v0.15 → v0.16) — live Claude reasoning in the decision + capital_loans eval hardening
+
+Turned the previously-dormant Claude path into a live, cost-gated part of the actual decision run, and hardened the multi-tenant eval harness for repeatable runs. Full narrative + commit hashes in `CONTEXT.md`.
+
+- **Claude AI narrative in the underwriting decision** (`edb1883` → `b2ff822`) — when `ANTHROPIC_API_KEY` is set, `PersonaRunner` calls `agent.reason(bundle, policy)` and merges the Claude memo into the deterministic reasoning (AI writes the *explanation*, the engine still decides). **Cost-gated to a single persona** via `_AI_PERSONAS` — narrowed to `{underwriting_decision}`. Robustness: markdown-fence stripping, `max_tokens=4096`, warn-and-fallback on API/JSON failure. Surfaced in the workbench AI-Summary banner as the Claude `reasoning_summary` (`api/accord/pipeline.py` threads it through `_conversational_summary(ai_reasoning=…)`; `LoanSummaryWorkbench.tsx` renders it) — conversational, ≤120 words, emoji sections.
+- **Similar-cases precedent lookup** (`e080fd2`, `efd12f3`) — `GET /loans/{id}/similar-cases` matches prior loans on FICO / DTI / LTV / purpose / employment_type and returns their outcomes (pure `entity_states`/`decision_outputs` columns, no view/applicant JOINs).
+- **Eval harness hardening** (`a20e429`, `1f37213`, `3129fba`) — `evaluate_tenant.py --clean` deletes stale `decision_outputs` on a separate connection before re-running; RLS-aware snapshots set `app.tenant_id`; `tenant_rules` aligned to `overlay_rules` for capital_loans (fraud 0.70 / credit 640 / DTI 45%); income persona branches added for retired / SE / foreign-national / streamline. Auto-eval removed from deploy (concurrent-run conflicts on the shared RDS). The onboarding-proof run still awaits a "go ahead" per the show-before-run rule.
 
 ### Session 15 deltas (v0.14 → v0.15) — role-aware ops + self-serve onboarding · deployed on the `accord` ECS cluster
 
@@ -1946,4 +1954,4 @@ protected_attributes_excluded_by_default
 
 ---
 
-*Decision OS · docs/PRD.md · v0.11 · Read at the start of every Claude Code session*
+*Decision OS · docs/PRD.md · v0.16 · Read at the start of every Claude Code session*

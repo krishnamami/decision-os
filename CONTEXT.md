@@ -4526,3 +4526,34 @@ Tooling pass on top of Platform Studio: prove the self-serve onboarding path end
 - **Capital Loans evaluator** (`scripts/evaluate_capital_loans.py`) — the same ScenarioRunner harness pinned to `TENANT="capital_loans"` with an `EXPECTED_OUTCOMES` table for the 45-scenario onboarding set (Group A clean approvals, B credit blocks, C income/DTI, … ), verifying each key decision's `outcome` against the corrected plan. **This is the Platform Studio onboarding proof:** capital_loans was stood up through the UI (schema map + credit policy + products), then its loans run through the same engine meridian/summit use. **Not yet executed here** — it writes `decision_outputs` to the live RDS, so per the standing show-before-run rule it needs a "go ahead" before running; pass/fail counts are therefore not recorded in this doc yet.
 - **Meridian debug/patch helpers** — `scripts/debug_meridian.py` (read-only: dumps real `entity_states` values + actual-vs-expected for all 16 meridian scenarios; documents where the real schema hides fields — `loan_purpose` in `loan_terms.urla`, `fraud_score` in `borrower.identity`, co-score in `co_borrowers[0].credit`, `decision_outputs` deduped to latest version per (application, decision)); `scripts/patch_meridian_entity_states.py` (writes scenario-spec qualifying-income/obligations/DTI/state/purpose into `entity_states`; notes the real column is `monthly_obligations` not `total_obligations`, and `property_state`/`loan_purpose` are written into the `loan_terms` jsonb, not real columns).
 - **Product-demo recorder rebuilt** (`frontend/record_demo.cjs`, → `accord_demo.mp4`) — ~60s silent captioned walkthrough of the LIVE app (voiceover muxed in afterwards via `-c:v copy`). Starts on the already-loaded `/login` page (no black intro), drives the loan header (OFAC + QM badges, 4 clickable metrics → evidence panels), Decision Journey layer badges + citation, then re-logs as compliance for the examiner report. Demo loan switched to `APP-SC30-004` (Wayne Hart). Read-only — never submits an action, so no prod mutation.
+
+---
+
+## Capital Loans eval hardening — `--clean` re-runs, RLS snapshots, tenant_rules alignment — 2026-07-20/21
+
+Made the universal tenant evaluator (`scripts/evaluate_tenant.py`, Session-15 harness) safe to re-run against the live RDS and correct for `capital_loans`. Prep for the onboarding-proof run that still awaits a "go ahead" per the show-before-run rule.
+
+- **`--clean` re-runs** (`a20e429`, `777df0c`, `990fce2`, `798f596`) — `--clean` deletes a tenant's existing `decision_outputs` before re-evaluating so a re-run isn't polluted by stale rows; the DELETE runs on its **own separate connection** to avoid the `UnboundLocalError`/pool-reuse crash. `evaluate_tenant` also now stamps `tenant_id` in the `edms_store` snapshot and threads `input_context` into `reasoning` for upstream-payload decisions.
+- **RLS-aware snapshots** (`1f37213`, `990fce2`) — `edms_store.snapshot()` sets `app.tenant_id` so the RLS-scoped views resolve to the right tenant during evaluation (mirrors the QA-C `accord_app` RLS path).
+- **`tenant_rules` ← `overlay_rules` for capital_loans** (`3129fba`, docs) — aligned the two rule surfaces so both read the same thresholds: **fraud 0.70, credit min 640, DTI max 45%**. Earlier income/employment/fraud-bundle fixes in the same window: fraud threshold pulled from tenant `overlay_rules` via bundle injection (`eb05121`, `768f85f`, `3ffcd09`); `aus_result` reads `loan_terms.aus`, `income_verified` uses `combined_monthly_income` (`c58cc8c`); income persona branches for retired / self-employed / foreign-national / streamline employment types (`e59456a`).
+- **Auto-eval removed from deploy** (`777df0c` added it, `a407eb4` removed it) — auto-running the eval on every deploy caused concurrent-evaluation conflicts against the shared RDS; deploys no longer trigger it.
+
+---
+
+## Similar-cases endpoint — precedent lookup for the workbench — 2026-07-21
+
+`GET /api/accord/loans/{application_id}/similar-cases` (`api/accord/pipeline.py`) — finds prior loans with a comparable risk profile so a reviewer can see how similar files were decided.
+
+- **Dynamic matching** (`e080fd2`, `efd12f3`) — scores candidates on FICO / DTI / LTV / loan purpose / employment_type proximity to the subject loan; returns the closest matches with their outcomes.
+- **Debugging arc → clean rewrite** (`29e8530` `_get_pool`; `14e9233`/`1c0a756`/`2426416` dropped the `vw_fraud_screening_context` and `applicants` JOINs that were throwing 500s; `d66f6fb` full clean rewrite fixing indentation; `1c981d5` surfaces the full query + error details). Net: the endpoint matches purely on `entity_states`/`decision_outputs` columns — no view or applicant JOINs.
+
+---
+
+## Claude AI narrative in the underwriting decision, surfaced in the workbench — 2026-07-21 → 24
+
+Wired the live Claude path (built but unexercised since the EX2-A explanation engine) into the **actual decision run** for the underwriting persona, then surfaced the generated memo in the workbench AI-Summary banner. **Cost-gated to one persona.** Consulted the claude-api skill (LLM-shaped Anthropic code).
+
+- **Claude in the persona run** (`edb1883`, `a5d0cff`, `0cd1daa`) — `PersonaRunner` sets `use_anthropic=True` when `ANTHROPIC_API_KEY` is present and calls `agent.reason(bundle, policy)` with the resolved policy in hand; the Claude narrative is merged into the offline reasoning via the `OfflineReasoning` constructor (not replacing the deterministic outcome — the AI writes the *memo*, the engine still decides).
+- **Cost control** (`5f0e69a` → `0902b34`) — a `_AI_PERSONAS` allow-set gates the Claude call; narrowed from `{underwriting_decision, fraud_screening, approval_routing}` to **just `{underwriting_decision}`** to cut cost/latency. `24238b0` checks `ANTHROPIC_API_KEY` at decision time and forces `_use_anthropic=True` for the UW persona; `d59c205` logs each Claude call.
+- **Robustness** (`9b25fe8`) — strips markdown code-fences from Claude output, `max_tokens=4096`, fixes weight coercion in the explanation parse; API failures + JSON-parse failures now log a warning and fall back to the deterministic journal (`base.py`) instead of silently returning `None`.
+- **Surfaced in the UI** (`0219138`, `9a8cfbe`, `5311567`, `60bffd6`, `b2ff822`) — `underwriting_decision._build_user_prompt` slimmed for the UW persona; the API threads the Claude memo through as `reasoning_summary` and into `_conversational_summary(..., ai_reasoning=...)` (`api/accord/pipeline.py`), picking the `underwriting_decision` row's summary when >100 chars. `LoanSummaryWorkbench.tsx` AI-Summary banner renders the Claude `reasoning_summary` when available. Final format: **conversational, ≤120 words, emoji section headers** (`b2ff822`).
