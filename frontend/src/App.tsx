@@ -68,8 +68,8 @@ function AppShell() {
 
   // Role → which products this role may open at all.
   const ROLE_PRODUCTS: Record<string, string[]> = {
-    super_admin: ['pipeline', 'analytics', 'simulation', 'audit'],
-    admin: ['pipeline', 'analytics', 'simulation', 'audit'],
+    super_admin: ['pipeline', 'analytics', 'simulation', 'audit', 'platform_studio'],
+    admin: ['pipeline', 'analytics', 'simulation', 'audit', 'platform_studio'],
     manager: ['pipeline', 'analytics', 'simulation', 'audit'],
     senior_uw: ['pipeline', 'analytics', 'simulation', 'audit'],
     underwriter: ['pipeline', 'simulation'],
