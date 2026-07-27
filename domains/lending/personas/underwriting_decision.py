@@ -286,11 +286,23 @@ class SeniorUnderwritingAgent(LendingPersona):
                 "- 🔴 One line per hard block with specific numbers and brief context.\n"
                 "- ✅ One sentence listing key strengths with numbers.\n"
                 "- 👉 Next step: most important action and regulatory deadline if applicable.\n"
-                "Max 120 words. Use specific numbers. Professional but readable tone. "
+                "If amortization_type contains ARM: mention initial rate, qualifying rate (fully indexed), "
+                "and cap structure. Note if worst-case payment or CHARM disclosure is required. "
+                "Max 130 words. Use specific numbers. Professional but readable tone. "
                 "Return JSON with: hypothesis_tested, signals_evaluated (list), "
                 "contradictions_found (list), conclusion, confidence_basis, human_readable_summary."
             ),
         }
+        # Add ARM-specific fields from bundle objects
+        for k, v in (obj.items() if obj else {}):
+            if isinstance(v, dict):
+                first_val = next(iter(v.values()), {})
+                if isinstance(first_val, dict) and first_val.get("amortization_type") and "ARM" in str(first_val.get("amortization_type","")):
+                    payload["arm_context"] = {
+                        "amortization_type": first_val.get("amortization_type"),
+                        "initial_rate": first_val.get("interest_rate"),
+                        "qualifying_rate_fir": first_val.get("qualifying_rate"),
+                    }
         return json.dumps(payload, default=str)
 
 
