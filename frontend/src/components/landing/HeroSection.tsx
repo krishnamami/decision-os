@@ -5,8 +5,8 @@ import { BRAND } from './brand'
 const LOANS = [
   {
     id: 0,
-    name: 'Daniel Reyes',
-    amount: '$418K',
+    name: 'Michael Davis',
+    amount: '$395K',
     product: 'Conforming',
     dotColor: '#e24b4a',
     urgency: 'Urgent',
@@ -38,7 +38,7 @@ const LOANS = [
     rules: [
       { layer: 'Federal',      title: 'High fraud risk — mandatory BSA/SAR review',         cite: 'BSA/AML 31 CFR §1010 · Rule v3 · active 5/1/2026' },
       { layer: 'Agency',       title: 'HMDA data complete — no fair-lending flags',          cite: 'HMDA Reg C 12 CFR §1003 / ECOA Reg B' },
-      { layer: 'Your policy',  title: 'Min credit score 680 — Summit overlay applied',       cite: 'Summit Home Loans · overlay v4 · active 3/15/2026' },
+      { layer: 'Your policy',  title: 'Fraud score 0.78 — identity unverified · BSA referral required',       cite: 'Capital Loans Mortgage · overlay v4 · active 3/15/2026' },
     ],
     evidence: [
       { name: 'OFAC Check',          sub: 'List Date 2026-06-12 · Pep Match: No', conf: '99%' },
@@ -55,8 +55,8 @@ const LOANS = [
   },
   {
     id: 1,
-    name: 'Priya Sharma',
-    amount: '$354K',
+    name: 'Sandra Kim',
+    amount: '$445K',
     product: 'FHA',
     dotColor: '#ba7517',
     urgency: 'Review',
@@ -88,7 +88,7 @@ const LOANS = [
     rules: [
       { layer: 'Federal',     title: 'ATR — ability to repay documented',                  cite: '12 CFR 1026.43 · CFPB · Rule v3' },
       { layer: 'Agency',      title: 'FHA DTI guideline 43% — escalate above',             cite: 'FHA HUD 4000.1 · AUS approved with conditions' },
-      { layer: 'Your policy', title: 'Exception requires senior UW approval above 45%',    cite: 'Summit Home Loans · overlay v4 · active 3/15/2026' },
+      { layer: 'Your policy', title: 'DTI 48.2% — escalated · compensating factors: FICO 745, 6mo reserves',    cite: 'Capital Loans Mortgage · overlay v4 · active 3/15/2026' },
     ],
     evidence: [
       { name: 'W2 2025',         sub: 'Box1 wages $62,400 · ADP payroll',          conf: '97%' },
@@ -105,8 +105,8 @@ const LOANS = [
   },
   {
     id: 2,
-    name: 'Marcus Webb',
-    amount: '$292K',
+    name: 'David Chen',
+    amount: '$580K',
     product: 'VA',
     dotColor: '#ba7517',
     urgency: 'Review',
@@ -138,7 +138,7 @@ const LOANS = [
     rules: [
       { layer: 'Federal',     title: 'ATR — 2-year employment history required',         cite: '12 CFR 1026.43 · CFPB · Rule v3' },
       { layer: 'Agency',      title: 'VA — gap >30 days requires written explanation',   cite: 'VA Lenders Handbook Ch 4 · Fannie B3-3.1-09' },
-      { layer: 'Your policy', title: 'Request VOE before underwriting decision',         cite: 'Summit Home Loans · overlay v4 · active 3/15/2026' },
+      { layer: 'Your policy', title: 'DTI 56.3% block + VA/Conv product conflict — senior UW required',         cite: 'Capital Loans Mortgage · overlay v4 · active 3/15/2026' },
     ],
     evidence: [
       { name: 'URLA 1003',       sub: 'Current employer: Vertex Corp · 8 months',   conf: '94%' },
@@ -286,7 +286,7 @@ export default function HeroSection() {
           <span className="ml-1.5 text-[11px] font-semibold" style={{ color: '#5aa87a', letterSpacing: '0.04em' }}>
             accord · pipeline
           </span>
-          <span className="ml-auto text-[10px]" style={{ color: '#3d6b4f' }}>Summit Home Loans</span>
+          <span className="ml-auto text-[10px]" style={{ color: '#3d6b4f' }}>Capital Loans Mortgage</span>
         </div>
 
         {/* two-column body */}
@@ -344,11 +344,11 @@ export default function HeroSection() {
             <div className="px-2.5 py-2 border-b border-slate-100 opacity-35 pointer-events-none">
               <div className="flex items-center gap-1 mb-0.5">
                 <div className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" />
-                <span className="text-[11px] font-semibold text-slate-700">Sofia Chen</span>
+                <span className="text-[11px] font-semibold text-slate-700">Sandra Reeves</span>
                 <span className="ml-auto text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-400">Clear</span>
               </div>
               <div className="text-[9px] text-slate-500">All checks passed</div>
-              <div className="text-[9px] text-slate-400 mt-0.5">$510K · Jumbo · on track</div>
+              <div className="text-[9px] text-slate-400 mt-0.5">$295K · Conventional · on track</div>
             </div>
           </div>
 
