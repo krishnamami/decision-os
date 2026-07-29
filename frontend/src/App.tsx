@@ -10,6 +10,10 @@ import Login from './pages/Login'
 import Settings from './pages/Settings'
 import Landing from './pages/Landing'
 import Security from './pages/Security'
+import BlogList from './pages/BlogList'
+import BlogPost from './pages/BlogPost'
+import DocList from './pages/DocList'
+import { DocPost } from './pages/DocPost'
 import ComplianceDocs from './pages/ComplianceDocs'
 import DemoMode, { DemoRedirect, DemoWatermark } from './pages/DemoMode'
 import ExaminerReport from './pages/ExaminerReport'
@@ -40,6 +44,10 @@ function AppShell() {
   // Public marketing pages — no auth, no app chrome, any auth state.
   if (location.pathname === '/security') return <Security />
   if (location.pathname === '/compliance') return <ComplianceDocs />
+  if (location.pathname === '/blog') return <BlogList />
+  if (location.pathname.startsWith('/blog/')) return <BlogPost />
+  if (location.pathname === '/docs') return <DocList />
+  if (location.pathname.startsWith('/docs/')) return <DocPost />
 
   if (loading) {
     return <div className="flex min-h-screen items-center justify-center text-sm text-slate-400">Loading…</div>
@@ -51,6 +59,10 @@ function AppShell() {
         <Route path="/" element={<Landing />} />
         <Route path="/pricing" element={<Landing scrollTo="pricing" />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/blog" element={<BlogList />} />
+        <Route path="/docs" element={<DocList />} />
+        <Route path="/docs/:slug" element={<DocPost />} />
+        <Route path="/blog/:slug" element={<BlogPost />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     )

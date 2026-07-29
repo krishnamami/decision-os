@@ -51,7 +51,7 @@ export default function VideoSection() {
           </span>
           <div>
             <div className="text-base font-semibold" style={{ color: BRAND.nearblack }}>Accord demo — underwriter walkthrough</div>
-            <div className="mt-1 text-sm text-slate-500">60 seconds · Real product</div>
+            <div className="mt-1 text-sm text-slate-500">Real product · No slides</div>
           </div>
         </div>
       )}

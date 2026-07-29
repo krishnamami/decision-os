@@ -7,17 +7,17 @@ type Q = { q: string; sub: string; label: string; val: string; text: string }
 const QUESTIONS: Q[] = [
   {
     q: 'What if we tighten DTI to 36%?',
-    sub: '3 loans affected · $1.5M volume impact',
+    sub: '25 loans affected · $9.0M volume impact',
     label: 'Policy simulator — DTI limit',
     val: 'Tighten to 36%',
-    text: '3 loans affected · $1.5M volume impact. Sarah Johnson $528K DTI 36.7% — misses the new limit by just 0.7%. Approve with compensating factors or reduce loan by $1K.',
+    text: '25 loans affected · $9.0M volume impact. Michael Davis $395K DTI 38.7% — misses the new limit by just 0.7%. Approve with compensating factors or reduce loan by $1K.',
   },
   {
     q: 'What if rates rise 200 basis points?',
-    sub: '47 loans exceed DTI at new payment amounts',
+    sub: '25 loans fall below approval threshold',
     label: 'Rate sensitivity analysis',
     val: '+200 basis points',
-    text: '47 loans would exceed DTI threshold at new payment amounts. Highest risk: 12 loans in the 40–43% DTI band. Recommend stress-testing those files before rate lock.',
+    text: '25 loans would fall below approval threshold at new payment amounts. Highest risk: 12 loans in the 40–43% DTI band. Recommend stress-testing those files before rate lock.',
   },
   {
     q: 'Should this blocked loan be approved?',
@@ -28,7 +28,7 @@ const QUESTIONS: Q[] = [
   },
   {
     q: 'Where are our hidden portfolio risks?',
-    sub: '46% income gaps · 97% one-product type',
+    sub: '21% near credit boundary · 86% thin equity',
     label: 'Portfolio risk scan',
     val: 'Risk concentration found',
     text: '46% of income is from self-employment with insufficient documentation. 97% of loans are single-product type — conforming conventional. Diversification risk flagged for management review.',

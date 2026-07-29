@@ -21,10 +21,16 @@ import LandingFooter from '../components/landing/LandingFooter'
 export default function Landing({ scrollTo }: { scrollTo?: string }) {
   // /pricing (and similar) deep-links land on the section instead of the top.
   useEffect(() => {
-    if (scrollTo) {
-      const id = setTimeout(() => document.getElementById(scrollTo)?.scrollIntoView({ behavior: 'smooth' }), 100)
-      return () => clearTimeout(id)
+    const params = new URLSearchParams(window.location.search)
+    const target = scrollTo || params.get('scroll') || window.location.hash.slice(1)
+    if (!target) return
+    let attempts = 0
+    const tryScroll = () => {
+      const el = document.getElementById(target)
+      if (el) { el.scrollIntoView({ behavior: 'auto' }); return }
+      if (attempts++ < 10) setTimeout(tryScroll, 100)
     }
+    setTimeout(tryScroll, 80)
   }, [scrollTo])
 
   return (

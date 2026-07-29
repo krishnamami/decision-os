@@ -7,12 +7,12 @@ export default function LandingNav() {
   return (
     <header className="sticky top-0 z-40 bg-white" style={{ borderBottom: '0.5px solid #E5E7EB' }}>
       <div className="mx-auto flex max-w-[1200px] items-center px-6" style={{ paddingTop: '18px', paddingBottom: '18px' }}>
-        <a href="#top" className="flex items-center"><AccordLogo /></a>
+        <a href="/" className="flex items-center"><AccordLogo /></a>
         <nav className="ml-10 hidden items-center md:flex" style={{ gap: '32px', fontSize: '15px', fontWeight: 400, color: BRAND.nearblack }}>
-          <a href="#products" className="flex items-center gap-1 hover:opacity-70">Products <span className="text-[10px]">▾</span></a>
-          <a href="#pricing" className="hover:opacity-70">Pricing</a>
-          <a href="#faq" className="hover:opacity-70">Docs</a>
-          <a href="#" className="hover:opacity-70">Blog</a>
+          <a href="/#products" onClick={(e) => { e.preventDefault(); const el = document.getElementById("products"); if (el) { el.scrollIntoView({behavior:"smooth"}); } else { window.location.href = "/?scroll=products"; } }} className="flex items-center gap-1 hover:opacity-70">Products <span className="text-[10px]">▾</span></a>
+          <a href="/#pricing" onClick={(e) => { e.preventDefault(); const el = document.getElementById("pricing"); if (el) { el.scrollIntoView({behavior:"smooth"}); } else { window.location.href = "/?scroll=pricing"; } }} className="hover:opacity-70">Pricing</a>
+          <Link to="/docs" className="hover:opacity-70">Docs</Link>
+          <Link to="/blog" className="hover:opacity-70">Blog</Link>
         </nav>
         <div className="ml-auto flex items-center gap-4">
           <Link to="/login" className="hover:opacity-70" style={{ fontSize: '15px', fontWeight: 400, color: BRAND.nearblack }}>Log in</Link>

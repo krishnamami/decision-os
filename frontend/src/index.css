@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 /* Accord brand palette — primary green #0F6E56. Tailwind v4 generates
    utilities (bg-brand, text-brand, border-brand, ring-brand, …) from these. */
