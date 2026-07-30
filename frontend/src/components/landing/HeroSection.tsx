@@ -164,7 +164,7 @@ const LAYER_STYLES: Record<string, string> = {
 }
 
 // ── Component ─────────────────────────────────────────────────────────────
-export default function HeroSection() {
+export default function HeroSection({ onDemo }: { onDemo?: () => void }) {
   const [activeLoan, setActiveLoan] = useState(0)
   const [activeTab,  setActiveTab]  = useState(0)
   const [seeActive,  setSeeActive]  = useState(false)
@@ -242,6 +242,7 @@ export default function HeroSection() {
 
         <div className="flex flex-wrap gap-3 mb-6">
           <button
+            onClick={onDemo}
             className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white"
             style={{ backgroundColor: BRAND.dark }}
           >

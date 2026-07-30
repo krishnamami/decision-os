@@ -4570,3 +4570,20 @@ Public marketing surface built out on the `/` landing app (served by the `accord
 - **Product-card video modals** (uncommitted at time of writing → committed this pass) — new `VideoModal.tsx` (autoplay + controls, Esc + click-outside close); `ProductsGrid.tsx` rewritten so all four cards (Pipeline / Simulation / Analytics / Audit) open an inline "▶ Watch demo" modal instead of "Learn more" links. Clips: `video24-FINAL.mp4` (Pipeline), `video17-FINAL.mp4` (Simulation), `accord_analytics.mp4` (Analytics), `accord_audit.mp4` (Audit) — all under untracked `public/blog/clips/`, served via the Docker build. `DEMO` import dropped once no card used a link.
 - **Landing hero demo refreshed** — `public/accord_demo.mp4` replaced with `accord_landing_FINAL_v3.mp4` (byte-identical copy; served at 7,367,098 b, verified live). `VideoSection` caption tweaked ("Real product · No slides").
 - **Binary convention** — every `.mp4`/`.mp3` (root demo videos, `public/blog/clips/`, `public/blog/screenshots/`, `public/accord_demo.mp4`) stays **untracked** and ships only inside the Docker image; the committed frontend is code-complete but references these build-time assets. `record_*.cjs` recorder scripts + their `puppeteer`/`ffmpeg` deps (in `package.json`) also left out of scope.
+
+---
+
+## Request-a-demo modal + all-CTA wiring + responsive nav — 2026-07-30
+
+Replaced the landing site's `mailto:`/`DEMO`-link demo CTAs with a single in-app lead-capture modal, wired every "Request a demo / Start free trial / Contact sales" surface to it, and made the top nav responsive. Frontend-only; deployed via `bash deploy.sh frontend` and verified live on the ALB each pass (served `dist/assets/index-*.js` hash + curl of routes/strings).
+
+- **`DemoModal.tsx`** (new) — request-a-demo form (first/last name, company, work email, phone, "what are you looking to solve"), `idle → submitting → success → error` states. Posts `FormData` to **Formspree** (`https://formspree.io/f/mgogboaz`) with `Accept: application/json`; success screen "Request received", error fallback points to `demo@accordlend.com`. This is the ECS-served app (not a sandboxed Artifact), so the external `fetch` is unrestricted.
+- **CTA wiring** — every demo/trial/sales CTA now opens `DemoModal` instead of a mailto/`DEMO` link:
+  - `LandingNav` — button + `showDemo` state (also rewritten for mobile, below).
+  - `HeroSection` — added `onDemo?` prop; wired the hero "Request a demo" button (it was previously a dead button with no handler).
+  - `PricingSection` — added `onDemo?` prop; dropped the now-unused `DEMO` import; all four plan buttons (`Start free trial` ×3 + Enterprise `Contact sales`) are one `<button onClick={onDemo}>`.
+  - `CTASection` — rewritten to an `onDemo?`-prop button (dropped the "Or log in" secondary link + `DEMO` import).
+  - `Landing.tsx` — owns `showDemo` state, passes `onDemo={() => setShowDemo(true)}` to Hero/Pricing/CTA, renders `<DemoModal>` at the bottom.
+  - `DocPost` + `BlogPost` — the shared local `CTA()` made self-contained (own `useState` + inline `DemoModal`), so all 6 doc `<CTA/>` sites + the blog CTA convert from `mailto:demo@useaccord.com` to the modal with zero call-site changes.
+  - **Out of scope (left as-is):** `RuleVersioning.tsx` in-app "Upgrade" mailto, and `compliance@` / `security@` / `noreply@` contact addresses on other pages — not demo CTAs. `pages/DemoMode.tsx` still imports `DEMO` (in-app demo mode, not a landing CTA).
+- **Responsive `LandingNav`** — added a mobile hamburger (`Toggle menu`, animated to an X) + dropdown (Products / Pricing / Docs / Blog / Log in) and a compact mobile "Request a demo" button; desktop nav unchanged. Smooth in-page scroll helper falls back to `/?scroll=<id>` when the section isn't on the current route.

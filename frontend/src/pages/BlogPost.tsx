@@ -1,12 +1,15 @@
+import { useState } from 'react'
 import { Link, useLocation, Navigate } from 'react-router-dom'
 import LandingNav from '../components/landing/LandingNav'
 import { BRAND } from '../components/landing/brand'
+import DemoModal from '../components/landing/DemoModal'
 
 function Meta({ series, color, date, time }: { series: string, color: string, date: string, time: string }) {
   return <div className="mb-6 flex flex-wrap items-center gap-3"><span className="rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide text-white" style={{ backgroundColor: color }}>{series}</span><span className="text-sm text-slate-400">{date}</span><span className="text-sm text-slate-400">{time}</span></div>
 }
 function CTA() {
-  return <div className="mt-10 rounded-2xl border p-8 text-center" style={{ borderColor: BRAND.dark + '33' }}><p className="mb-1 text-lg font-bold" style={{ color: BRAND.nearblack }}>See Accord on your own pipeline</p><a href="mailto:demo@useaccord.com?subject=Accord%20demo%20request" className="inline-flex items-center gap-2 rounded-lg px-6 py-3 text-sm font-semibold text-white mt-4" style={{ backgroundColor: BRAND.dark }}>Request a Demo</a></div>
+  const [showDemo, setShowDemo] = useState(false)
+  return <div className="mt-10 rounded-2xl border p-8 text-center" style={{ borderColor: BRAND.dark + '33' }}><p className="mb-1 text-lg font-bold" style={{ color: BRAND.nearblack }}>See Accord on your own pipeline</p><button onClick={() => setShowDemo(true)} className="inline-flex items-center gap-2 rounded-lg px-6 py-3 text-sm font-semibold text-white mt-4" style={{ backgroundColor: BRAND.dark }}>Request a Demo</button>{showDemo && <DemoModal onClose={() => setShowDemo(false)} />}</div>
 }
 function Back() {
   return <div className="mt-10 border-t border-slate-100 pt-6"><Link to="/blog" className="text-sm font-medium hover:underline" style={{ color: BRAND.dark }}>Back to all posts</Link></div>

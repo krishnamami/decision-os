@@ -1,4 +1,4 @@
-import { BRAND, DEMO } from './brand'
+import { BRAND } from './brand'
 import { SecLabel, H2, Sub, Container } from './primitives'
 
 type Plan = { name: string; price: string; unit: string; min: string; features: string[]; popular?: boolean }
@@ -10,7 +10,7 @@ const PLANS: Plan[] = [
   { name: 'Enterprise', price: 'Custom', unit: '', min: 'Full platform + support', features: ['All 4 products', 'Dedicated DB replica', 'VPC deployment', '24/7 phone support'] },
 ]
 
-export default function PricingSection() {
+export default function PricingSection({ onDemo }: { onDemo?: () => void }) {
   return (
     <section id="pricing" className="py-20">
       <Container>
@@ -41,13 +41,13 @@ export default function PricingSection() {
                   <li key={f} className="flex gap-1.5"><span style={{ color: BRAND.dark }}>✓</span>{f}</li>
                 ))}
               </ul>
-              <a
-                href={DEMO}
+              <button
+                onClick={onDemo}
                 className="mt-5 rounded-lg px-3 py-2 text-center text-sm font-semibold transition"
                 style={p.popular ? { backgroundColor: BRAND.dark, color: '#fff' } : { border: `1px solid ${BRAND.dark}`, color: BRAND.dark }}
               >
                 {p.name === 'Enterprise' ? 'Contact sales' : 'Start free trial'}
-              </a>
+              </button>
             </div>
           ))}
         </div>

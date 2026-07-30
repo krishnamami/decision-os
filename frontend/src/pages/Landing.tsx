@@ -1,5 +1,6 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import LandingNav from '../components/landing/LandingNav'
+import DemoModal from '../components/landing/DemoModal'
 import HeroSection from '../components/landing/HeroSection'
 import IntegrationsStrip from '../components/landing/IntegrationsStrip'
 import VideoSection from '../components/landing/VideoSection'
@@ -19,6 +20,7 @@ import LandingFooter from '../components/landing/LandingFooter'
 // first thing a visitor sees. Routing (App.tsx) sends unauthenticated visitors
 // here at `/`, and authenticated users straight to /pipeline.
 export default function Landing({ scrollTo }: { scrollTo?: string }) {
+  const [showDemo, setShowDemo] = useState(false)
   // /pricing (and similar) deep-links land on the section instead of the top.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -37,7 +39,7 @@ export default function Landing({ scrollTo }: { scrollTo?: string }) {
     <div id="top" className="min-h-screen scroll-smooth bg-white text-slate-900">
       <LandingNav />
       <main>
-        <HeroSection />
+        <HeroSection onDemo={() => setShowDemo(true)} />
         <IntegrationsStrip />
         <VideoSection />
         <PersonaStrip />
@@ -47,11 +49,12 @@ export default function Landing({ scrollTo }: { scrollTo?: string }) {
         <ProductsGrid />
         <SimulationSection />
         <ImpactSection />
-        <PricingSection />
+        <PricingSection onDemo={() => setShowDemo(true)} />
         <FAQSection />
-        <CTASection />
+        <CTASection onDemo={() => setShowDemo(true)} />
       </main>
       <LandingFooter />
+      {showDemo && <DemoModal onClose={() => setShowDemo(false)} />}
     </div>
   )
 }
