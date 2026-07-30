@@ -1,32 +1,55 @@
-import { BRAND, DEMO } from './brand'
+import { useState } from 'react'
+import { BRAND } from './brand'
 import { SecLabel, H2, Sub, Container, IconBox } from './primitives'
 import { Icon, type IconName } from './Icon'
-import { Link } from 'react-router-dom'
+import VideoModal from './VideoModal'
 
-const PRODUCTS: Array<{ icon: IconName; name: string; tagline: string; body: string; link: string; external?: boolean }> = [
+const PRODUCTS: Array<{
+  icon: IconName
+  name: string
+  tagline: string
+  body: string
+  video?: string
+  videoTitle?: string
+  link?: string
+}> = [
   {
-    icon: 'layout-list', name: 'Pipeline', tagline: 'See what AI found on every loan',
+    icon: 'layout-list',
+    name: 'Pipeline',
+    tagline: 'See what AI found on every loan',
     body: "Review findings, take action, move on. AI tells you what's wrong, what's fine, and what to do next for every loan in your pipeline.",
-    link: '/blog/seven-reasons-loans-get-blocked',
+    video: '/blog/clips/video24-FINAL.mp4',
+    videoTitle: 'Pipeline — ARM loan walkthrough',
   },
   {
-    icon: 'adjustments-horizontal', name: 'Simulation', tagline: "Ask 'what if' about anything",
+    icon: 'adjustments-horizontal',
+    name: 'Simulation',
+    tagline: "Ask 'what if' about anything",
     body: 'What if we tighten DTI? What if rates rise? Should this blocked loan be approved? Get answers with AI reasoning, not just numbers.',
-    link: '/blog/dti-trap-200-basis-points',
+    video: '/blog/clips/video17-FINAL.mp4',
+    videoTitle: 'Simulation — Policy Simulator walkthrough',
   },
   {
-    icon: 'chart-bar', name: 'Analytics', tagline: 'See exactly where your pipeline wins and where it leaks',
+    icon: 'chart-bar',
+    name: 'Analytics',
+    tagline: 'See exactly where your pipeline wins and where it leaks',
     body: 'Portfolio volume, approval rates, fallout by wave, and agent performance — all in one view. Spot where loans are dropping and where risk is concentrating.',
-    link: DEMO, external: true,
+    video: '/blog/clips/accord_analytics.mp4',
+    videoTitle: 'Analytics — Portfolio performance walkthrough',
   },
   {
-    icon: 'clipboard-check', name: 'Audit', tagline: 'Pull the examiner package in one click',
+    icon: 'clipboard-check',
+    name: 'Audit',
+    tagline: 'Pull the examiner package in one click',
     body: 'Every AI finding, every human action, every override — documented with reasoning. HMDA, fair lending, adverse action. Complete trail.',
-    link: '/docs/soc2-ready',
+    video: '/blog/clips/accord_audit.mp4',
+    videoTitle: 'Audit — Examiner package walkthrough',
   },
 ]
 
 export default function ProductsGrid() {
+  const [activeVideo, setActiveVideo] = useState<{ src: string; title: string } | null>(null)
+
   return (
     <section id="products" className="py-20" style={{ backgroundColor: BRAND.offwhite }}>
       <Container>
@@ -46,15 +69,31 @@ export default function ProductsGrid() {
                 </div>
               </div>
               <p className="mt-3 flex-1 text-sm leading-relaxed text-slate-600">{p.body}</p>
-              {p.external ? (
+              {p.video ? (
+                <button
+                  onClick={() => setActiveVideo({ src: p.video!, title: p.videoTitle! })}
+                  className="mt-4 text-left text-sm font-semibold hover:underline"
+                  style={{ color: BRAND.dark }}
+                >
+                  ▶ Watch demo →
+                </button>
+              ) : p.link?.startsWith('/') ? (
                 <a href={p.link} className="mt-4 text-sm font-semibold hover:underline" style={{ color: BRAND.dark }}>Learn more →</a>
               ) : (
-                <Link to={p.link} className="mt-4 text-sm font-semibold hover:underline" style={{ color: BRAND.dark }}>Learn more →</Link>
+                <a href={p.link} className="mt-4 text-sm font-semibold hover:underline" style={{ color: BRAND.dark }}>Learn more →</a>
               )}
             </div>
           ))}
         </div>
       </Container>
+
+      {activeVideo && (
+        <VideoModal
+          src={activeVideo.src}
+          title={activeVideo.title}
+          onClose={() => setActiveVideo(null)}
+        />
+      )}
     </section>
   )
 }
